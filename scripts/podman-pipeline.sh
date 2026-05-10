@@ -649,7 +649,9 @@ VLLM_VENV="${NOBARA_VLLM_VENV:-${HOME}/.venvs/bitwig-omni}"
 [[ "$VLLM_VENV" == '~'* ]] && VLLM_VENV="${HOME}${VLLM_VENV#\~}"
 AUDIO_VENV="${NOBARA_AUDIO_VENV:-${HOME}/.venvs/kimi-audio}"
 [[ "$AUDIO_VENV" == '~'* ]] && AUDIO_VENV="${HOME}${AUDIO_VENV#\~}"
-HF_CACHE="${HOME}/.cache/huggingface/hub"
+HF_HOME="${HOME}/models"
+export HF_HOME
+HF_CACHE="${HOME}/models"
 
 hf_download() {
     local model="$1" dest="${HF_CACHE}/${2:-${1//\//__}}"
@@ -757,7 +759,7 @@ def analyze(audio_path: str) -> dict:
     model_id = os.environ.get(
         "NOBARA_AUDIO_MODEL", "moonshotai/Kimi-Audio-7B-Instruct"
     )
-    cache_dir = Path.home() / ".cache/huggingface/hub" / model_id.replace("/", "__")
+    cache_dir = Path.home() / "models" / model_id.replace("/", "__")
 
     processor = AutoProcessor.from_pretrained(str(cache_dir), trust_remote_code=True)
     model = AutoModelForCausalLM.from_pretrained(
@@ -856,7 +858,7 @@ from pathlib import Path
 from vllm import LLM, SamplingParams
 
 AGENT_MODEL = os.environ.get("NOBARA_AGENT_MODEL", "Qwen/Qwen3-14B-AWQ")
-MODEL_DIR = Path.home() / ".cache/huggingface/hub" / AGENT_MODEL.replace("/", "__")
+MODEL_DIR = Path.home() / "models" / AGENT_MODEL.replace("/", "__")
 OUTPUT_DIR = Path.home() / ".local/share/bitwig-agent/output"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
