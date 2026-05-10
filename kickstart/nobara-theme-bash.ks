@@ -3,8 +3,22 @@
 # Profil: theme-bash — GNOME Desktop + WhiteSur + Oh-My-Bash, kein AI/vLLM
 # Ventoy-Menü: "Theme + Bash"
 
-text
+graphical
 reboot
+
+# ── Disk auto-detection (SATA sda / NVMe nvme0n1 / virtio vda) ───────────────
+%pre
+#!/bin/bash
+DISK=$(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1; exit}')
+cat > /tmp/disk-setup.cfg <<EOFCFG
+ignoredisk --only-use=${DISK}
+zerombr
+clearpart --all --initlabel --drives=${DISK}
+bootloader --boot-drive=${DISK}
+EOFCFG
+%end
+
+%include /tmp/disk-setup.cfg
 
 # ── Locale / Keyboard / Timezone ─────────────────────────────────────────────
 keyboard --xlayouts='de'
@@ -16,13 +30,10 @@ network --bootproto=dhcp --device=link --activate
 network --hostname=nobara-workstation
 
 # ── Disk / Partitioning ───────────────────────────────────────────────────────
-ignoredisk --only-use=sda
-zerombr
-clearpart --all --initlabel --drives=sda
 autopart --type=lvm
 
 # ── Bootloader ────────────────────────────────────────────────────────────────
-bootloader --location=mbr --boot-drive=sda
+# (drive set dynamically via %pre / %include above)
 
 # ── Authentication ────────────────────────────────────────────────────────────
 rootpw --lock

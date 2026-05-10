@@ -11,7 +11,7 @@ menuentry "Nobara -- [f] Vollinstallation  (GNOME + NVIDIA + AI + vLLM)" --hotke
     search --no-floppy --label --set=root Ventoy
     set isofile="/NOBARA_ISO_FILENAME"
     loopback loop $isofile
-    linux  (loop)/images/pxeboot/vmlinuz root=live:CDLABEL=NOBARA_ISO_CDLABEL modules_load=nvidia rd.live.image inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-full.ks inst.text
+    linux  (loop)/images/pxeboot/vmlinuz root=live:CDLABEL=NOBARA_ISO_CDLABEL rd.live.image nomodeset inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-full.ks
     initrd (loop)/images/pxeboot/initrd.img
 }
 
@@ -19,7 +19,7 @@ menuentry "Nobara -- [t] Theme + Bash       (GNOME + WhiteSur, kein AI)" --hotke
     search --no-floppy --label --set=root Ventoy
     set isofile="/NOBARA_ISO_FILENAME"
     loopback loop $isofile
-    linux  (loop)/images/pxeboot/vmlinuz root=live:CDLABEL=NOBARA_ISO_CDLABEL modules_load=nvidia rd.live.image inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-theme-bash.ks inst.text
+    linux  (loop)/images/pxeboot/vmlinuz root=live:CDLABEL=NOBARA_ISO_CDLABEL rd.live.image nomodeset inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-theme-bash.ks
     initrd (loop)/images/pxeboot/initrd.img
 }
 
@@ -27,7 +27,7 @@ menuentry "Nobara -- [h] Headless vLLM      (kein GUI, Podman + vLLM als Dienst)
     search --no-floppy --label --set=root Ventoy
     set isofile="/NOBARA_ISO_FILENAME"
     loopback loop $isofile
-    linux  (loop)/images/pxeboot/vmlinuz root=live:CDLABEL=NOBARA_ISO_CDLABEL modules_load=nvidia rd.live.image inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-headless-vllm.ks inst.text
+    linux  (loop)/images/pxeboot/vmlinuz root=live:CDLABEL=NOBARA_ISO_CDLABEL rd.live.image inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-headless-vllm.ks
     initrd (loop)/images/pxeboot/initrd.img
 }
 
@@ -35,6 +35,6 @@ menuentry "Nobara -- [v] vLLM only          (kein GUI, kein Podman, Python venv)
     search --no-floppy --label --set=root Ventoy
     set isofile="/NOBARA_ISO_FILENAME"
     loopback loop $isofile
-    linux  (loop)/images/pxeboot/vmlinuz root=live:CDLABEL=NOBARA_ISO_CDLABEL modules_load=nvidia rd.live.image inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-vllm-only.ks inst.text
+    linux  (loop)/images/pxeboot/vmlinuz root=live:CDLABEL=NOBARA_ISO_CDLABEL rd.live.image inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-vllm-only.ks
     initrd (loop)/images/pxeboot/initrd.img
 }
