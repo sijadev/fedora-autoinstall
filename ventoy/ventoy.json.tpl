@@ -1,7 +1,7 @@
 {
     "auto_install": [
         {
-            "image": "/iso/NOBARA_ISO_FILENAME",
+            "image": "/NOBARA_ISO_FILENAME",
             "template": [
                 {
                     "path": "/kickstart/nobara-full.ks",

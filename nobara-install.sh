@@ -199,8 +199,16 @@ run mkdir -p "$KS_DEST_DIR"
 if [[ "$DRY_RUN" != "1" ]]; then
     cp "$KS_FILE" "$KS_DEST"
     log_info "Kickstart deployed: $KS_DEST"
+    # Copy all predefined profiles so GRUB menu entries and auto_install templates work
+    for ks in "$SCRIPT_DIR"/kickstart/nobara-*.ks; do
+        [[ -f "$ks" ]] || continue
+        dest="$KS_DEST_DIR/$(basename "$ks")"
+        cp "$ks" "$dest"
+        log_info "Kickstart deployed: $dest"
+    done
 else
     log_dry "cp $KS_FILE → $KS_DEST"
+    log_dry "cp kickstart/nobara-*.ks → $KS_DEST_DIR/"
 fi
 
 # ── Step 7: Write ventoy.json ─────────────────────────────────────────────────
@@ -208,27 +216,35 @@ log_step "ventoy.json auto_install config"
 
 VENTOY_JSON_DIR="$VENTOY_MNT/ventoy"
 VENTOY_JSON="$VENTOY_JSON_DIR/ventoy.json"
-KS_VENTOY_PATH="/kickstart/nobara-autoinstall.ks"
+VENTOY_JSON_TPL="$SCRIPT_DIR/ventoy/ventoy.json.tpl"
 
 if [[ "$DRY_RUN" != "1" ]]; then
     mkdir -p "$VENTOY_JSON_DIR"
-    cat > "$VENTOY_JSON" <<JSON
-{
-    "auto_install": [
-        {
-            "image": "/${ISO_BASENAME}",
-            "template": [
-                {
-                    "path": "${KS_VENTOY_PATH}"
-                }
-            ]
-        }
-    ]
-}
-JSON
+    sed "s|NOBARA_ISO_FILENAME|${ISO_BASENAME}|g" "$VENTOY_JSON_TPL" > "$VENTOY_JSON"
     log_info "ventoy.json written: $VENTOY_JSON"
 else
-    log_dry "Would write ventoy.json → /${ISO_BASENAME} → ${KS_VENTOY_PATH}"
+    log_dry "Would write ventoy.json → /${ISO_BASENAME} (4 profiles)"
+fi
+
+# ── Step 7b: Write ventoy_grub.cfg ───────────────────────────────────────────
+log_step "ventoy_grub.cfg GRUB menu entries"
+
+VENTOY_GRUB_CFG="$VENTOY_JSON_DIR/ventoy_grub.cfg"
+VENTOY_GRUB_TPL="$SCRIPT_DIR/ventoy/ventoy_grub.cfg.tpl"
+
+if [[ "$DRY_RUN" != "1" ]]; then
+    # Extract ISO volume label from its own GRUB config (fallback: Nobara-NN from filename)
+    ISO_CDLABEL=$(7z e "$ISO_DEST" boot/grub2/grub.cfg -so 2>/dev/null \
+        | grep -oP "CDLABEL=\K[^ ']+" | head -1)
+    [[ -z "$ISO_CDLABEL" ]] && ISO_CDLABEL=$(basename "$ISO_BASENAME" .iso | cut -d- -f1-2)
+    log_info "ISO CDLABEL: $ISO_CDLABEL"
+
+    sed -e "s|NOBARA_ISO_FILENAME|${ISO_BASENAME}|g" \
+        -e "s|NOBARA_ISO_CDLABEL|${ISO_CDLABEL}|g" \
+        "$VENTOY_GRUB_TPL" > "$VENTOY_GRUB_CFG"
+    log_info "ventoy_grub.cfg written: $VENTOY_GRUB_CFG"
+else
+    log_dry "Would write ventoy_grub.cfg → 4 GRUB menu entries for /${ISO_BASENAME}"
 fi
 
 # ── Step 8: Sync and unmount ──────────────────────────────────────────────────
@@ -241,11 +257,14 @@ fi
 
 log_info ""
 log_info "Deployment complete."
-log_info "  ISO:       /${ISO_BASENAME}"
-log_info "  Kickstart: ${KS_VENTOY_PATH}"
+log_info "  ISO:            /${ISO_BASENAME}"
+log_info "  Kickstart:      /kickstart/  (4 profiles + nobara-autoinstall.ks)"
+log_info "  ventoy.json:    4 auto_install templates"
+log_info "  ventoy_grub.cfg: 4 GRUB menu entries  [f/t/h/v]"
 log_info ""
 log_info "Boot the target machine from the Ventoy USB stick."
-log_info "Nobara will install unattended and provision itself on first boot/login."
+log_info "Choose a profile from the GRUB menu (f=Full, t=Theme, h=Headless, v=vLLM-only)"
+log_info "or select the ISO and pick a template in the auto_install dialog."
 
 # ── Step 9: Optional reboot ───────────────────────────────────────────────────
 if [[ "$DO_REBOOT" == "1" ]]; then
