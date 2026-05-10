@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           elementFormDefault="qualified">
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       Root element
+  ═══════════════════════════════════════════════════════════════════════════ -->
+  <xs:element name="nobara-install">
+    <xs:complexType>
+      <xs:all>
+        <!-- ISO source -->
+        <xs:element name="iso" type="IsoType"/>
+
+        <!-- Disk / partitioning -->
+        <xs:element name="disk" type="xs:string"/>
+        <xs:element name="partitioning" type="PartitioningType" minOccurs="0"/>
+
+        <!-- System locale -->
+        <xs:element name="hostname" type="xs:string"/>
+        <xs:element name="timezone" type="xs:string"/>
+        <xs:element name="locale"   type="xs:string"/>
+        <xs:element name="keyboard" type="xs:string"/>
+
+        <!-- Target user -->
+        <xs:element name="user" type="UserType"/>
+
+        <!-- Extra packages to install via %packages -->
+        <xs:element name="packages" type="PackagesType" minOccurs="0"/>
+
+        <!-- First-boot provisioning (runs as root, one-shot) -->
+        <xs:element name="first-boot" type="FirstBootType" minOccurs="0"/>
+
+        <!-- First-login provisioning (runs as target user, one-shot) -->
+        <xs:element name="first-login" type="FirstLoginType" minOccurs="0"/>
+      </xs:all>
+    </xs:complexType>
+  </xs:element>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       ISO
+  ═══════════════════════════════════════════════════════════════════════════ -->
+  <xs:complexType name="IsoType">
+    <xs:all>
+      <xs:element name="url"    type="xs:anyURI"/>
+      <xs:element name="sha256" type="xs:string" minOccurs="0"/>
+    </xs:all>
+  </xs:complexType>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       Partitioning
+  ═══════════════════════════════════════════════════════════════════════════ -->
+  <xs:complexType name="PartitioningType">
+    <xs:all>
+      <!-- auto = autopart --type=lvm ; custom = use kickstart_extra -->
+      <xs:element name="scheme" minOccurs="0">
+        <xs:simpleType>
+          <xs:restriction base="xs:string">
+            <xs:enumeration value="auto"/>
+            <xs:enumeration value="custom"/>
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:element>
+      <!-- Raw Kickstart lines injected verbatim for custom partitioning -->
+      <xs:element name="kickstart_extra" type="xs:string" minOccurs="0"/>
+    </xs:all>
+  </xs:complexType>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       User
+  ═══════════════════════════════════════════════════════════════════════════ -->
+  <xs:complexType name="UserType">
+    <xs:all>
+      <xs:element name="name"          type="xs:string"/>
+      <!-- sha512crypt hash: generate with: openssl passwd -6 yourpassword -->
+      <xs:element name="password_hash" type="xs:string"/>
+      <xs:element name="groups"        type="xs:string" minOccurs="0"/>
+      <xs:element name="gecos"         type="xs:string" minOccurs="0"/>
+    </xs:all>
+  </xs:complexType>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       Packages
+  ═══════════════════════════════════════════════════════════════════════════ -->
+  <xs:complexType name="PackagesType">
+    <xs:sequence>
+      <xs:element name="package" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="group"   type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       First-boot
+  ═══════════════════════════════════════════════════════════════════════════ -->
+  <xs:complexType name="FirstBootType">
+    <xs:all>
+      <xs:element name="nobara-sync"  type="EnabledType"  minOccurs="0"/>
+      <xs:element name="nvidia-open"  type="EnabledType"  minOccurs="0"/>
+      <xs:element name="cuda"         type="CudaType"     minOccurs="0"/>
+    </xs:all>
+  </xs:complexType>
+
+  <xs:complexType name="EnabledType">
+    <xs:attribute name="enabled" type="xs:boolean" default="true"/>
+  </xs:complexType>
+
+  <xs:complexType name="CudaType">
+    <xs:attribute name="enabled" type="xs:boolean" default="true"/>
+    <!-- nobara = prefer Nobara/Fedora dnf repos; nvidia = official CUDA repo -->
+    <xs:attribute name="source">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="nobara"/>
+          <xs:enumeration value="nvidia"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       First-login
+  ═══════════════════════════════════════════════════════════════════════════ -->
+  <xs:complexType name="FirstLoginType">
+    <xs:all>
+      <xs:element name="gnome-extensions" type="GnomeExtensionsType" minOccurs="0"/>
+      <xs:element name="whitesur"         type="WhiteSurType"        minOccurs="0"/>
+      <xs:element name="ohmybash"         type="OhMyBashType"        minOccurs="0"/>
+      <xs:element name="pytorch-venv"     type="PyTorchVenvType"     minOccurs="0"/>
+      <xs:element name="vllm-omni"        type="VllmOmniType"        minOccurs="0"/>
+    </xs:all>
+  </xs:complexType>
+
+  <xs:complexType name="GnomeExtensionsType">
+    <xs:sequence>
+      <xs:element name="extension" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+    <xs:attribute name="enabled" type="xs:boolean" default="true"/>
+  </xs:complexType>
+
+  <xs:complexType name="WhiteSurType">
+    <xs:all>
+      <!-- Arguments passed verbatim to each ./install.sh; -d auto-set for user install -->
+      <xs:element name="gtk-args"       type="xs:string" minOccurs="0"/>
+      <xs:element name="icon-args"      type="xs:string" minOccurs="0"/>
+      <xs:element name="wallpaper-args" type="xs:string" minOccurs="0"/>
+    </xs:all>
+    <xs:attribute name="enabled" type="xs:boolean" default="true"/>
+  </xs:complexType>
+
+  <xs:complexType name="OhMyBashType">
+    <xs:attribute name="enabled" type="xs:boolean" default="true"/>
+    <xs:attribute name="theme"   type="xs:string"  default="modern"/>
+  </xs:complexType>
+
+  <xs:complexType name="PyTorchVenvType">
+    <xs:attribute name="enabled" type="xs:boolean" default="true"/>
+    <xs:attribute name="path"    type="xs:string"  default="~/.venvs/ai"/>
+  </xs:complexType>
+
+  <xs:complexType name="VllmOmniType">
+    <xs:all>
+      <!-- CUDA version to build against (must be installed or will be installed) -->
+      <xs:element name="cuda-version" type="xs:string" minOccurs="0"/>
+      <!-- TORCH_CUDA_ARCH_LIST value, e.g. "12.0" for sm120 (RTX 5070 Ti) -->
+      <xs:element name="arch-list"    type="xs:string" minOccurs="0"/>
+      <!-- HuggingFace model repo-id to download after build -->
+      <xs:element name="model"        type="xs:string" minOccurs="0"/>
+    </xs:all>
+    <xs:attribute name="enabled"  type="xs:boolean" default="true"/>
+    <xs:attribute name="venv"     type="xs:string"  default="~/.venvs/bitwig-omni"/>
+  </xs:complexType>
+
+</xs:schema>

@@ -1,0 +1,26 @@
+# ── Secrets ───────────────────────────────────────────────────────────────────
+.env
+.env.local
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+
+# ── Generated artifacts ───────────────────────────────────────────────────────
+# Kickstart generated from XML — not tracked, always regenerated
+kickstart/nobara-autoinstall.ks
+
+# Downloaded ISOs (large binary, not for git)
+iso/
+
+# ── Runtime state ─────────────────────────────────────────────────────────────
+.state/
+logs/
+
+# ── macOS / editor ────────────────────────────────────────────────────────────
+.DS_Store
+.vscode/
+*.swp
+*~

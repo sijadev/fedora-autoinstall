@@ -1,0 +1,24 @@
+[Unit]
+Description=Nobara First-Boot Provisioning (one-shot)
+Documentation=https://github.com/user/nobara-install
+After=network-online.target
+Wants=network-online.target
+# Ensure this runs only on first boot; marker file disables it on subsequent boots
+ConditionPathExists=!/var/lib/nobara-provision/first-boot.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nobara-first-boot.sh
+EnvironmentFile=-/etc/nobara-provision.env
+StandardOutput=journal+console
+StandardError=journal+console
+TimeoutStartSec=3600
+RemainAfterExit=yes
+
+# Prevent privilege escalation
+NoNewPrivileges=no
+# Service runs as root (required for dnf, systemctl, akmods)
+User=root
+
+[Install]
+WantedBy=multi-user.target

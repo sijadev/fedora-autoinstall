@@ -1,0 +1,86 @@
+#version=RHEL9
+# Nobara Linux — Vollständige Installation
+# Profil: full — GNOME Desktop + NVIDIA + CUDA + Podman + vLLM + Modelle
+# Ventoy-Menü: "Vollstaendige Installation"
+
+text
+reboot
+
+# ── Locale / Keyboard / Timezone ─────────────────────────────────────────────
+keyboard --xlayouts='de'
+lang de_DE.UTF-8
+timezone Europe/Berlin --utc
+
+# ── Network ───────────────────────────────────────────────────────────────────
+network --bootproto=dhcp --device=link --activate
+network --hostname=nobara-workstation
+
+# ── Disk / Partitioning ───────────────────────────────────────────────────────
+ignoredisk --only-use=sda
+zerombr
+clearpart --all --initlabel --drives=sda
+autopart --type=lvm
+
+# ── Bootloader ────────────────────────────────────────────────────────────────
+bootloader --location=mbr --boot-drive=sda
+
+# ── Authentication ────────────────────────────────────────────────────────────
+rootpw --lock
+user --groups=wheel,libvirt,video,audio --name=sija \
+     --password=$6$rounds=4096$exampleSalt$A2xI1.hfVf4M8bJH3uQ6Q7fKJ3QYgAnfYQPc0dyY8aTJiD9f8Lh3EEcKB6DzQ9s9lfhYf6Q2xv.YO1f4Yv4eY0 \
+     --iscrypted --gecos="sija"
+
+# ── Packages ──────────────────────────────────────────────────────────────────
+%packages
+@^nobara-desktop
+git
+curl
+python3
+python3-pip
+python3-virtualenv
+gnome-shell-extension-user-theme
+gnome-shell-extension-dash-to-panel
+flatpak
+make
+gcc
+gcc-c++
+cmake
+ninja-build
+podman
+virt-manager
+qemu-kvm
+libvirt
+pciutils
+%end
+
+# ── %addon ────────────────────────────────────────────────────────────────────
+%addon com_redhat_kdump --disable
+%end
+
+# ── %post: write profile-specific environment ─────────────────────────────────
+%post --log=/root/ks-profile.log
+
+cat > /etc/nobara-provision.env <<'ENVEOF'
+NOBARA_INSTALL_PROFILE="full"
+NOBARA_TARGET_USER="sija"
+NOBARA_PYTORCH_VENV="~/.venvs/ai"
+NOBARA_VLLM_VENV="~/.venvs/bitwig-omni"
+NOBARA_AUDIO_VENV="~/.venvs/kimi-audio"
+NOBARA_VLLM_CUDA_VERSION="13.2"
+NOBARA_VLLM_ARCH_LIST="12.0"
+NOBARA_AUDIO_MODEL="moonshotai/Kimi-Audio-7B-Instruct"
+NOBARA_AGENT_MODEL="Qwen/Qwen3-14B-AWQ"
+NOBARA_NEO4J_URI="bolt://localhost:7687"
+NOBARA_NEO4J_USER="neo4j"
+NOBARA_NEO4J_PASSWORD="bitwig-agent"
+NOBARA_WS_GTK_ARGS="-l -c Dark"
+NOBARA_WS_ICON_ARGS="-dark"
+NOBARA_WS_WALL_ARGS=""
+NOBARA_OMB_THEME="modern"
+NOBARA_CUDA_SOURCE="nobara"
+ENVEOF
+chmod 0644 /etc/nobara-provision.env
+
+%end
+
+%include /kickstart/common-post.inc
