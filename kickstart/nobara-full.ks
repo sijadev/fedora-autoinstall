@@ -84,8 +84,6 @@ pciutils
 %end
 
 # ── %addon ────────────────────────────────────────────────────────────────────
-%addon com_redhat_kdump --disable
-%end
 
 # ── %post: write profile-specific environment ─────────────────────────────────
 %post --log=/root/ks-profile.log

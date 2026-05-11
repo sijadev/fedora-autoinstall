@@ -68,8 +68,6 @@ libvirt
 %end
 
 # ── %addon kdump ──────────────────────────────────────────────────────────────
-%addon com_redhat_kdump --disable
-%end
 
 # ── %post: install first-boot service and first-login runner ──────────────────
 %post --log=/root/ks-post.log
