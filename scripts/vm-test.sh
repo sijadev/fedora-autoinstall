@@ -220,22 +220,59 @@ cmd_create() {
 cmd_install() {
     step "Installations-Test: Ventoy USB → GRUB [m] → Anaconda → nobara-vm.ks"
 
-    vm_exists || die "VM '${VM_NAME}' nicht gefunden. Erst 'create' ausführen."
+    local install_vm="nobara-install-test"
+    local install_disk="${VM_STORAGE_DIR}/${install_vm}.qcow2"
+    local install_nvram="${VM_STORAGE_DIR}/${install_vm}-OVMF_VARS.fd"
 
-    # VM muss ausgeschaltet sein (frische Disk)
-    if vm_is_running; then
-        log "VM läuft — stoppe für frischen Install..."
-        virsh destroy "$VM_NAME"
-        sleep 2
+    # Alte Install-Test-VM bereinigen
+    if virsh dominfo "$install_vm" &>/dev/null; then
+        virsh domstate "$install_vm" 2>/dev/null | grep -q "laufend\|running" && \
+            virsh destroy "$install_vm" 2>/dev/null || true
+        virsh undefine "$install_vm" --nvram 2>/dev/null || \
+            virsh undefine "$install_vm" 2>/dev/null || true
+        log "Alte Install-Test-VM entfernt."
     fi
+    [[ -f "$install_disk" ]] && rm -f "$install_disk"
+    [[ -f "$install_nvram" ]] && rm -f "$install_nvram"
 
-    # Ventoy USB-Passthrough sicherstellen
-    if ! virsh dumpxml "$VM_NAME" | grep -q "hostdev"; then
-        add_usb_passthrough
-    fi
+    # Frische VM mit LEEREM Disk anlegen
+    # UEFI bootet automatisch vom USB wenn kein OS auf Disk
+    log "Lege neue Install-Test-VM an: ${install_vm} (${VM_DISK_GB}GB, leer)..."
+    cp "$OVMF_VARS" "$install_nvram"
 
-    log "Starte VM — bootet vom Ventoy USB-Stick..."
-    virsh start "$VM_NAME"
+    virt-install \
+        --name "$install_vm" \
+        --memory "$VM_RAM_MB" \
+        --vcpus "$VM_CPUS" \
+        --disk "path=${install_disk},size=${VM_DISK_GB},format=qcow2,bus=virtio" \
+        --os-variant "$VM_OS_VARIANT" \
+        --boot "uefi,loader=${OVMF_CODE},loader_ro=yes,nvram=${install_nvram}" \
+        --network network=default \
+        --graphics spice,listen=none \
+        --video virtio \
+        --noautoconsole \
+        --print-xml > /tmp/${install_vm}.xml
+
+    virsh define /tmp/${install_vm}.xml
+    log "VM '${install_vm}' definiert (leerer Disk)."
+
+    # Ventoy USB-Passthrough hinzufügen
+    find_ventoy_usb
+    virsh attach-device "$install_vm" --persistent /dev/stdin <<XMLEOF 2>/dev/null || true
+<hostdev mode='subsystem' type='usb' managed='yes'>
+  <source>
+    <vendor id='0x${VENTOY_USB_VENDOR}'/>
+    <product id='0x${VENTOY_USB_PRODUCT}'/>
+  </source>
+</hostdev>
+XMLEOF
+    log "Ventoy USB-Passthrough hinzugefügt."
+
+    log "Starte VM — UEFI bootet vom Ventoy USB (kein OS auf Disk)..."
+    virsh start "$install_vm"
+
+    # Lokale Variable für den rest der Funktion
+    local ACTIVE_VM="$install_vm"
 
     # Warten bis GRUB geladen ist (~8s nach BIOS POST)
     log "Warte auf Ventoy GRUB-Menü (10s)..."
@@ -243,11 +280,11 @@ cmd_install() {
 
     # Hotkey [m] senden → wählt nobara-vm.ks Profil
     log "Sende Hotkey 'm' → VM-Test Profil auswählen..."
-    virsh send-key "$VM_NAME" KEY_M
+    virsh send-key "$ACTIVE_VM" KEY_M
     log "Anaconda startet mit nobara-vm.ks — Installation läuft..."
 
     # virt-manager öffnen für visuelle Kontrolle
-    virt-manager --connect qemu:///system --show-domain-console "$VM_NAME" &
+    virt-manager --connect qemu:///system --show-domain-console "$ACTIVE_VM" &
     log "virt-manager geöffnet — Installation in Echtzeit sichtbar"
 
     # Auf Abschluss warten: VM startet nach Installation neu
@@ -259,7 +296,7 @@ cmd_install() {
     # Warte auf ersten Shutdown nach Install (VM rebootet)
     while [[ $waited -lt $install_timeout ]]; do
         sleep 10; waited=$((waited + 10))
-        local state; state=$(vm_state)
+        local state; state=$(LIBVIRT_DEFAULT_URI="qemu:///system" virsh domstate "$ACTIVE_VM" 2>/dev/null || echo "unknown")
         if [[ "$state" =~ ^(ausgeschaltet|shut.off) ]]; then
             rebooted=1
             break
@@ -270,20 +307,22 @@ cmd_install() {
     if [[ $rebooted -eq 1 ]]; then
         log "✓ Installation abgeschlossen — VM hat sich ausgeschaltet (reboot nach Install)"
         log "Starte VM für Post-Install-Check..."
-        virsh start "$VM_NAME"
-        sleep 60  # Boot-Zeit
+        virsh start "$ACTIVE_VM"
+        sleep 60
 
-        local ip; ip=$(get_vm_ip 2>/dev/null || echo "")
+        local ip; ip=$(LIBVIRT_DEFAULT_URI="qemu:///system" virsh domifaddr "$ACTIVE_VM" \
+            2>/dev/null | awk '/ipv4/{print $4}' | cut -d/ -f1 | head -1 || echo "")
         if [[ -n "$ip" ]]; then
             log "✓ VM bootet ins installierte System — IP: $ip"
             log ""
-            log "Nächster Schritt: ./scripts/vm-test.sh snapshot"
+            log "Install-Test VM: ${ACTIVE_VM}"
+            log "Disk: ${install_disk}"
         else
             warn "VM gestartet aber keine IP nach 60s — manuell prüfen"
         fi
     else
         warn "✗ Installation nicht abgeschlossen nach ${install_timeout}s"
-        log "Aktueller VM-Status: $(vm_state)"
+        log "Aktueller Status: $(LIBVIRT_DEFAULT_URI="qemu:///system" virsh domstate "$ACTIVE_VM" 2>/dev/null)"
         log "Prüfe virt-manager für Anaconda-Fehlermeldungen"
     fi
 }
