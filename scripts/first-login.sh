@@ -103,7 +103,6 @@ else
     fi
 
     # Methode 1b: DBUS — GNOME Shell direkt mitteilen Extensions zu laden
-    local dbus_addr
     dbus_addr=$(cat /proc/$(pgrep -u "$USER" gnome-shell 2>/dev/null | head -1)/environ 2>/dev/null \
         | tr '\0' '\n' | grep DBUS_SESSION_BUS_ADDRESS | cut -d= -f2- || true)
     if [[ -n "$dbus_addr" ]]; then
