@@ -468,8 +468,9 @@ curl -sf http://localhost:${vllm_port}/v1/chat/completions \
         # Log auf ERROR-Zeilen prüfen
         log "Log-Analyse: first-login.log auf Fehler prüfen..."
         error_count=$($SSH "$VM_USER@$ip" \
-            "grep -c '\[ERROR\]' \${HOME}/.local/share/nobara-provision/first-login.log 2>/dev/null || echo 0" \
-            2>/dev/null || echo "0")
+            "grep -c '\[ERROR\]' \${HOME}/.local/share/nobara-provision/first-login.log 2>/dev/null; true" \
+            2>/dev/null | tr -d '[:space:]' || echo "0")
+        error_count="${error_count:-0}"
         if [[ "$error_count" -eq 0 ]]; then
             log "✓ Keine ERROR-Einträge im first-login.log"
         else

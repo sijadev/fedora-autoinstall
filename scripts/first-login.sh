@@ -395,16 +395,21 @@ else
     "$VENV_VLLM/bin/pip" install --quiet "huggingface_hub" \
         || warn "HuggingFace CLI install failed (non-fatal)."
 
-    # vLLM CPU-Backend: installiert ohne CUDA-Kompilierung
-    VLLM_TARGET_DEVICE=cpu "$VENV_VLLM/bin/pip" install --quiet vllm \
+    # vLLM CPU-Backend — TMPDIR auf /home wegen tmpfs /tmp (begrenzt auf 50% RAM)
+    mkdir -p "${HOME}/.cache/pip-tmp"
+    TMPDIR="${HOME}/.cache/pip-tmp" VLLM_TARGET_DEVICE=cpu \
+        "$VENV_VLLM/bin/pip" install --quiet --no-cache-dir vllm \
         || warn "vLLM CPU install failed (non-fatal)."
 
     # Kleines Testmodell für VM-Tests vorausholen (250MB)
     if "$VENV_VLLM/bin/python" -c "import vllm" 2>/dev/null; then
         log "vLLM CPU-Backend installiert. Lade Test-Modell facebook/opt-125m..."
-        "$VENV_VLLM/bin/huggingface-cli" download facebook/opt-125m \
-            --local-dir "${HOME}/.cache/huggingface/hub/facebook--opt-125m" \
-            --quiet 2>/dev/null \
+        TMPDIR="${HOME}/.cache/pip-tmp" \
+            "$VENV_VLLM/bin/python" -c "
+from huggingface_hub import snapshot_download
+snapshot_download('facebook/opt-125m', local_dir='${HOME}/.cache/huggingface/hub/facebook--opt-125m')
+print('Modell bereit: facebook/opt-125m')
+" 2>/dev/null \
             && log "Test-Modell bereit: facebook/opt-125m" \
             || warn "Modell-Download fehlgeschlagen (non-fatal)."
     fi
@@ -546,8 +551,10 @@ else
 log "Checking HuggingFace login..."
 log "Downloading model: ${VLLM_MODEL} ..."
 # Lazy token behavior: download will prompt for login only when required.
-"$VENV_VLLM/bin/huggingface-cli" download "${VLLM_MODEL}" \
-    --local-dir "${HOME}/.cache/huggingface/hub/${VLLM_MODEL//\//__}" \
+"$VENV_VLLM/bin/python" -c "
+from huggingface_hub import snapshot_download
+snapshot_download('${VLLM_MODEL}', local_dir='${HOME}/.cache/huggingface/hub/${VLLM_MODEL//\//__}')
+" \
     || warn "Model download failed or deferred (check HF token / disk space)."
 fi
 
