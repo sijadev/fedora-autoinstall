@@ -5,14 +5,20 @@
 #   NOBARA_ISO_FILENAME  — e.g. Nobara-43-GNOME-NV-2026-04-25.iso
 #   NOBARA_ISO_CDLABEL   — e.g. Nobara-43  (ISO volume label)
 #
-# Hotkeys: [f] Full  [t] Theme  [h] Headless  [v] vLLM-only
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  [f]  Vollinstallation  →  bootet ISO, Anaconda installiert frisch      │
+# │  [t]  Theme + Bash      ─┐                                              │
+# │  [h]  Headless vLLM     ─┤ laufen auf BESTEHENDEM Nobara:               │
+# │  [v]  vLLM only         ─┘ nobara-provision.sh vom USB starten          │
+# └─────────────────────────────────────────────────────────────────────────┘
 #
-# Disk-Override: Im GRUB-Menü (e) drücken und an die linux-Zeile anhängen:
-#   inst.disk=sdb          (z.B. zweite SATA-Disk)
+# Disk-Override (nur für [f]): Im GRUB-Menü (e) und an linux-Zeile anhängen:
 #   inst.disk=nvme1n1      (z.B. zweite NVMe)
+#   inst.disk=sdb          (z.B. zweite SATA-Disk)
 # Ohne Override: größte interne Disk wird automatisch gewählt.
 
-menuentry "Nobara -- [f] Vollinstallation  (GNOME + NVIDIA + AI + vLLM)" --hotkey=f {
+# ── [f] Vollinstallation — bootet ISO, installiert frisches System ────────────
+menuentry "Nobara -- [f] Vollinstallation  (ISO-Boot → Anaconda → frisches System)" --hotkey=f {
     search --no-floppy --label --set=root Ventoy
     set isofile="/NOBARA_ISO_FILENAME"
     loopback loop $isofile
@@ -20,26 +26,38 @@ menuentry "Nobara -- [f] Vollinstallation  (GNOME + NVIDIA + AI + vLLM)" --hotke
     initrd (loop)/images/pxeboot/initrd.img
 }
 
-menuentry "Nobara -- [t] Theme + Bash       (GNOME + WhiteSur, kein AI)" --hotkey=t {
-    search --no-floppy --label --set=root Ventoy
-    set isofile="/NOBARA_ISO_FILENAME"
-    loopback loop $isofile
-    linux  (loop)/images/pxeboot/vmlinuz root=live:CDLABEL=NOBARA_ISO_CDLABEL rd.live.image nomodeset inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-theme-bash.ks
-    initrd (loop)/images/pxeboot/initrd.img
+# ── [t] Theme + Bash — Provisioner auf bestehendem System starten ────────────
+menuentry "Nobara -- [t] Theme + Bash       (bestehende Installation → Provisioner)" --hotkey=t {
+    echo ""
+    echo "Dieses Profil installiert kein neues System."
+    echo "Im laufenden Nobara ausfuehren:"
+    echo ""
+    echo "  sudo bash /run/media/USER/Ventoy/nobara-provision.sh --profile theme-bash"
+    echo ""
+    echo "Taste druecken um fortzufahren ..."
+    sleep -1
 }
 
-menuentry "Nobara -- [h] Headless vLLM      (kein GUI, Podman + vLLM als Dienst)" --hotkey=h {
-    search --no-floppy --label --set=root Ventoy
-    set isofile="/NOBARA_ISO_FILENAME"
-    loopback loop $isofile
-    linux  (loop)/images/pxeboot/vmlinuz root=live:CDLABEL=NOBARA_ISO_CDLABEL rd.live.image inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-headless-vllm.ks
-    initrd (loop)/images/pxeboot/initrd.img
+# ── [h] Headless vLLM (Podman) — Provisioner auf bestehendem System ──────────
+menuentry "Nobara -- [h] Headless vLLM      (bestehende Installation → Provisioner)" --hotkey=h {
+    echo ""
+    echo "Dieses Profil installiert kein neues System."
+    echo "Im laufenden Nobara ausfuehren:"
+    echo ""
+    echo "  sudo bash /run/media/USER/Ventoy/nobara-provision.sh --profile headless-vllm"
+    echo ""
+    echo "Taste druecken um fortzufahren ..."
+    sleep -1
 }
 
-menuentry "Nobara -- [v] vLLM only          (kein GUI, kein Podman, Python venv)" --hotkey=v {
-    search --no-floppy --label --set=root Ventoy
-    set isofile="/NOBARA_ISO_FILENAME"
-    loopback loop $isofile
-    linux  (loop)/images/pxeboot/vmlinuz root=live:CDLABEL=NOBARA_ISO_CDLABEL rd.live.image inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-vllm-only.ks
-    initrd (loop)/images/pxeboot/initrd.img
+# ── [v] vLLM only — Provisioner auf bestehendem System ───────────────────────
+menuentry "Nobara -- [v] vLLM only          (bestehende Installation → Provisioner)" --hotkey=v {
+    echo ""
+    echo "Dieses Profil installiert kein neues System."
+    echo "Im laufenden Nobara ausfuehren:"
+    echo ""
+    echo "  sudo bash /run/media/USER/Ventoy/nobara-provision.sh --profile vllm-only"
+    echo ""
+    echo "Taste druecken um fortzufahren ..."
+    sleep -1
 }

@@ -98,34 +98,68 @@ Mit Vorschau (kein Schreiben):
 sudo ./nobara-install.sh --config config/mein-system.xml --dry-run
 ```
 
-### 3. Booten und Profil wählen
+### 3. Profil wählen — ISO-Install oder Provisioner
 
-USB-Stick in Zielrechner → Im Ventoy-Menü die Nobara-ISO auswählen → **F6** für das GRUB-Profil-Menü:
+Zwei grundlegend verschiedene Mechanismen:
 
-| Taste | Profil |
-|---|---|
-| `f` | Vollinstallation — GNOME + NVIDIA + CUDA + Podman + vLLM |
-| `t` | Theme + Bash — GNOME + WhiteSur + Oh-My-Bash, kein AI |
-| `h` | Headless vLLM — Kein GUI, Podman + vLLM als Dienst |
-| `v` | vLLM only — Kein GUI, kein Podman, Python venv |
+| Profil | Mechanismus | Wann |
+|---|---|---|
+| `full` | ISO-Boot → Anaconda → frisches System | Neues System / Festplatte leer |
+| `theme-bash` | `nobara-provision.sh` auf laufendem System | Nobara bereits installiert |
+| `headless-vllm` | `nobara-provision.sh` auf laufendem System | Nobara bereits installiert |
+| `vllm-only` | `nobara-provision.sh` auf laufendem System | Nobara bereits installiert |
 
-Die Installation läuft vollautomatisch durch. Nach dem Reboot startet die Erst-Provisionierung.
+#### Profil `full` — Frische Installation per ISO
+
+USB-Stick in Zielrechner → Im Ventoy-Menü Nobara-ISO auswählen → **F6** → **`f`** drücken.
+
+Anaconda startet grafisch, die Installation läuft vollautomatisch durch. Nach dem Reboot startet die Provisionierung automatisch.
+
+Disk-Override (falls nicht die größte interne Disk gewählt werden soll): Im GRUB-Menü **`e`** drücken und an die `linux`-Zeile anhängen:
+```
+inst.disk=nvme1n1
+```
+
+#### Profile `theme-bash`, `headless-vllm`, `vllm-only` — Bestehende Installation
+
+USB-Stick einstecken, im laufenden Nobara ausführen:
+
+```bash
+# Theme + WhiteSur + Oh-My-Bash
+sudo bash /run/media/$USER/Ventoy/nobara-provision.sh --profile theme-bash
+
+# NVIDIA + CUDA + Podman + vLLM als systemd-Dienst
+sudo bash /run/media/$USER/Ventoy/nobara-provision.sh --profile headless-vllm
+
+# NVIDIA + CUDA + vLLM direkt im Python venv
+sudo bash /run/media/$USER/Ventoy/nobara-provision.sh --profile vllm-only
+```
+
+Für einen anderen Benutzer:
+```bash
+sudo bash /run/media/$USER/Ventoy/nobara-provision.sh --profile theme-bash --user max
+```
+
+Sofort starten statt beim nächsten Boot:
+```bash
+sudo bash /run/media/$USER/Ventoy/nobara-provision.sh --profile vllm-only --run-now
+```
 
 ---
 
-## Install-Profile
+## Profile im Detail
 
-### `full` — Vollinstallation
-GNOME Desktop, NVIDIA Open Driver, CUDA, Podman, vLLM (Blackwell sm120), Kimi-Audio, Qwen3-14B-AWQ, Neo4j, WhiteSur-Theme, Oh-My-Bash.
+### `full` — Vollinstallation (ISO-Boot)
+Frische Neuinstallation. GNOME Desktop, NVIDIA Open Driver, CUDA, Podman, vLLM (Blackwell sm120), Kimi-Audio, Qwen3-14B-AWQ, Neo4j, WhiteSur-Theme, Oh-My-Bash.
 
-### `theme-bash` — Theme + Bash
-GNOME Desktop, NVIDIA Open Driver, WhiteSur GTK/Icon/Wallpaper-Themes, Oh-My-Bash. Kein AI-Stack, kein CUDA.
+### `theme-bash` — Theme + Bash (Provisioner)
+Auf bestehendem Nobara: WhiteSur GTK/Icon/Wallpaper-Themes, Oh-My-Bash. NVIDIA Open Driver wird aktualisiert. Kein AI-Stack, kein CUDA.
 
-### `headless-vllm` — Headless Podman
-Kein GUI. NVIDIA Open Driver, CUDA, Podman-Pipeline mit vLLM als systemd-Dienst. Modell-Download im Container.
+### `headless-vllm` — Podman + vLLM (Provisioner)
+Auf bestehendem Nobara: NVIDIA Open Driver, CUDA, Podman-Pipeline mit vLLM als systemd-Dienst. Kein Anaconda-GUI nötig.
 
-### `vllm-only` — Headless Python venv
-Kein GUI, kein Podman. NVIDIA Open Driver, CUDA, vLLM direkt im Python venv, vLLM-API als systemd-Dienst.
+### `vllm-only` — Python venv + vLLM (Provisioner)
+Auf bestehendem Nobara: NVIDIA Open Driver, CUDA, vLLM direkt im Python venv als systemd-Dienst. Kein Podman.
 
 ### `vm` — VM (intern)
 KVM/QEMU-Gast, virtio-Disk (`vda`). Wird vom Podman-Smoke-Gate genutzt.

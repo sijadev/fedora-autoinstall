@@ -211,6 +211,38 @@ else
     log_dry "cp kickstart/nobara-*.ks → $KS_DEST_DIR/"
 fi
 
+# ── Step 6b: Deploy Provisioner + Scripts ────────────────────────────────────
+log_step "Provisioner + Scripts deployment to Ventoy"
+
+if [[ "$DRY_RUN" != "1" ]]; then
+    # nobara-provision.sh — für bestehende Systeme (theme-bash, vllm-only, headless-vllm)
+    cp "$SCRIPT_DIR/nobara-provision.sh" "$VENTOY_MNT/nobara-provision.sh"
+    chmod +x "$VENTOY_MNT/nobara-provision.sh"
+    log_info "Provisioner deployed: nobara-provision.sh"
+
+    # scripts/ — first-boot.sh, first-login.sh (werden von provision.sh referenziert)
+    SCRIPTS_DEST="$VENTOY_MNT/scripts"
+    mkdir -p "$SCRIPTS_DEST"
+    for f in first-boot.sh first-login.sh; do
+        [[ -f "$SCRIPT_DIR/scripts/$f" ]] || continue
+        cp "$SCRIPT_DIR/scripts/$f" "$SCRIPTS_DEST/$f"
+        log_info "Script deployed: scripts/$f"
+    done
+
+    # systemd/ — nobara-first-boot.service
+    SYSTEMD_DEST="$VENTOY_MNT/systemd"
+    mkdir -p "$SYSTEMD_DEST"
+    for f in "$SCRIPT_DIR"/systemd/*.service; do
+        [[ -f "$f" ]] || continue
+        cp "$f" "$SYSTEMD_DEST/$(basename "$f")"
+        log_info "Systemd unit deployed: systemd/$(basename "$f")"
+    done
+else
+    log_dry "cp nobara-provision.sh → Ventoy root"
+    log_dry "cp scripts/first-boot.sh scripts/first-login.sh → Ventoy/scripts/"
+    log_dry "cp systemd/*.service → Ventoy/systemd/"
+fi
+
 # ── Step 7: Write ventoy.json ─────────────────────────────────────────────────
 log_step "ventoy.json auto_install config"
 
