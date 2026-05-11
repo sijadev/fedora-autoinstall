@@ -49,6 +49,9 @@ SSH="sshpass -p ${VM_PASS:-test123} ssh $SSH_OPTS"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
+# Log- und Screenshot-Verzeichnis
+TEST_RESULTS_DIR="${PROJECT_DIR}/test-results"
+
 # ── Farben ─────────────────────────────────────────────────────────────────────
 if [[ -t 1 ]]; then
     GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'
@@ -92,6 +95,42 @@ wait_for_ssh() {
     done
     echo ""
     log "SSH verbunden: $ip"
+}
+
+# ── Screenshot-Hilfsfunktionen ─────────────────────────────────────────────────
+
+take_screenshot() {
+    local label="$1"   # z.B. "before" oder "after"
+    local profile="$2"
+    local ts; ts=$(date '+%Y%m%d-%H%M%S')
+    local out_dir="${TEST_RESULTS_DIR}/${profile}"
+    mkdir -p "$out_dir"
+
+    local ppm="${out_dir}/${ts}-${label}.ppm"
+    local png="${out_dir}/${ts}-${label}.png"
+
+    virsh screenshot "$VM_NAME" "$ppm" 2>/dev/null || { warn "Screenshot fehlgeschlagen."; return; }
+
+    if command -v convert &>/dev/null; then
+        convert "$ppm" "$png" 2>/dev/null && rm -f "$ppm" && log "Screenshot: $png"
+    elif command -v ffmpeg &>/dev/null; then
+        ffmpeg -y -i "$ppm" "$png" -loglevel quiet && rm -f "$ppm" && log "Screenshot: $png"
+    else
+        log "Screenshot (PPM): $ppm  (imagemagick/ffmpeg fehlt für PNG-Konversion)"
+    fi
+}
+
+open_terminal_in_vm() {
+    local ip="$1"
+    # DBUS-Session des eingeloggten Users ermitteln und Terminal öffnen
+    $SSH "$VM_USER@$ip" 'bash -c "
+        export DISPLAY=:0
+        export DBUS_SESSION_BUS_ADDRESS=$(cat /proc/$(pgrep -u $USER ptyxis gnome-session | head -1)/environ 2>/dev/null | tr \"\\0\" \"\\n\" | grep DBUS_SESSION | cut -d= -f2-)
+        nohup ptyxis &>/dev/null &
+    "' 2>/dev/null || \
+    $SSH "$VM_USER@$ip" \
+        'DISPLAY=:0 nohup bash -c "dbus-launch ptyxis" &>/dev/null &' 2>/dev/null || true
+    sleep 3  # Fenster aufbauen lassen
 }
 
 find_ventoy_usb() {
@@ -200,6 +239,14 @@ cmd_test() {
 
     step "Test: Profil '${profile}'"
 
+    # Log-Datei für diesen Testlauf
+    local ts; ts=$(date '+%Y%m%d-%H%M%S')
+    local log_dir="${TEST_RESULTS_DIR}/${profile}"
+    mkdir -p "$log_dir"
+    local log_file="${log_dir}/${ts}-test.log"
+    exec > >(tee -a "$log_file") 2>&1
+    log "Log-Datei: $log_file"
+
     vm_exists        || die "VM '${VM_NAME}' nicht gefunden."
     snapshot_exists  || die "Snapshot '${VM_SNAPSHOT}' nicht gefunden. Erst 'snapshot' ausführen."
 
@@ -265,15 +312,53 @@ XMLEOF
     done
     log "Ventoy-Pfad in VM: $ventoy_path"
 
-    # Provisioner ausführen
+    # ── Screenshot VORHER (offenes Terminal) ──────────────────────────────────
+    step "Screenshot: vor Provisioner"
+    open_terminal_in_vm "$ip"
+    take_screenshot "1-before" "$profile"
+
+    # ── Provisioner ausführen ─────────────────────────────────────────────────
     log "Starte nobara-provision.sh --profile ${profile} ..."
     $SSH "$VM_USER@$ip" \
         "sudo bash '${ventoy_path}/nobara-provision.sh' --profile '${profile}' --run-now" \
         || warn "Provisioner abgebrochen oder mit Fehler beendet — Logs prüfen"
 
-    echo ""
-    log "Logs streamen (Ctrl+C zum Beenden):"
-    $SSH "$VM_USER@$ip" "journalctl -fu nobara-first-boot.service" || true
+    # ── First-Boot Logs abwarten ──────────────────────────────────────────────
+    log "Warte auf First-Boot Abschluss..."
+    local boot_done=0
+    local boot_waited=0
+    while [[ $boot_done -eq 0 ]]; do
+        sleep 5; boot_waited=$((boot_waited + 5))
+        if $SSH "$VM_USER@$ip" "test -f /var/lib/nobara-provision/first-boot.done" 2>/dev/null; then
+            boot_done=1
+        elif [[ $boot_waited -gt 300 ]]; then
+            warn "First-Boot nicht abgeschlossen nach 300s."
+            break
+        fi
+    done
+    [[ $boot_done -eq 1 ]] && log "First-Boot abgeschlossen."
+
+    # ── First-Login ausführen (Themes, Oh-My-Bash, GNOME Extensions) ─────────
+    if [[ "$profile" =~ ^(theme-bash|vllm-only)$ ]]; then
+        step "First-Login: Themes + Oh-My-Bash installieren"
+        log "Starte nobara-first-login.sh als User '${VM_USER}' ..."
+        $SSH "$VM_USER@$ip" \
+            "bash /usr/local/bin/nobara-first-login.sh 2>&1" \
+            | while IFS= read -r line; do log "  first-login: $line"; done || \
+            warn "First-Login mit Fehler beendet — Logs prüfen"
+        log "First-Login abgeschlossen."
+    fi
+
+    # ── Screenshot NACHHER ────────────────────────────────────────────────────
+    step "Screenshot: nach Provisioner"
+    # Neue Shell öffnen damit Oh-My-Bash sichtbar ist
+    open_terminal_in_vm "$ip"
+    sleep 3
+    take_screenshot "2-after" "$profile"
+
+    log ""
+    log "Test abgeschlossen. Ergebnisse: ${log_dir}/"
+    ls -lh "${log_dir}/" 2>/dev/null || true
 }
 
 cmd_status() {
