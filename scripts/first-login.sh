@@ -182,17 +182,13 @@ ws_install_theme() {
 GTK_DEST="-d ${HOME}/.local/share/themes"
 ICON_DEST="-d ${HOME}/.local/share/icons"
 
-# GTK Theme — ohne -l damit WhiteSur-Dark/ in ~/.local/share/themes/ landet
-# (-l installiert nur nach ~/.config/gtk-4.0/ und überspringt das Theme-Verzeichnis)
+# GTK Theme — auf GNOME 49+ (libadwaita) nur -l -c Dark
+# install.sh ohne -l erzeugt auf GNOME 49 keine Dateien (nur libadwaita wird unterstützt)
 ws_install_theme \
     "WhiteSur-gtk-theme" \
     "https://github.com/vinceliuice/WhiteSur-gtk-theme.git" \
-    "$GTK_DEST" \
-    "-c Dark"
-
-# Libadwaita-Override zusätzlich installieren
-bash "${THEMES_DIR}/WhiteSur-gtk-theme/install.sh" -l -c Dark 2>/dev/null \
-    && log "Libadwaita override installiert (~/.config/gtk-4.0/)" || true
+    "" \
+    "-l -c Dark"
 
 # Icon Theme (kein dark-Variant vorhanden — Standard WhiteSur blau)
 ws_install_theme \
@@ -215,14 +211,14 @@ ws_install_theme \
     "$ICON_DEST" \
     ""
 
-# GNOME theme + icons + cursor anwenden
+# GNOME theme anwenden
+# Hinweis: Auf GNOME 49+ (libadwaita) wird das GTK-Theme über ~/.config/gtk-4.0/ gesetzt
+# gsettings gtk-theme ist für GTK3-Apps; WhiteSur-Dark ist in ~/.config/gtk-4.0/ installiert
 if command -v gsettings &>/dev/null; then
-    gsettings set org.gnome.desktop.interface gtk-theme    'WhiteSur-Dark'    2>/dev/null || true
-    gsettings set org.gnome.desktop.wm.preferences theme   'WhiteSur-Dark'    2>/dev/null || true
     gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'      2>/dev/null || true
     gsettings set org.gnome.desktop.interface icon-theme   'WhiteSur-dark'    2>/dev/null || true
     gsettings set org.gnome.desktop.interface cursor-theme 'WhiteSur-cursors' 2>/dev/null || true
-    log "GNOME theme applied: WhiteSur-Dark GTK + WhiteSur icons + WhiteSur-cursors"
+    log "GNOME theme applied: WhiteSur libadwaita (~/.config/gtk-4.0) + WhiteSur-dark icons + WhiteSur-cursors"
 fi
 
 # Repos nach Installation entfernen — Theme-Dateien sind in ~/.local/share/ installiert

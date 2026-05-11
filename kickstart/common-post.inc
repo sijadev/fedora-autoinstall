@@ -255,21 +255,17 @@ ws_install_theme() {
 GTK_DEST="-d ${HOME}/.local/share/themes"
 ICON_DEST="-d ${HOME}/.local/share/icons"
 
-ws_install_theme "WhiteSur-gtk-theme"   "https://github.com/vinceliuice/WhiteSur-gtk-theme.git"   "$GTK_DEST"  "-c Dark"
-bash "${THEMES_DIR}/WhiteSur-gtk-theme/install.sh" -l -c Dark 2>/dev/null \
-    && log "Libadwaita override installiert (~/.config/gtk-4.0/)" || true
+ws_install_theme "WhiteSur-gtk-theme"   "https://github.com/vinceliuice/WhiteSur-gtk-theme.git"   ""  "-l -c Dark"
 ws_install_theme "WhiteSur-icon-theme" "https://github.com/vinceliuice/WhiteSur-icon-theme.git"  "$ICON_DEST" ""
 ws_install_theme "WhiteSur-wallpapers"  "https://github.com/vinceliuice/WhiteSur-wallpapers.git"  ""           "$WS_WALL_ARGS"
 ws_install_theme "WhiteSur-cursors"     "https://github.com/vinceliuice/WhiteSur-cursors.git"     "$ICON_DEST" ""
 
 # GNOME theme + icons + cursor anwenden
 if command -v gsettings &>/dev/null; then
-    gsettings set org.gnome.desktop.interface gtk-theme    'WhiteSur-Dark'    2>/dev/null || true
-    gsettings set org.gnome.desktop.wm.preferences theme   'WhiteSur-Dark'    2>/dev/null || true
     gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'      2>/dev/null || true
     gsettings set org.gnome.desktop.interface icon-theme   'WhiteSur-dark'    2>/dev/null || true
     gsettings set org.gnome.desktop.interface cursor-theme 'WhiteSur-cursors' 2>/dev/null || true
-    log "GNOME theme applied: WhiteSur-Dark GTK + WhiteSur icons + WhiteSur-cursors"
+    log "GNOME theme applied: WhiteSur libadwaita (~/.config/gtk-4.0) + WhiteSur-dark icons + WhiteSur-cursors"
 fi
 
 # Repos nach Installation entfernen
