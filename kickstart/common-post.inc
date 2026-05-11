@@ -194,7 +194,7 @@ WS_GTK_ARGS="${NOBARA_WS_GTK_ARGS:-}"
 WS_ICON_ARGS="${NOBARA_WS_ICON_ARGS:-}"
 WS_WALL_ARGS="${NOBARA_WS_WALL_ARGS:-}"
 OMB_THEME="${NOBARA_OMB_THEME:-modern}"
-THEMES_DIR="/tmp/nobara-themes-build"
+THEMES_DIR="${HOME}/.cache/nobara-themes-build"
 
 # ── 1. Flatpak Extension Manager ──────────────────────────────────────────────
 step "Flatpak Extension Manager"
@@ -269,8 +269,7 @@ if command -v gsettings &>/dev/null; then
 fi
 
 # Repos nach Installation entfernen
-rm -rf "$THEMES_DIR"
-log "Temporäre Theme-Repos entfernt: $THEMES_DIR"
+log "Theme-Repos gecacht: $THEMES_DIR"
 
 fi  # end: WhiteSur headless guard
 

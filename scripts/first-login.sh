@@ -62,7 +62,7 @@ WS_ICON_ARGS="${NOBARA_WS_ICON_ARGS:-}"
 WS_WALL_ARGS="${NOBARA_WS_WALL_ARGS:-}"
 OMB_THEME="${NOBARA_OMB_THEME:-modern}"
 
-THEMES_DIR="/tmp/nobara-themes-build"
+THEMES_DIR="${HOME}/.cache/nobara-themes-build"
 
 # ── Profile: headless profiles skip all GUI steps ────────────────────────────
 if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
@@ -250,8 +250,7 @@ if command -v gsettings &>/dev/null; then
 fi
 
 # Repos nach Installation entfernen — Theme-Dateien sind in ~/.local/share/ installiert
-rm -rf "$THEMES_DIR"
-log "Temporäre Theme-Repos entfernt: $THEMES_DIR"
+log "Theme-Repos gecacht: $THEMES_DIR (git pull bei nächstem Aufruf)"
 
 fi  # end: WhiteSur themes headless guard
 
