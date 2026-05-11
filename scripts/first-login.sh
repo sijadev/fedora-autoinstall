@@ -212,6 +212,10 @@ if command -v gsettings &>/dev/null; then
     log "GNOME theme applied: WhiteSur-Dark + WhiteSur-cursors (system icons)"
 fi
 
+# Repos nach Installation entfernen — Theme-Dateien sind in ~/.local/share/ installiert
+rm -rf "$THEMES_DIR"
+log "Temporäre Theme-Repos entfernt: $THEMES_DIR"
+
 fi  # end: WhiteSur themes headless guard
 
 # ── 6. Oh My Bash ─────────────────────────────────────────────────────────────
