@@ -105,7 +105,7 @@ else
     if command -v gsettings &>/dev/null; then
         # GVariant @as [] bereinigen → nur echte Extension-IDs behalten
         current=$(gsettings get org.gnome.shell enabled-extensions 2>/dev/null || echo "[]")
-        current=$(echo "$current" | grep -oP "'[^']+'" | tr -d "'" | grep -v '^$')
+        current=$(echo "$current" | grep -oP "'[^']+'" | tr -d "'" | grep -v '^$' || true)
         new_list=""
         for ext in "${EXTENSIONS[@]}"; do
             new_list+="'${ext}', "
