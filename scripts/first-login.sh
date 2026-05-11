@@ -221,7 +221,6 @@ mkdir -p "$THEMES_DIR"
 git clone --depth=1 "https://github.com/vinceliuice/WhiteSur-wallpapers.git" "$walls_dir" 2>&1 | \
     while read -r l; do log "  git: $l"; done || { WHITESUR_ERRORS+=("WhiteSur-wallpapers: clone failed"); }
 if [[ -x "${walls_dir}/install-gnome-backgrounds.sh" ]]; then
-    mkdir -p "${HOME}/.local/share/gnome-background-properties"
     (cd "$walls_dir" && bash install-gnome-backgrounds.sh $WS_WALL_ARGS) 2>&1 | \
         while read -r l; do log "  install: $l"; done \
         && log "  WhiteSur-wallpapers installed successfully." \
