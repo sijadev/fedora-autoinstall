@@ -215,7 +215,7 @@ ws_install_theme \
     ""
 
 # Wallpapers — install-gnome-backgrounds.sh (nicht install.sh!)
-local walls_dir="${THEMES_DIR}/WhiteSur-wallpapers"
+walls_dir="${THEMES_DIR}/WhiteSur-wallpapers"
 log "WhiteSur: WhiteSur-wallpapers"
 mkdir -p "$THEMES_DIR"
 git clone --depth=1 "https://github.com/vinceliuice/WhiteSur-wallpapers.git" "$walls_dir" 2>&1 | \
@@ -240,7 +240,6 @@ if command -v gsettings &>/dev/null; then
     gsettings set org.gnome.desktop.interface icon-theme   'WhiteSur-dark'    2>/dev/null || true
     gsettings set org.gnome.desktop.interface cursor-theme 'WhiteSur-cursors' 2>/dev/null || true
     # Wallpaper setzen (erste verfügbare WhiteSur-Datei)
-    local wallpaper
     wallpaper=$(find "${HOME}/.local/share/backgrounds/WhiteSur" -name "*.jpg" -o -name "*.png" 2>/dev/null | head -1)
     [[ -n "$wallpaper" ]] && {
         gsettings set org.gnome.desktop.background picture-uri       "file://${wallpaper}" 2>/dev/null || true
