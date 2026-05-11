@@ -22,14 +22,15 @@ VM_NAME="nobara-test"
 VM_RAM_MB=8192
 VM_CPUS=4
 VM_DISK_GB=80
-VM_DISK="/var/lib/libvirt/images/${VM_NAME}.qcow2"
+VM_STORAGE_DIR="/home/sija/VMs"
+VM_DISK="${VM_STORAGE_DIR}/${VM_NAME}.qcow2"
 VM_SNAPSHOT="base-nobara"
 VM_USER="sija"
 VM_OS_VARIANT="fedora43"
 
 OVMF_CODE="/usr/share/edk2/ovmf/OVMF_CODE.fd"
 OVMF_VARS="/usr/share/edk2/ovmf/OVMF_VARS.fd"
-OVMF_VARS_VM="/var/lib/libvirt/images/${VM_NAME}-OVMF_VARS.fd"
+OVMF_VARS_VM="${VM_STORAGE_DIR}/${VM_NAME}-OVMF_VARS.fd"
 
 # Ventoy USB: Kingston DataTraveler (lsusb: 0930:6545)
 # Wird zur Laufzeit neu ermittelt — nur Fallback hartcodiert
@@ -118,6 +119,16 @@ cmd_create() {
 
     vm_exists && die "VM '${VM_NAME}' existiert bereits. Erst 'vm-test.sh destroy' ausführen."
     [[ -f "$OVMF_CODE" ]] || die "OVMF nicht gefunden: $OVMF_CODE"
+
+    # Storage-Verzeichnis anlegen und als libvirt-Pool registrieren
+    mkdir -p "$VM_STORAGE_DIR"
+    if ! virsh pool-info nobara-vms &>/dev/null; then
+        virsh pool-define-as nobara-vms dir --target "$VM_STORAGE_DIR"
+        virsh pool-build nobara-vms
+        virsh pool-start nobara-vms
+        virsh pool-autostart nobara-vms
+        log "Storage-Pool 'nobara-vms' angelegt: $VM_STORAGE_DIR"
+    fi
 
     # Separate VARS-Datei pro VM (UEFI speichert Boot-Einträge darin)
     cp "$OVMF_VARS" "$OVMF_VARS_VM"
