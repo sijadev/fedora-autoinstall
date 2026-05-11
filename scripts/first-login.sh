@@ -169,7 +169,7 @@ ws_install_theme \
     "WhiteSur-icon-theme" \
     "https://github.com/vinceliuice/WhiteSur-icon-theme.git" \
     "$ICON_DEST" \
-    "--dark"
+    ""
 
 ws_install_theme \
     "WhiteSur-wallpapers" \

@@ -43,6 +43,14 @@ fi
 INSTALL_PROFILE="${NOBARA_INSTALL_PROFILE:-full}"
 log "Install profile: ${INSTALL_PROFILE}"
 
+# ── 0. Theme-Abhängigkeiten vorinstallieren (verhindert sudo-Prompts in first-login) ──
+step "Theme dependencies"
+if [[ "$INSTALL_PROFILE" =~ ^(full|theme-bash)$ ]]; then
+    dnf install -y sassc glib2-devel 2>/dev/null \
+        && log "Theme deps installed: sassc glib2-devel" \
+        || warn "Theme deps install failed (non-fatal)."
+fi
+
 # ── 1. nobara-sync ────────────────────────────────────────────────────────────
 step "nobara-sync"
 if command -v nobara-sync &>/dev/null; then

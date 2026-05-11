@@ -83,7 +83,7 @@ cat > /etc/nobara-provision.env <<'ENVEOF'
 NOBARA_INSTALL_PROFILE="theme-bash"
 NOBARA_TARGET_USER="sija"
 NOBARA_WS_GTK_ARGS="-l -c Dark"
-NOBARA_WS_ICON_ARGS="-dark"
+NOBARA_WS_ICON_ARGS=""
 NOBARA_WS_WALL_ARGS=""
 NOBARA_OMB_THEME="modern"
 ENVEOF
