@@ -255,18 +255,17 @@ ws_install_theme() {
 GTK_DEST="-d ${HOME}/.local/share/themes"
 ICON_DEST="-d ${HOME}/.local/share/icons"
 
-ws_install_theme "WhiteSur-gtk-theme"   "https://github.com/vinceliuice/WhiteSur-gtk-theme.git"   "$GTK_DEST"   "$WS_GTK_ARGS"
-# Icon theme: -dark flag removed in newer WhiteSur — use --dark instead
-ws_install_theme "WhiteSur-icon-theme"  "https://github.com/vinceliuice/WhiteSur-icon-theme.git"  "$ICON_DEST"  ""
-ws_install_theme "WhiteSur-wallpapers"  "https://github.com/vinceliuice/WhiteSur-wallpapers.git"  ""            "$WS_WALL_ARGS"
+ws_install_theme "WhiteSur-gtk-theme"   "https://github.com/vinceliuice/WhiteSur-gtk-theme.git"   "$GTK_DEST"  "$WS_GTK_ARGS"
+ws_install_theme "WhiteSur-wallpapers"  "https://github.com/vinceliuice/WhiteSur-wallpapers.git"  ""           "$WS_WALL_ARGS"
+ws_install_theme "WhiteSur-cursors"     "https://github.com/vinceliuice/WhiteSur-cursors.git"     "$ICON_DEST" ""
 
-# GNOME theme anwenden (erfordert laufende DBus-Session)
+# GNOME theme + cursor anwenden (Icons bleiben System-Default)
 if command -v gsettings &>/dev/null; then
-    gsettings set org.gnome.desktop.interface gtk-theme    'WhiteSur-Dark' 2>/dev/null || true
-    gsettings set org.gnome.desktop.interface icon-theme   'WhiteSur-Dark' 2>/dev/null || true
-    gsettings set org.gnome.desktop.wm.preferences theme   'WhiteSur-Dark' 2>/dev/null || true
-    gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'   2>/dev/null || true
-    log "GNOME theme applied: WhiteSur-Dark"
+    gsettings set org.gnome.desktop.interface gtk-theme    'WhiteSur-Dark'    2>/dev/null || true
+    gsettings set org.gnome.desktop.wm.preferences theme   'WhiteSur-Dark'    2>/dev/null || true
+    gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'      2>/dev/null || true
+    gsettings set org.gnome.desktop.interface cursor-theme 'WhiteSur-cursors' 2>/dev/null || true
+    log "GNOME theme applied: WhiteSur-Dark + WhiteSur-cursors (system icons)"
 fi
 
 fi  # end: WhiteSur headless guard

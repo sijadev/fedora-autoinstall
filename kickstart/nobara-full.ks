@@ -69,7 +69,7 @@ python3
 python3-pip
 python3-virtualenv
 gnome-shell-extension-user-theme
-gnome-shell-extension-dash-to-panel
+gnome-shell-extension-dash-to-dock
 flatpak
 make
 gcc

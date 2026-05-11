@@ -82,20 +82,20 @@ else
     log "Extension Manager already installed."
 fi
 
-# ── 2. Enable GNOME extensions ────────────────────────────────────────────────
+# ── 2. GNOME extensions aktivieren ───────────────────────────────────────────
 step "GNOME extensions"
 if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
     log "Skipped (headless profile)."
 elif command -v gnome-extensions &>/dev/null; then
     for ext in \
         "user-theme@gnome-shell-extensions.gcampax.github.com" \
-        "dash-to-panel@jderose9.github.com"; do
+        "dash-to-dock@micxgx.gmail.com"; do
         if gnome-extensions list 2>/dev/null | grep -qF "$ext"; then
             gnome-extensions enable "$ext" 2>/dev/null \
                 && log "Enabled: $ext" \
                 || warn "Could not enable: $ext"
         else
-            warn "Extension not installed (did Kickstart %post run?): $ext"
+            warn "Extension nicht installiert (noch nicht via dnf verfügbar): $ext"
         fi
     done
 else
@@ -157,33 +157,36 @@ ws_install_theme() {
 }
 
 GTK_DEST="-d ${HOME}/.local/share/themes"
-ICON_DEST="-d ${HOME}/.local/share/icons"
+CURSOR_DEST="-d ${HOME}/.local/share/icons"
 
+# GTK Theme
 ws_install_theme \
     "WhiteSur-gtk-theme" \
     "https://github.com/vinceliuice/WhiteSur-gtk-theme.git" \
     "$GTK_DEST" \
     "$WS_GTK_ARGS"
 
-ws_install_theme \
-    "WhiteSur-icon-theme" \
-    "https://github.com/vinceliuice/WhiteSur-icon-theme.git" \
-    "$ICON_DEST" \
-    ""
-
+# Wallpapers
 ws_install_theme \
     "WhiteSur-wallpapers" \
     "https://github.com/vinceliuice/WhiteSur-wallpapers.git" \
     "" \
     "$WS_WALL_ARGS"
 
-# GNOME theme anwenden
+# WhiteSur Cursor Theme (Light + Dark)
+ws_install_theme \
+    "WhiteSur-cursors" \
+    "https://github.com/vinceliuice/WhiteSur-cursors.git" \
+    "$CURSOR_DEST" \
+    ""
+
+# GNOME theme + cursor anwenden (Icons bleiben System-Default)
 if command -v gsettings &>/dev/null; then
     gsettings set org.gnome.desktop.interface gtk-theme    'WhiteSur-Dark' 2>/dev/null || true
-    gsettings set org.gnome.desktop.interface icon-theme   'WhiteSur-Dark' 2>/dev/null || true
     gsettings set org.gnome.desktop.wm.preferences theme   'WhiteSur-Dark' 2>/dev/null || true
     gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'   2>/dev/null || true
-    log "GNOME theme applied: WhiteSur-Dark"
+    gsettings set org.gnome.desktop.interface cursor-theme 'WhiteSur-cursors' 2>/dev/null || true
+    log "GNOME theme applied: WhiteSur-Dark + WhiteSur-cursors (system icons)"
 fi
 
 fi  # end: WhiteSur themes headless guard

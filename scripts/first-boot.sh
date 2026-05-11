@@ -46,9 +46,9 @@ log "Install profile: ${INSTALL_PROFILE}"
 # ── 0. Theme-Abhängigkeiten vorinstallieren (verhindert sudo-Prompts in first-login) ──
 step "Theme dependencies"
 if [[ "$INSTALL_PROFILE" =~ ^(full|theme-bash)$ ]]; then
-    dnf install -y sassc glib2-devel 2>/dev/null \
-        && log "Theme deps installed: sassc glib2-devel" \
-        || warn "Theme deps install failed (non-fatal)."
+    dnf install -y sassc glib2-devel gnome-shell-extension-user-theme gnome-shell-extension-dash-to-dock 2>/dev/null \
+        && log "Theme deps + GNOME extensions installed." \
+        || warn "Theme deps/extensions install failed (non-fatal)."
 fi
 
 # ── 1. nobara-sync ────────────────────────────────────────────────────────────
