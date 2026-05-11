@@ -86,20 +86,43 @@ fi
 step "GNOME extensions"
 if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
     log "Skipped (headless profile)."
-elif command -v gnome-extensions &>/dev/null; then
-    for ext in \
-        "user-theme@gnome-shell-extensions.gcampax.github.com" \
-        "dash-to-dock@micxgx.gmail.com"; do
-        if gnome-extensions list 2>/dev/null | grep -qF "$ext"; then
-            gnome-extensions enable "$ext" 2>/dev/null \
-                && log "Enabled: $ext" \
-                || warn "Could not enable: $ext"
-        else
-            warn "Extension nicht installiert (noch nicht via dnf verfügbar): $ext"
-        fi
-    done
 else
-    warn "gnome-extensions CLI not found; skipping."
+    EXTENSIONS=(
+        "user-theme@gnome-shell-extensions.gcampax.github.com"
+        "dash-to-dock@micxgx.gmail.com"
+    )
+
+    # Methode 1: gnome-extensions enable (nur wenn Extension in laufender Session geladen)
+    if command -v gnome-extensions &>/dev/null; then
+        for ext in "${EXTENSIONS[@]}"; do
+            gnome-extensions enable "$ext" 2>/dev/null \
+                && log "Enabled via gnome-extensions: $ext" \
+                || true
+        done
+    fi
+
+    # Methode 2: gsettings — fügt Extensions zur enabled-Liste hinzu (wirkt nach GNOME-Restart)
+    if command -v gsettings &>/dev/null; then
+        current=$(gsettings get org.gnome.shell enabled-extensions 2>/dev/null || echo "[]")
+        # Bereinige GVariant-Format zu einfachem Array
+        current=$(echo "$current" | tr -d "[]'" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | grep -v '^$')
+        new_list=""
+        for ext in "${EXTENSIONS[@]}"; do
+            new_list+="'${ext}', "
+            echo "$current" | grep -qF "$ext" || log "Füge zur enabled-Liste hinzu: $ext"
+        done
+        # Bestehende Extensions übernehmen
+        while IFS= read -r e; do
+            [[ -z "$e" ]] && continue
+            found=0
+            for ext in "${EXTENSIONS[@]}"; do [[ "$e" == "$ext" ]] && found=1; done
+            [[ $found -eq 0 ]] && new_list+="'${e}', "
+        done <<< "$current"
+        new_list="[${new_list%, }]"
+        gsettings set org.gnome.shell enabled-extensions "$new_list" 2>/dev/null \
+            && log "Extensions in gsettings gesetzt: $new_list" \
+            || warn "gsettings enabled-extensions fehlgeschlagen."
+    fi
 fi
 
 # ── 3-5. WhiteSur themes ──────────────────────────────────────────────────
