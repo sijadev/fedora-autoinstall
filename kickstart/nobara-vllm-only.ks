@@ -9,7 +9,7 @@ reboot
 # ── Disk auto-detection (SATA sda / NVMe nvme0n1 / virtio vda) ───────────────
 %pre
 #!/bin/bash
-DISK=$(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1; exit}')
+DISK=$(lsblk -dno NAME,TYPE,TRAN,RM | awk '$2=="disk" && $3!="usb" && $3!="" && $4=="0" {print $1; exit}')
 cat > /tmp/disk-setup.cfg <<EOFCFG
 ignoredisk --only-use=${DISK}
 zerombr
