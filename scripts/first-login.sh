@@ -392,6 +392,9 @@ log "HuggingFace CLI installed. Token will be prompted lazily on first download.
 
 # ── 10. CUDA 13.2 toolchain for vLLM-Omni ────────────────────────────────────
 step "CUDA ${VLLM_CUDA_VERSION} toolchain"
+if ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
+    warn "No NVIDIA GPU — skipping CUDA ${VLLM_CUDA_VERSION} toolchain (VM or non-NVIDIA system)."
+else
 
 find_cuda_version_path() {
     local target_ver="$1"
@@ -468,9 +471,13 @@ if ! grep -q 'activate.cuda' "${VENV_VLLM}/bin/activate"; then
     echo "source \"${VENV_VLLM}/bin/activate.cuda\"" >> "${VENV_VLLM}/bin/activate"
 fi
 log "CUDA ${VLLM_CUDA_VERSION} environment configured for venv: $VENV_VLLM"
+fi  # end: NVIDIA GPU check for CUDA toolchain
 
 # ── 11. vLLM-Omni source build ────────────────────────────────────────────────
 step "vLLM-Omni source build (CUDA ${VLLM_CUDA_VERSION}, sm${VLLM_ARCH_LIST//./})"
+if ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
+    warn "No NVIDIA GPU — skipping vLLM build (VM or non-NVIDIA system)."
+else
 
 VLLM_OMNI_SRC="${HOME}/.local/src/vllm-omni"
 
@@ -506,6 +513,7 @@ log "Building vLLM-Omni against CUDA ${VLLM_CUDA_VERSION} + sm${VLLM_ARCH_LIST//
         || die "vLLM-Omni build failed."
 )
 log "vLLM-Omni build completed."
+fi  # end: NVIDIA GPU check for vLLM build
 fi  # end: headless-vllm guard for steps 7-11
 # ── 12. Download model ────────────────────────────────────────────────────────
 step "Model download: ${VLLM_MODEL}"
