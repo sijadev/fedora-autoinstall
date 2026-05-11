@@ -382,11 +382,15 @@ fi
 
 "$VENV_VLLM/bin/pip" install --quiet --upgrade pip
 
-log "Installing HuggingFace CLI + autoawq in vLLM-Omni venv..."
-"$VENV_VLLM/bin/pip" install --quiet \
-    "huggingface_hub[cli]" \
-    autoawq \
-    || warn "HuggingFace CLI / autoawq install failed (non-fatal)."
+if lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
+    log "Installing HuggingFace CLI + autoawq (GPU detected)..."
+    "$VENV_VLLM/bin/pip" install --quiet "huggingface_hub" autoawq \
+        || warn "HuggingFace CLI / autoawq install failed (non-fatal)."
+else
+    log "Installing HuggingFace CLI (no GPU — autoawq skipped)..."
+    "$VENV_VLLM/bin/pip" install --quiet "huggingface_hub" \
+        || warn "HuggingFace CLI install failed (non-fatal)."
+fi
 
 log "HuggingFace CLI installed. Token will be prompted lazily on first download."
 
