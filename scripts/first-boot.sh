@@ -105,16 +105,19 @@ step "CUDA installation"
 
 if [[ "$INSTALL_PROFILE" == "theme-bash" ]]; then
     log "Profile '${INSTALL_PROFILE}' — CUDA not required. Skipping."
+elif ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
+    warn "No NVIDIA GPU detected — skipping CUDA installation (VM or non-NVIDIA system)."
 else
 
 CUDA_SOURCE="${NOBARA_CUDA_SOURCE:-nobara}"
 
 install_cuda_nobara() {
     log "Installing CUDA from Nobara/Fedora repos..."
+    # Nobara packages: 'cuda' (toolkit), 'cuda-cudart-devel' (dev headers)
+    # Note: 'cuda-toolkit' does not exist in Nobara repos (use 'cuda' instead)
     dnf install -y \
         cuda \
-        cuda-toolkit \
-        cuda-devel \
+        cuda-cudart-devel \
         || die "CUDA installation from Nobara/Fedora repos failed."
 }
 
@@ -178,7 +181,7 @@ DefaultEnvironment=CUDA_HOME=${CUDA_HOME_DETECTED}
 SYSENVEOF
 systemctl daemon-reload
 
-fi  # end: [[ "$INSTALL_PROFILE" != "theme-bash" ]]
+fi  # end: CUDA (GPU present + profile requires CUDA)
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 step "First-boot provisioning complete"
