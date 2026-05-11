@@ -103,15 +103,15 @@ else
 
     # Methode 2: gsettings — fügt Extensions zur enabled-Liste hinzu (wirkt nach GNOME-Restart)
     if command -v gsettings &>/dev/null; then
+        # GVariant @as [] bereinigen → nur echte Extension-IDs behalten
         current=$(gsettings get org.gnome.shell enabled-extensions 2>/dev/null || echo "[]")
-        # Bereinige GVariant-Format zu einfachem Array
-        current=$(echo "$current" | tr -d "[]'" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | grep -v '^$')
+        current=$(echo "$current" | grep -oP "'[^']+'" | tr -d "'" | grep -v '^$')
         new_list=""
         for ext in "${EXTENSIONS[@]}"; do
             new_list+="'${ext}', "
             echo "$current" | grep -qF "$ext" || log "Füge zur enabled-Liste hinzu: $ext"
         done
-        # Bestehende Extensions übernehmen
+        # Bestehende Extensions übernehmen (ohne Duplikate)
         while IFS= read -r e; do
             [[ -z "$e" ]] && continue
             found=0
@@ -182,12 +182,17 @@ ws_install_theme() {
 GTK_DEST="-d ${HOME}/.local/share/themes"
 ICON_DEST="-d ${HOME}/.local/share/icons"
 
-# GTK Theme
+# GTK Theme — ohne -l damit WhiteSur-Dark/ in ~/.local/share/themes/ landet
+# (-l installiert nur nach ~/.config/gtk-4.0/ und überspringt das Theme-Verzeichnis)
 ws_install_theme \
     "WhiteSur-gtk-theme" \
     "https://github.com/vinceliuice/WhiteSur-gtk-theme.git" \
     "$GTK_DEST" \
-    "$WS_GTK_ARGS"
+    "-c Dark"
+
+# Libadwaita-Override zusätzlich installieren
+bash "${THEMES_DIR}/WhiteSur-gtk-theme/install.sh" -l -c Dark 2>/dev/null \
+    && log "Libadwaita override installiert (~/.config/gtk-4.0/)" || true
 
 # Icon Theme (kein dark-Variant vorhanden — Standard WhiteSur blau)
 ws_install_theme \
@@ -215,7 +220,7 @@ if command -v gsettings &>/dev/null; then
     gsettings set org.gnome.desktop.interface gtk-theme    'WhiteSur-Dark'    2>/dev/null || true
     gsettings set org.gnome.desktop.wm.preferences theme   'WhiteSur-Dark'    2>/dev/null || true
     gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'      2>/dev/null || true
-    gsettings set org.gnome.desktop.interface icon-theme   'WhiteSur'         2>/dev/null || true
+    gsettings set org.gnome.desktop.interface icon-theme   'WhiteSur-dark'    2>/dev/null || true
     gsettings set org.gnome.desktop.interface cursor-theme 'WhiteSur-cursors' 2>/dev/null || true
     log "GNOME theme applied: WhiteSur-Dark GTK + WhiteSur icons + WhiteSur-cursors"
 fi
