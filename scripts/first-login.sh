@@ -93,10 +93,28 @@ else
     )
 
     # Methode 1: gnome-extensions enable (nur wenn Extension in laufender Session geladen)
+    # Methode 1a: gnome-extensions enable (nur wenn Extension in laufender Session geladen)
     if command -v gnome-extensions &>/dev/null; then
         for ext in "${EXTENSIONS[@]}"; do
             gnome-extensions enable "$ext" 2>/dev/null \
                 && log "Enabled via gnome-extensions: $ext" \
+                || true
+        done
+    fi
+
+    # Methode 1b: DBUS — GNOME Shell direkt mitteilen Extensions zu laden
+    local dbus_addr
+    dbus_addr=$(cat /proc/$(pgrep -u "$USER" gnome-shell 2>/dev/null | head -1)/environ 2>/dev/null \
+        | tr '\0' '\n' | grep DBUS_SESSION_BUS_ADDRESS | cut -d= -f2- || true)
+    if [[ -n "$dbus_addr" ]]; then
+        for ext in "${EXTENSIONS[@]}"; do
+            DBUS_SESSION_BUS_ADDRESS="$dbus_addr" \
+                gdbus call --session \
+                --dest org.gnome.Shell \
+                --object-path /org/gnome/Shell \
+                --method org.gnome.Shell.Extensions.EnableExtension \
+                "$ext" 2>/dev/null \
+                && log "Enabled via DBUS: $ext" \
                 || true
         done
     fi
@@ -163,7 +181,7 @@ ws_install_theme() {
         read -r -p "  Enter install.sh args for ${repo_name} (Enter to skip): " args_var || true
     fi
 
-    # Run installer
+    # Run installer — cd into repo dir so relative paths (e.g. 'dist/') work
     local install_sh="${install_dir}/install.sh"
     if [[ ! -x "$install_sh" ]]; then
         WHITESUR_ERRORS+=("$repo_name: install.sh not found or not executable")
@@ -171,7 +189,7 @@ ws_install_theme() {
     fi
 
     # shellcheck disable=SC2086
-    if bash "$install_sh" $install_dest_flag $args_var 2>&1 | \
+    if (cd "$install_dir" && bash "./install.sh" $install_dest_flag $args_var) 2>&1 | \
            while read -r l; do log "  install: $l"; done; then
         log "  $repo_name installed successfully."
     else
@@ -197,28 +215,40 @@ ws_install_theme \
     "$ICON_DEST" \
     ""
 
-# Wallpapers
-ws_install_theme \
-    "WhiteSur-wallpapers" \
-    "https://github.com/vinceliuice/WhiteSur-wallpapers.git" \
-    "" \
-    "$WS_WALL_ARGS"
+# Wallpapers — install-gnome-backgrounds.sh (nicht install.sh!)
+local walls_dir="${THEMES_DIR}/WhiteSur-wallpapers"
+log "WhiteSur: WhiteSur-wallpapers"
+mkdir -p "$THEMES_DIR"
+git clone --depth=1 "https://github.com/vinceliuice/WhiteSur-wallpapers.git" "$walls_dir" 2>&1 | \
+    while read -r l; do log "  git: $l"; done || { WHITESUR_ERRORS+=("WhiteSur-wallpapers: clone failed"); }
+if [[ -x "${walls_dir}/install-gnome-backgrounds.sh" ]]; then
+    (cd "$walls_dir" && bash install-gnome-backgrounds.sh $WS_WALL_ARGS) 2>&1 | \
+        while read -r l; do log "  install: $l"; done \
+        && log "  WhiteSur-wallpapers installed successfully." \
+        || WHITESUR_ERRORS+=("WhiteSur-wallpapers: install failed")
+fi
 
-# WhiteSur Cursor Theme (Light + Dark)
+# WhiteSur Cursor Theme
 ws_install_theme \
     "WhiteSur-cursors" \
     "https://github.com/vinceliuice/WhiteSur-cursors.git" \
     "$ICON_DEST" \
     ""
 
-# GNOME theme anwenden
-# Hinweis: Auf GNOME 49+ (libadwaita) wird das GTK-Theme über ~/.config/gtk-4.0/ gesetzt
-# gsettings gtk-theme ist für GTK3-Apps; WhiteSur-Dark ist in ~/.config/gtk-4.0/ installiert
+# GNOME theme + Wallpaper anwenden
 if command -v gsettings &>/dev/null; then
     gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'      2>/dev/null || true
     gsettings set org.gnome.desktop.interface icon-theme   'WhiteSur-dark'    2>/dev/null || true
     gsettings set org.gnome.desktop.interface cursor-theme 'WhiteSur-cursors' 2>/dev/null || true
-    log "GNOME theme applied: WhiteSur libadwaita (~/.config/gtk-4.0) + WhiteSur-dark icons + WhiteSur-cursors"
+    # Wallpaper setzen (erste verfügbare WhiteSur-Datei)
+    local wallpaper
+    wallpaper=$(find "${HOME}/.local/share/backgrounds/WhiteSur" -name "*.jpg" -o -name "*.png" 2>/dev/null | head -1)
+    [[ -n "$wallpaper" ]] && {
+        gsettings set org.gnome.desktop.background picture-uri       "file://${wallpaper}" 2>/dev/null || true
+        gsettings set org.gnome.desktop.background picture-uri-dark  "file://${wallpaper}" 2>/dev/null || true
+        log "Wallpaper gesetzt: $wallpaper"
+    }
+    log "GNOME theme applied: WhiteSur libadwaita + WhiteSur-dark icons + WhiteSur-cursors"
 fi
 
 # Repos nach Installation entfernen — Theme-Dateien sind in ~/.local/share/ installiert
