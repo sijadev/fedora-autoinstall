@@ -180,7 +180,7 @@ ws_install_theme() {
 }
 
 GTK_DEST="-d ${HOME}/.local/share/themes"
-CURSOR_DEST="-d ${HOME}/.local/share/icons"
+ICON_DEST="-d ${HOME}/.local/share/icons"
 
 # GTK Theme
 ws_install_theme \
@@ -188,6 +188,13 @@ ws_install_theme \
     "https://github.com/vinceliuice/WhiteSur-gtk-theme.git" \
     "$GTK_DEST" \
     "$WS_GTK_ARGS"
+
+# Icon Theme (kein dark-Variant vorhanden — Standard WhiteSur blau)
+ws_install_theme \
+    "WhiteSur-icon-theme" \
+    "https://github.com/vinceliuice/WhiteSur-icon-theme.git" \
+    "$ICON_DEST" \
+    ""
 
 # Wallpapers
 ws_install_theme \
@@ -200,16 +207,17 @@ ws_install_theme \
 ws_install_theme \
     "WhiteSur-cursors" \
     "https://github.com/vinceliuice/WhiteSur-cursors.git" \
-    "$CURSOR_DEST" \
+    "$ICON_DEST" \
     ""
 
-# GNOME theme + cursor anwenden (Icons bleiben System-Default)
+# GNOME theme + icons + cursor anwenden
 if command -v gsettings &>/dev/null; then
-    gsettings set org.gnome.desktop.interface gtk-theme    'WhiteSur-Dark' 2>/dev/null || true
-    gsettings set org.gnome.desktop.wm.preferences theme   'WhiteSur-Dark' 2>/dev/null || true
-    gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'   2>/dev/null || true
+    gsettings set org.gnome.desktop.interface gtk-theme    'WhiteSur-Dark'    2>/dev/null || true
+    gsettings set org.gnome.desktop.wm.preferences theme   'WhiteSur-Dark'    2>/dev/null || true
+    gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'      2>/dev/null || true
+    gsettings set org.gnome.desktop.interface icon-theme   'WhiteSur'         2>/dev/null || true
     gsettings set org.gnome.desktop.interface cursor-theme 'WhiteSur-cursors' 2>/dev/null || true
-    log "GNOME theme applied: WhiteSur-Dark + WhiteSur-cursors (system icons)"
+    log "GNOME theme applied: WhiteSur-Dark GTK + WhiteSur icons + WhiteSur-cursors"
 fi
 
 # Repos nach Installation entfernen — Theme-Dateien sind in ~/.local/share/ installiert
