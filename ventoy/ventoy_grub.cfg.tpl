@@ -22,7 +22,7 @@ menuentry "Nobara -- [m] VM-Test           (ISO-Boot → Anaconda → KVM/virtio
     search --no-floppy --label --set=root Ventoy
     set isofile="/NOBARA_ISO_FILENAME"
     loopback loop $isofile
-    linux  (loop)/images/pxeboot/vmlinuz root=live:CDLABEL=NOBARA_ISO_CDLABEL rd.live.image nomodeset inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-vm.ks
+    linux  (loop)/images/pxeboot/vmlinuz inst.stage2=hd:LABEL=Ventoy:${isofile} nomodeset inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-vm.ks
     initrd (loop)/images/pxeboot/initrd.img
 }
 
@@ -31,7 +31,7 @@ menuentry "Nobara -- [f] Vollinstallation  (ISO-Boot → Anaconda → frisches S
     search --no-floppy --label --set=root Ventoy
     set isofile="/NOBARA_ISO_FILENAME"
     loopback loop $isofile
-    linux  (loop)/images/pxeboot/vmlinuz root=live:CDLABEL=NOBARA_ISO_CDLABEL rd.live.image nomodeset inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-full.ks
+    linux  (loop)/images/pxeboot/vmlinuz inst.stage2=hd:LABEL=Ventoy:${isofile} nomodeset inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-full.ks
     initrd (loop)/images/pxeboot/initrd.img
 }
 
