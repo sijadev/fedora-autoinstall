@@ -18,7 +18,7 @@
 set -euo pipefail
 
 # ── Konfiguration ──────────────────────────────────────────────────────────────
-VM_NAME="nobara-test"
+VM_NAME="fedora43"
 VM_RAM_MB=8192
 VM_CPUS=4
 VM_DISK_GB=80
@@ -36,6 +36,9 @@ OVMF_VARS_VM="${VM_STORAGE_DIR}/${VM_NAME}-OVMF_VARS.fd"
 # Wird zur Laufzeit neu ermittelt — nur Fallback hartcodiert
 VENTOY_USB_VENDOR="0930"
 VENTOY_USB_PRODUCT="6545"
+
+# libvirt system URI — verhindert Verwechslung mit qemu:///session
+export LIBVIRT_DEFAULT_URI="qemu:///system"
 
 SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes"
 SSH_TIMEOUT=120  # Sekunden bis VM SSH-bereit ist
