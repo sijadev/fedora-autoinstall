@@ -17,21 +17,36 @@
 #   inst.disk=sdb          (z.B. zweite SATA-Disk)
 # Ohne Override: größte interne Disk wird automatisch gewählt.
 
-# ── [m] VM-Test — bootet ISO, installiert in KVM-VM (vda, 80GB) ─────────────
-menuentry "Nobara -- [m] VM-Test           (ISO-Boot → Anaconda → KVM/virtio)" --hotkey=m {
+# ── HINWEIS: Nobara ISO nutzt Calamares (kein Anaconda) ──────────────────────
+# inst.ks wird IGNORIERT — Nobara bootet immer in die Live-GNOME-Session
+# mit Calamares als GUI-Installer. Kickstart ist nicht unterstützt.
+#
+# Korrekte Boot-Methode via Ventoy:
+#   1. ISO auswählen → Enter
+#   2. "Boot in grub2 mode" wählen
+#   3. Im ISO-eigenen GRUB bootet root=live:CDLABEL=Nobara-43 korrekt
+#   4. Live-Session startet → Calamares öffnet automatisch
+#
+# Die loopback-Einträge hier funktionieren NICHT mit CDLABEL in der VM
+# (Ventoy exponiert das ISO-Label nicht als Block-Device im loopback-Modus).
+# Sie sind NUR für physische Hardware nutzbar wo die USB-Partition als
+# echtes Gerät mit CDLABEL sichtbar ist.
+
+# ── [m] VM-Test — Live-Session booten (Calamares öffnet automatisch) ─────────
+menuentry "Nobara -- [m] VM-Test           (Live-Boot → Calamares Installer)" --hotkey=m {
     search --no-floppy --label --set=root Ventoy
     set isofile="/NOBARA_ISO_FILENAME"
     loopback loop $isofile
-    linux  (loop)/images/pxeboot/vmlinuz inst.stage2=hd:LABEL=Ventoy:${isofile} nomodeset inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-vm.ks
+    linux  (loop)/images/pxeboot/vmlinuz root=live:CDLABEL=NOBARA_ISO_CDLABEL rd.live.image nomodeset
     initrd (loop)/images/pxeboot/initrd.img
 }
 
-# ── [f] Vollinstallation — bootet ISO, installiert frisches System ────────────
-menuentry "Nobara -- [f] Vollinstallation  (ISO-Boot → Anaconda → frisches System)" --hotkey=f {
+# ── [f] Vollinstallation — Live-Session booten (Calamares öffnet automatisch) ─
+menuentry "Nobara -- [f] Vollinstallation  (Live-Boot → Calamares Installer)" --hotkey=f {
     search --no-floppy --label --set=root Ventoy
     set isofile="/NOBARA_ISO_FILENAME"
     loopback loop $isofile
-    linux  (loop)/images/pxeboot/vmlinuz inst.stage2=hd:LABEL=Ventoy:${isofile} nomodeset inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-full.ks
+    linux  (loop)/images/pxeboot/vmlinuz root=live:CDLABEL=NOBARA_ISO_CDLABEL rd.live.image nomodeset
     initrd (loop)/images/pxeboot/initrd.img
 }
 

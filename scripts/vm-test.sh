@@ -278,25 +278,44 @@ XMLEOF
     log "Warte auf Ventoy GRUB-Menü (10s)..."
     sleep 10
 
-    # Ventoy ExMenu (F6) öffnen → [m] VM-Test Profil ist erstes Custom-Entry
-    log "Öffne Ventoy ExMenu (F6) → Custom-Profile..."
-    virsh send-key "$ACTIVE_VM" KEY_F6
-    sleep 3  # Warten bis ExMenu geladen
-    log "Sende Enter → [m] VM-Test Profil auswählen (erster Eintrag)..."
+    # ── Erkenntnisse aus VM-Tests ──────────────────────────────────────────────
+    # Nobara ISO nutzt CALAMARES (kein Anaconda) → inst.ks wird IGNORIERT
+    # Custom loopback GRUB-Einträge: root=live:CDLABEL= nicht erreichbar in VM
+    # Funktionierender Weg: Ventoy → ISO → "Boot in grub2 mode" → ISO-GRUB
+    # Das ISO-eigene GRUB exponiert CDLABEL korrekt → Live-Session startet
+    # ────────────────────────────────────────────────────────────────────────
+
+    # Schritt 1: Nobara ISO im Ventoy-Hauptmenü auswählen (Enter)
+    log "Wähle Nobara ISO im Ventoy-Menü (Enter)..."
     virsh send-key "$ACTIVE_VM" KEY_ENTER
-    log "Anaconda startet mit nobara-vm.ks — Installation läuft..."
+    sleep 5
+
+    # Schritt 2: "Boot in grub2 mode" auswählen (2. Eintrag = Pfeil runter + Enter)
+    # Ventoy zeigt: "Boot in normal mode" / "Boot in grub2 mode" / "File checksum"
+    log "Wähle 'Boot in grub2 mode' (Pfeil-runter + Enter)..."
+    virsh send-key "$ACTIVE_VM" KEY_DOWN
+    sleep 0.5
+    virsh send-key "$ACTIVE_VM" KEY_ENTER
+    sleep 8  # ISO-eigener GRUB lädt
+
+    # Schritt 3: Im ISO-GRUB "Start Nobara 43" normal booten (erster Eintrag = Enter)
+    # KEIN inst.ks - Nobara nutzt Calamares, kein Anaconda/Kickstart
+    log "ISO-GRUB geladen — boote 'Start Nobara 43' (Enter)..."
+    virsh send-key "$ACTIVE_VM" KEY_ENTER
+    log "Live-System startet — Calamares öffnet automatisch..."
 
     # virt-manager öffnen für visuelle Kontrolle
     virt-manager --connect qemu:///system --show-domain-console "$ACTIVE_VM" &
     log "virt-manager geöffnet — Installation in Echtzeit sichtbar"
 
-    # Auf Abschluss warten: VM startet nach Installation neu
-    log "Warte auf Abschluss (Anaconda rebootet die VM)..."
+    # Warte auf Live-System-Start (Plymouth → GNOME → Calamares)
+    # Keine automatische Installation via Kickstart — Calamares öffnet GUI
+    log "Warte auf Live-System + Calamares (~5-8 Min)..."
     local waited=0
-    local install_timeout=1800  # 30 Minuten
+    local install_timeout=1800  # 30 Minuten max
     local rebooted=0
 
-    # Warte auf ersten Shutdown nach Install (VM rebootet)
+    # Warte auf Shutdown (nur wenn Calamares-Installation manuell/per Automation abgeschlossen)
     while [[ $waited -lt $install_timeout ]]; do
         sleep 10; waited=$((waited + 10))
         local state; state=$(LIBVIRT_DEFAULT_URI="qemu:///system" virsh domstate "$ACTIVE_VM" 2>/dev/null || echo "unknown")
