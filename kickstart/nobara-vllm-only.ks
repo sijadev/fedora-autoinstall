@@ -15,9 +15,7 @@ DISK=$(grep -oP '(?<=inst\.disk=)\S+' /proc/cmdline || true)
 
 # Priority 2: largest internal non-USB, non-removable disk
 if [[ -z "$DISK" ]]; then
-    DISK=$(lsblk -bdno NAME,TYPE,TRAN,RM,SIZE \
-        | awk '$2=="disk" && $3!="usb" && $3!="" && $4=="0" {print $5+0, $1}' \
-        | sort -n | tail -1 | awk '{print $2}')
+    DISK=$(lsblk -bdno NAME,TYPE,TRAN,RM,SIZE  | awk '$2=="disk" && $3!="usb" && $3!="" && $4=="0" {print $5+0, $1}'  | sort -n | tail -1 | awk '{print $2}')
 fi
 
 if [[ -z "$DISK" ]]; then
@@ -56,9 +54,7 @@ autopart --type=lvm
 
 # ── Authentication ────────────────────────────────────────────────────────────
 rootpw --lock
-user --groups=wheel,video,audio --name=sija \
-     --password=$6$rounds=4096$exampleSalt$A2xI1.hfVf4M8bJH3uQ6Q7fKJ3QYgAnfYQPc0dyY8aTJiD9f8Lh3EEcKB6DzQ9s9lfhYf6Q2xv.YO1f4Yv4eY0 \
-     --iscrypted
+user --groups=wheel,video,audio --name=sija  --password=$6$rounds=4096$exampleSalt$A2xI1.hfVf4M8bJH3uQ6Q7fKJ3QYgAnfYQPc0dyY8aTJiD9f8Lh3EEcKB6DzQ9s9lfhYf6Q2xv.YO1f4Yv4eY0  --iscrypted
 
 # ── Packages ──────────────────────────────────────────────────────────────────
 %packages

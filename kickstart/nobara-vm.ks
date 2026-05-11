@@ -35,8 +35,7 @@ bootloader --boot-drive=vda
 
 # ── Authentication ────────────────────────────────────────────────────────────
 rootpw --lock
-user --groups=wheel,libvirt,video,audio --name=sija --password=$6$rounds=4096$exampleSalt$A2xI1.hfVf4M8bJH3uQ6Q7fKJ3QYgAnfYQPc0dyY8aTJiD9f8Lh3EEcKB6DzQ9s9lfhYf6Q2xv.YO1f4Yv4eY0 \
-     --iscrypted
+user --groups=wheel,libvirt,video,audio --name=sija --password=$6$rounds=4096$exampleSalt$A2xI1.hfVf4M8bJH3uQ6Q7fKJ3QYgAnfYQPc0dyY8aTJiD9f8Lh3EEcKB6DzQ9s9lfhYf6Q2xv.YO1f4Yv4eY0  --iscrypted
 
 # ── Packages ──────────────────────────────────────────────────────────────────
 %packages
@@ -173,12 +172,7 @@ check_nvidia_open_compat() {
 check_nvidia_open_compat
 
 log "Installing/updating NVIDIA Open Kernel Module driver..."
-dnf install -y \
-    kernel-devel \
-    kernel-headers \
-    akmod-nvidia-open \
-    xorg-x11-drv-nvidia-cuda \
-    || die "NVIDIA Open Driver installation failed. No proprietary fallback."
+dnf install -y  kernel-devel  kernel-headers  akmod-nvidia-open  xorg-x11-drv-nvidia-cuda  || die "NVIDIA Open Driver installation failed. No proprietary fallback."
 
 # Wait for the kmod to be built (akmods)
 if command -v akmods &>/dev/null; then
@@ -194,11 +188,7 @@ CUDA_SOURCE="${NOBARA_CUDA_SOURCE:-nobara}"
 
 install_cuda_nobara() {
     log "Installing CUDA from Nobara/Fedora repos..."
-    dnf install -y \
-        cuda \
-        cuda-toolkit \
-        cuda-devel \
-        || die "CUDA installation from Nobara/Fedora repos failed."
+    dnf install -y  cuda  cuda-toolkit  cuda-devel  || die "CUDA installation from Nobara/Fedora repos failed."
 }
 
 install_cuda_nvidia_repo() {
@@ -209,14 +199,10 @@ install_cuda_nvidia_repo() {
 
     if ! dnf config-manager --add-repo "$repo_url" 2>/dev/null; then
         # Try with dnf5 syntax
-        dnf config-manager addrepo --from-repofile="$repo_url" \
-            || die "Failed to add NVIDIA CUDA repo."
+        dnf config-manager addrepo --from-repofile="$repo_url"  || die "Failed to add NVIDIA CUDA repo."
     fi
 
-    dnf install -y \
-        cuda-toolkit \
-        cuda-devel \
-        || die "CUDA installation from NVIDIA repo failed."
+    dnf install -y  cuda-toolkit  cuda-devel  || die "CUDA installation from NVIDIA repo failed."
 }
 
 case "$CUDA_SOURCE" in
@@ -236,8 +222,7 @@ done
 [[ -n "$CUDA_HOME_DETECTED" ]] || die "nvcc not found after CUDA installation."
 log "CUDA installed at: $CUDA_HOME_DETECTED"
 
-CUDA_VERSION_INSTALLED=$("${CUDA_HOME_DETECTED}/bin/nvcc" --version \
-    | grep -oP 'release \K[\d.]+' | head -1)
+CUDA_VERSION_INSTALLED=$("${CUDA_HOME_DETECTED}/bin/nvcc" --version  | grep -oP 'release \K[\d.]+' | head -1)
 log "CUDA version: $CUDA_VERSION_INSTALLED"
 
 # ── 4. System-wide CUDA environment variables ─────────────────────────────────
@@ -342,8 +327,7 @@ THEMES_DIR="${HOME}/themes"
 step "Flatpak Extension Manager"
 if ! flatpak list --user 2>/dev/null | grep -q 'com.mattjakeman.ExtensionManager'; then
     log "Installing Extension Manager..."
-    flatpak install --user --noninteractive flathub com.mattjakeman.ExtensionManager \
-        || warn "Extension Manager install failed (non-fatal)."
+    flatpak install --user --noninteractive flathub com.mattjakeman.ExtensionManager  || warn "Extension Manager install failed (non-fatal)."
 else
     log "Extension Manager already installed."
 fi
@@ -351,13 +335,9 @@ fi
 # ── 2. Enable GNOME extensions ────────────────────────────────────────────────
 step "GNOME extensions"
 if command -v gnome-extensions &>/dev/null; then
-    for ext in \
-        "user-theme@gnome-shell-extensions.gcampax.github.com" \
-        "dash-to-panel@jderose9.github.com"; do
+    for ext in  "user-theme@gnome-shell-extensions.gcampax.github.com"  "dash-to-panel@jderose9.github.com"; do
         if gnome-extensions list 2>/dev/null | grep -qF "$ext"; then
-            gnome-extensions enable "$ext" 2>/dev/null \
-                && log "Enabled: $ext" \
-                || warn "Could not enable: $ext"
+            gnome-extensions enable "$ext" 2>/dev/null  && log "Enabled: $ext"  || warn "Could not enable: $ext"
         else
             warn "Extension not installed (did Kickstart %post run?): $ext"
         fi
@@ -383,13 +363,11 @@ ws_install_theme() {
     # Clone or pull
     if [[ -d "$install_dir/.git" ]]; then
         log "  Updating existing repo..."
-        git -C "$install_dir" pull --ff-only 2>&1 | while read -r l; do log "  git: $l"; done || \
-            warn "  git pull failed for $repo_name (continuing)."
+        git -C "$install_dir" pull --ff-only 2>&1 | while read -r l; do log "  git: $l"; done ||  warn "  git pull failed for $repo_name (continuing)."
     else
         mkdir -p "$THEMES_DIR"
         log "  Cloning $repo_url..."
-        git clone --depth=1 "$repo_url" "$install_dir" 2>&1 | \
-            while read -r l; do log "  git: $l"; done || {
+        git clone --depth=1 "$repo_url" "$install_dir" 2>&1 |  while read -r l; do log "  git: $l"; done || {
                 WHITESUR_ERRORS+=("$repo_name: git clone failed")
                 return
             }
@@ -409,8 +387,7 @@ ws_install_theme() {
     fi
 
     # shellcheck disable=SC2086
-    if bash "$install_sh" $install_dest_flag $args_var 2>&1 | \
-           while read -r l; do log "  install: $l"; done; then
+    if bash "$install_sh" $install_dest_flag $args_var 2>&1 |  while read -r l; do log "  install: $l"; done; then
         log "  $repo_name installed successfully."
     else
         WHITESUR_ERRORS+=("$repo_name: install.sh exited with error")
@@ -420,23 +397,11 @@ ws_install_theme() {
 GTK_DEST="-d ${HOME}/.local/share/themes"
 ICON_DEST="-d ${HOME}/.local/share/icons"
 
-ws_install_theme \
-    "WhiteSur-gtk-theme" \
-    "https://github.com/vinceliuice/WhiteSur-gtk-theme.git" \
-    "$GTK_DEST" \
-    "$WS_GTK_ARGS"
+ws_install_theme  "WhiteSur-gtk-theme"  "https://github.com/vinceliuice/WhiteSur-gtk-theme.git"  "$GTK_DEST"  "$WS_GTK_ARGS"
 
-ws_install_theme \
-    "WhiteSur-icon-theme" \
-    "https://github.com/vinceliuice/WhiteSur-icon-theme.git" \
-    "$ICON_DEST" \
-    "$WS_ICON_ARGS"
+ws_install_theme  "WhiteSur-icon-theme"  "https://github.com/vinceliuice/WhiteSur-icon-theme.git"  "$ICON_DEST"  "$WS_ICON_ARGS"
 
-ws_install_theme \
-    "WhiteSur-wallpapers" \
-    "https://github.com/vinceliuice/WhiteSur-wallpapers.git" \
-    "" \
-    "$WS_WALL_ARGS"
+ws_install_theme  "WhiteSur-wallpapers"  "https://github.com/vinceliuice/WhiteSur-wallpapers.git"  ""  "$WS_WALL_ARGS"
 
 # ── 6. Oh My Bash ─────────────────────────────────────────────────────────────
 step "Oh My Bash"
@@ -446,9 +411,7 @@ if [[ -d "$OMB_DIR" ]]; then
     log "Oh My Bash already installed."
 else
     log "Installing Oh My Bash (unattended)..."
-    bash <(curl -fsSL https://raw.githubusercontent.com/ohmybash/oh-my-bash/master/tools/install.sh) \
-        --unattended \
-        || warn "Oh My Bash install script failed (non-fatal)."
+    bash <(curl -fsSL https://raw.githubusercontent.com/ohmybash/oh-my-bash/master/tools/install.sh)  --unattended  || warn "Oh My Bash install script failed (non-fatal)."
 fi
 
 # Set / correct theme in ~/.bashrc
@@ -518,9 +481,7 @@ else
 fi
 log "PyTorch index: $PYTORCH_INDEX"
 
-"$VENV_AI/bin/pip" install --quiet \
-    torch torchvision torchaudio \
-    --index-url "$PYTORCH_INDEX"
+"$VENV_AI/bin/pip" install --quiet  torch torchvision torchaudio  --index-url "$PYTORCH_INDEX"
 
 log "Verifying PyTorch..."
 "$VENV_AI/bin/python3" -c "
@@ -547,10 +508,7 @@ fi
 "$VENV_VLLM/bin/pip" install --quiet --upgrade pip
 
 log "Installing HuggingFace CLI + autoawq in vLLM-Omni venv..."
-"$VENV_VLLM/bin/pip" install --quiet \
-    "huggingface_hub[cli]" \
-    autoawq \
-    || warn "HuggingFace CLI / autoawq install failed (non-fatal)."
+"$VENV_VLLM/bin/pip" install --quiet  "huggingface_hub[cli]"  autoawq  || warn "HuggingFace CLI / autoawq install failed (non-fatal)."
 
 log "HuggingFace CLI installed. Token will be prompted lazily on first download."
 
@@ -595,24 +553,16 @@ else
         RUNFILE_URL="https://developer.download.nvidia.com/compute/cuda/${VLLM_CUDA_VERSION}/local_installers/cuda_${VLLM_CUDA_VERSION}_linux.run"
         RUNFILE="/tmp/cuda-${VLLM_CUDA_VERSION}-installer.run"
 
-        curl -L --retry 5 --progress-bar -o "$RUNFILE" "$RUNFILE_URL" \
-            || die "Failed to download CUDA ${VLLM_CUDA_VERSION} runfile from NVIDIA."
+        curl -L --retry 5 --progress-bar -o "$RUNFILE" "$RUNFILE_URL"  || die "Failed to download CUDA ${VLLM_CUDA_VERSION} runfile from NVIDIA."
 
         chmod +x "$RUNFILE"
-        sudo "$RUNFILE" \
-            --silent \
-            --toolkit \
-            --toolkitpath="/usr/local/cuda-${VLLM_CUDA_VERSION}" \
-            --no-opengl-libs \
-            --override \
-            || die "CUDA ${VLLM_CUDA_VERSION} runfile installation failed."
+        sudo "$RUNFILE"  --silent  --toolkit  --toolkitpath="/usr/local/cuda-${VLLM_CUDA_VERSION}"  --no-opengl-libs  --override  || die "CUDA ${VLLM_CUDA_VERSION} runfile installation failed."
 
         rm -f "$RUNFILE"
         log "CUDA ${VLLM_CUDA_VERSION} installed to /usr/local/cuda-${VLLM_CUDA_VERSION}"
     fi
 
-    CUDA_132_PATH=$(find_cuda_version_path "$VLLM_CUDA_VERSION") \
-        || die "CUDA ${VLLM_CUDA_VERSION} still not found after installation."
+    CUDA_132_PATH=$(find_cuda_version_path "$VLLM_CUDA_VERSION")  || die "CUDA ${VLLM_CUDA_VERSION} still not found after installation."
 fi
 
 # Write venv activation hook to set CUDA 13.0 env for this venv
@@ -644,15 +594,13 @@ if [[ -d "${VLLM_OMNI_SRC}/.git" ]]; then
 else
     log "Cloning vLLM-Omni..."
     mkdir -p "$(dirname "$VLLM_OMNI_SRC")"
-    git clone --depth=1 https://github.com/vllm-project/vllm.git "$VLLM_OMNI_SRC" \
-        || die "Failed to clone vLLM-Omni."
+    git clone --depth=1 https://github.com/vllm-project/vllm.git "$VLLM_OMNI_SRC"  || die "Failed to clone vLLM-Omni."
 fi
 
 # Apply use_existing_torch.py to prevent overwriting the system PyTorch
 if [[ -f "${VLLM_OMNI_SRC}/use_existing_torch.py" ]]; then
     log "Running use_existing_torch.py (protects external PyTorch installations)..."
-    (cd "$VLLM_OMNI_SRC" && "$VENV_VLLM/bin/python3" use_existing_torch.py) \
-        || warn "use_existing_torch.py failed (non-fatal, continuing build)."
+    (cd "$VLLM_OMNI_SRC" && "$VENV_VLLM/bin/python3" use_existing_torch.py)  || warn "use_existing_torch.py failed (non-fatal, continuing build)."
 fi
 
 log "Building vLLM-Omni against CUDA ${VLLM_CUDA_VERSION} + sm${VLLM_ARCH_LIST//./}..."
@@ -666,8 +614,7 @@ log "Building vLLM-Omni against CUDA ${VLLM_CUDA_VERSION} + sm${VLLM_ARCH_LIST//
     export CUDA_HOME="${CUDA_132_PATH}"
     export MAX_JOBS="${MAX_JOBS:-$(nproc)}"
 
-    pip install --quiet --no-build-isolation . \
-        || die "vLLM-Omni build failed."
+    pip install --quiet --no-build-isolation .  || die "vLLM-Omni build failed."
 )
 log "vLLM-Omni build completed."
 
@@ -677,9 +624,7 @@ step "Model download: ${VLLM_MODEL}"
 log "Checking HuggingFace login..."
 log "Downloading model: ${VLLM_MODEL} ..."
 # Lazy token behavior: download will prompt for login only when required.
-"$VENV_VLLM/bin/huggingface-cli" download "${VLLM_MODEL}" \
-    --local-dir "${HOME}/.cache/huggingface/hub/${VLLM_MODEL//\//__}" \
-    || warn "Model download failed or deferred (check HF token / disk space)."
+"$VENV_VLLM/bin/huggingface-cli" download "${VLLM_MODEL}"  --local-dir "${HOME}/.cache/huggingface/hub/${VLLM_MODEL//\//__}"  || warn "Model download failed or deferred (check HF token / disk space)."
 
 # ── Final report ──────────────────────────────────────────────────────────────
 step "First-login provisioning complete"
