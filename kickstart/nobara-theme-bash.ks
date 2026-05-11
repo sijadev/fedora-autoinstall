@@ -62,7 +62,7 @@ user --groups=wheel,video,audio --name=sija \
 
 # ── Packages ──────────────────────────────────────────────────────────────────
 %packages
-@^nobara-desktop
+@^workstation-product-environment
 git
 curl
 python3

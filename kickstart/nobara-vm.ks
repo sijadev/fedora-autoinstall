@@ -40,7 +40,7 @@ user --groups=wheel,libvirt,video,audio --name=sija --password=$6$rounds=4096$ex
 
 # ── Packages ──────────────────────────────────────────────────────────────────
 %packages
-@^nobara-desktop
+@^workstation-product-environment
 git
 curl
 python3

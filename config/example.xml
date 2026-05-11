@@ -13,9 +13,9 @@
 
   <!-- ── ISO source ──────────────────────────────────────────────────────── -->
   <iso>
-    <url>https://nobara-images.nobaraproject.org/Nobara-43-GNOME-NV-2026-04-25.iso</url>
+    <url>https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/iso/Fedora-Everything-netinst-x86_64-43-1.6.iso</url>
     <!-- SHA256 checksum (optional but recommended) -->
-    <sha256>REPLACE_WITH_ACTUAL_SHA256</sha256>
+    <sha256>f4d06a40ce4fb4a84705e1a1f01ca1328f95a2120d422ba5f719af5df62d0099</sha256>
   </iso>
 
   <!-- ── Installation target ─────────────────────────────────────────────── -->

@@ -62,7 +62,7 @@ user --groups=wheel,libvirt,video,audio --name=sija \
 
 # ── Packages ──────────────────────────────────────────────────────────────────
 %packages
-@^nobara-desktop
+@^workstation-product-environment
 git
 curl
 python3
@@ -89,6 +89,14 @@ pciutils
 
 # ── %post: write profile-specific environment ─────────────────────────────────
 %post --log=/root/ks-profile.log
+
+# ── Nobara-Repos hinzufügen (Fedora → Nobara konvertieren) ───────────────────
+dnf install -y \
+    https://github.com/nicknamen/nobara-releases/releases/download/43/nobara-release-43-1.noarch.rpm \
+    2>/dev/null || \
+dnf config-manager addrepo \
+    --from-repofile=https://nobaraproject.org/repos/nobara.repo \
+    2>/dev/null || true
 
 cat > /etc/nobara-provision.env <<'ENVEOF'
 NOBARA_INSTALL_PROFILE="full"
