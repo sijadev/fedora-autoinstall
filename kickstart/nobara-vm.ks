@@ -22,7 +22,7 @@ clearpart --all --initlabel --drives=vda
 autopart --type=lvm
 
 # ── Bootloader ────────────────────────────────────────────────────────────────
-bootloader --location=mbr --boot-drive=vda
+bootloader --boot-drive=vda
 
 # ── Authentication ────────────────────────────────────────────────────────────
 rootpw --lock
