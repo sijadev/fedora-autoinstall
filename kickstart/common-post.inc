@@ -64,20 +64,24 @@ check_nvidia_open_compat() {
     if ! command -v lspci &>/dev/null; then warn "lspci not available."; return 0; fi
     local gpu_info
     gpu_info=$(lspci -nn | grep -i 'NVIDIA' || true)
-    [[ -z "$gpu_info" ]] && die "No NVIDIA GPU detected."
+    if [[ -z "$gpu_info" ]]; then
+        warn "No NVIDIA GPU detected (VM or non-NVIDIA system) — skipping NVIDIA driver."
+        return 1
+    fi
     if echo "$gpu_info" | grep -qiE 'GP10[0-9]|GP1[0-9]{2}'; then
         die "NVIDIA Pascal GPU: Open Driver requires Turing or newer."
     fi
     log "NVIDIA GPU (Open Driver compatible): $gpu_info"
 }
 
-check_nvidia_open_compat
-dnf install -y kernel-devel kernel-headers akmod-nvidia-open xorg-x11-drv-nvidia-cuda \
-    || die "NVIDIA Open Driver installation failed."
-if command -v akmods &>/dev/null; then
-    akmods --force || die "akmods failed."
-fi
-log "NVIDIA Open Driver installed."
+if check_nvidia_open_compat; then
+    dnf install -y kernel-devel kernel-headers akmod-nvidia-open xorg-x11-drv-nvidia-cuda \
+        || die "NVIDIA Open Driver installation failed."
+    if command -v akmods &>/dev/null; then
+        akmods --force || die "akmods failed."
+    fi
+    log "NVIDIA Open Driver installed."
+fi  # end: check_nvidia_open_compat
 
 # ── 3. CUDA installation ──────────────────────────────────────────────────────
 step "CUDA installation"

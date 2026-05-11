@@ -66,31 +66,31 @@ check_nvidia_open_compat() {
     local gpu_info
     gpu_info=$(lspci -nn | grep -i 'NVIDIA' || true)
     if [[ -z "$gpu_info" ]]; then
-        die "No NVIDIA GPU detected. Cannot install NVIDIA Open Driver."
+        warn "No NVIDIA GPU detected (VM or non-NVIDIA system) — skipping NVIDIA driver."
+        return 1
     fi
-    # Turing and later are supported; check for pre-Turing (GTX 10xx / Pascal GP1xx)
     if echo "$gpu_info" | grep -qiE 'GP10[0-9]|GP1[0-9]{2}'; then
         die "NVIDIA Pascal GPU detected. Open Driver requires Turing or newer. Aborting."
     fi
     log "NVIDIA GPU detected (Open Driver compatible): $gpu_info"
 }
 
-check_nvidia_open_compat
+if check_nvidia_open_compat; then
+    log "Installing/updating NVIDIA Open Kernel Module driver..."
+    dnf install -y \
+        kernel-devel \
+        kernel-headers \
+        akmod-nvidia-open \
+        xorg-x11-drv-nvidia-cuda \
+        || die "NVIDIA Open Driver installation failed. No proprietary fallback."
 
-log "Installing/updating NVIDIA Open Kernel Module driver..."
-dnf install -y \
-    kernel-devel \
-    kernel-headers \
-    akmod-nvidia-open \
-    xorg-x11-drv-nvidia-cuda \
-    || die "NVIDIA Open Driver installation failed. No proprietary fallback."
-
-# Wait for the kmod to be built (akmods)
-if command -v akmods &>/dev/null; then
-    log "Building kernel modules (akmods)..."
-    akmods --force || die "akmods failed for NVIDIA Open Driver."
-fi
-log "NVIDIA Open Driver installed/updated."
+    # Wait for the kmod to be built (akmods)
+    if command -v akmods &>/dev/null; then
+        log "Building kernel modules (akmods)..."
+        akmods --force || die "akmods failed for NVIDIA Open Driver."
+    fi
+    log "NVIDIA Open Driver installed/updated."
+fi  # end: check_nvidia_open_compat
 
 # ── 3. CUDA installation ──────────────────────────────────────────────────────
 step "CUDA installation"
