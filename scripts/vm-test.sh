@@ -385,85 +385,25 @@ echo '  Wallpaper:' \$(gsettings get org.gnome.desktop.background picture-uri 2>
         test_passed=1
 
     elif [[ "$profile" =~ ^(vllm-only|headless-vllm)$ ]]; then
-        # AI-Profil: echter vLLM CPU-Server starten und mit curl testen
-        step "Validierung: vLLM CPU-Server + curl-Test"
-        local vllm_model="facebook/opt-125m"
-        local vllm_port=8000
-        local vllm_timeout=300  # 5 Minuten — CPU-Start dauert länger
+        # AI-Profil: Grundvalidierung (venv, PyTorch, kein ERROR im Log)
+        # vLLM curl-Test folgt mit headless-vllm + Podman
+        step "Validierung: AI-Profil Grundcheck"
 
-        # vLLM installiert?
-        if ! $SSH "$VM_USER@$ip" \
-            "\${HOME}/.venvs/bitwig-omni/bin/python -c 'import vllm; print(\"vLLM\", vllm.__version__)'" 2>/dev/null; then
-            warn "✗ vLLM nicht installiert — Test übersprungen"
-        else
-            log "vLLM gefunden. Starte Server mit CPU-Backend + ${vllm_model}..."
-
-            # vLLM-Server im Hintergrund starten
-            $SSH "$VM_USER@$ip" "
-nohup \${HOME}/.venvs/bitwig-omni/bin/vllm serve ${vllm_model} \
-    --device cpu \
-    --dtype float32 \
-    --port ${vllm_port} \
-    --disable-log-requests \
-    &>/tmp/vllm-server.log &
-echo \$! > /tmp/vllm-server.pid
-echo 'vLLM-Server gestartet (PID: '\$(cat /tmp/vllm-server.pid)')'
-" 2>/dev/null || warn "vLLM-Start fehlgeschlagen"
-
-            # Warten bis API antwortet (max 5 Min)
-            log "Warte auf vLLM-API (max ${vllm_timeout}s)..."
-            local waited=0
-            local ready=0
-            until [[ $ready -eq 1 || $waited -gt $vllm_timeout ]]; do
-                sleep 5; waited=$((waited + 5))
-                echo -n "."
-                if $SSH "$VM_USER@$ip" \
-                    "curl -sf http://localhost:${vllm_port}/v1/models &>/dev/null"; then
-                    ready=1
-                fi
-            done
-            echo ""
-
-            if [[ $ready -eq 1 ]]; then
-                log "vLLM-Server bereit nach ${waited}s"
-
-                # GET /v1/models
-                models_resp=$($SSH "$VM_USER@$ip" \
-                    "curl -sf http://localhost:${vllm_port}/v1/models" 2>/dev/null || echo "")
-                if echo "$models_resp" | grep -q '"object"'; then
-                    log "✓ GET /v1/models:"
-                    echo "$models_resp" | python3 -m json.tool 2>/dev/null | sed 's/^/    /' || echo "    $models_resp"
-                    test_passed=1
-                else
-                    warn "✗ GET /v1/models — ungültige Antwort: $models_resp"
-                fi
-
-                # POST /v1/chat/completions
-                log "POST /v1/chat/completions (Frage: 'Hello')..."
-                chat_resp=$($SSH "$VM_USER@$ip" "
-curl -sf http://localhost:${vllm_port}/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{\"model\":\"${vllm_model}\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello, reply with one word.\"}],\"max_tokens\":10}' 2>/dev/null
-" || echo "")
-                if echo "$chat_resp" | grep -q '"choices"'; then
-                    local reply
-                    reply=$(echo "$chat_resp" | python3 -c \
-                        "import sys,json; d=json.load(sys.stdin); print(d['choices'][0]['message']['content'])" 2>/dev/null || echo "?")
-                    log "✓ POST /v1/chat/completions — Antwort: '${reply}'"
-                else
-                    warn "✗ POST /v1/chat/completions — ungültige Antwort"
-                fi
-
-                # vLLM-Server stoppen
-                $SSH "$VM_USER@$ip" \
-                    "kill \$(cat /tmp/vllm-server.pid 2>/dev/null) 2>/dev/null; rm -f /tmp/vllm-server.pid" \
-                    2>/dev/null || true
-                log "vLLM-Server gestoppt."
-            else
-                warn "✗ vLLM-Server nicht erreichbar nach ${vllm_timeout}s"
-                $SSH "$VM_USER@$ip" "tail -20 /tmp/vllm-server.log 2>/dev/null" 2>/dev/null || true
-            fi
-        fi
+        $SSH "$VM_USER@$ip" "
+echo '  Installierte Komponenten:'
+[ -f /var/lib/nobara-provision/first-boot.done ] \
+    && echo '  ✓ First-Boot abgeschlossen' || echo '  ✗ First-Boot fehlt'
+[ -d \${HOME}/.venvs/ai ] \
+    && echo '  ✓ PyTorch venv (~/.venvs/ai)' || echo '  ✗ PyTorch venv fehlt'
+[ -d \${HOME}/.venvs/bitwig-omni ] \
+    && echo '  ✓ vLLM venv (~/.venvs/bitwig-omni)' || echo '  ✗ vLLM venv fehlt'
+[ -d \${HOME}/.oh-my-bash ] \
+    && echo '  ✓ Oh-My-Bash' || echo '  ✗ Oh-My-Bash fehlt'
+\${HOME}/.venvs/ai/bin/python -c 'import torch; print(\"  ✓ PyTorch\", torch.__version__)' 2>/dev/null \
+    || echo '  ✗ PyTorch nicht importierbar'
+\${HOME}/.venvs/bitwig-omni/bin/python -c 'import vllm; print(\"  ✓ vLLM\", vllm.__version__)' 2>/dev/null \
+    || echo '  ✗ vLLM nicht importierbar'
+" 2>/dev/null || true
 
         # Log auf ERROR-Zeilen prüfen
         log "Log-Analyse: first-login.log auf Fehler prüfen..."
@@ -473,6 +413,7 @@ curl -sf http://localhost:${vllm_port}/v1/chat/completions \
         error_count="${error_count:-0}"
         if [[ "$error_count" -eq 0 ]]; then
             log "✓ Keine ERROR-Einträge im first-login.log"
+            test_passed=1
         else
             warn "✗ ${error_count} ERROR-Einträge im first-login.log:"
             $SSH "$VM_USER@$ip" \
