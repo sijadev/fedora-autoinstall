@@ -283,24 +283,19 @@ XMLEOF
     # Ventoy F6 ExMenu → [m] VM-Test Profil → inst.stage2 + inst.ks korrekt
     # ────────────────────────────────────────────────────────────────────────
 
-    # Schritt 1: Fedora ISO im Ventoy-Hauptmenü (erster Eintrag alphabetisch)
-    log "Wähle Fedora ISO im Ventoy-Menü (Enter)..."
-    virsh send-key "$ACTIVE_VM" KEY_ENTER
-    sleep 5
-
-    # Schritt 2: Ventoy Boot-Modus — "Boot in normal mode" (erster Eintrag = Enter)
-    log "Wähle 'Boot in normal mode' (Enter)..."
-    virsh send-key "$ACTIVE_VM" KEY_ENTER
-    sleep 8  # Fedora GRUB lädt
-
-    # Schritt 3: Fedora GRUB → [m] VM-Test via F6 ExMenu
-    # F6 öffnet ExMenu mit unseren ventoy_grub.cfg Einträgen
-    log "Öffne Ventoy ExMenu (F6) für [m] VM-Test Profil..."
+    # F6 ExMenu direkt vom Ventoy-HAUPTMENÜ (NICHT nach ISO-Auswahl!)
+    # Erkenntnisse: F6 funktioniert nur im Ventoy-Hauptmenü,
+    # nicht nach "Enter → Boot mode selection → normal mode → Fedora GRUB"
+    # Fedora ISO ist alphabetisch erster Eintrag (F vor N=Nobara)
+    log "Warte auf Ventoy Hauptmenü — sende F6 für ExMenu mit inst.ks Profilen..."
     virsh send-key "$ACTIVE_VM" KEY_F6
-    sleep 3
-    log "Sende Enter → [m] VM-Test (erster Eintrag: inst.stage2 + inst.ks)..."
+    sleep 4  # ExMenu lädt
+
+    # ExMenu zeigt unsere ventoy_grub.cfg Einträge:
+    # [m] VM-Test ist erster Eintrag — Enter auswählen
+    log "ExMenu offen — wähle [m] VM-Test (Enter: inst.stage2=hd:LABEL=Ventoy + inst.ks)..."
     virsh send-key "$ACTIVE_VM" KEY_ENTER
-    log "Anaconda startet mit nobara-vm.ks — Fedora Netinstall läuft..."
+    log "Anaconda startet mit inst.ks=nobara-vm.ks — vollautomatische Installation..."
 
     # virt-manager öffnen für visuelle Kontrolle
     virt-manager --connect qemu:///system --show-domain-console "$ACTIVE_VM" &
