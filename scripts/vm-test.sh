@@ -237,15 +237,22 @@ cmd_test() {
         *) die "Unbekanntes Profil: '$profile'. Erlaubt: theme-bash | vllm-only | headless-vllm" ;;
     esac
 
-    step "Test: Profil '${profile}'"
-
-    # Log-Datei für diesen Testlauf
+    # Log-Datei — ZUERST öffnen damit alle Ausgaben erfasst werden
     local ts; ts=$(date '+%Y%m%d-%H%M%S')
     local log_dir="${TEST_RESULTS_DIR}/${profile}"
     mkdir -p "$log_dir"
     local log_file="${log_dir}/${ts}-test.log"
     exec > >(tee -a "$log_file") 2>&1
-    log "Log-Datei: $log_file"
+
+    local test_start; test_start=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "════════════════════════════════════════════════════"
+    echo "  Nobara VM-Test — Profil: ${profile}"
+    echo "  Gestartet: ${test_start}"
+    echo "  VM: ${VM_NAME}  Snapshot: ${VM_SNAPSHOT}"
+    echo "  Log: ${log_file}"
+    echo "════════════════════════════════════════════════════"
+
+    step "Test: Profil '${profile}'"
 
     vm_exists        || die "VM '${VM_NAME}' nicht gefunden."
     snapshot_exists  || die "Snapshot '${VM_SNAPSHOT}' nicht gefunden. Erst 'snapshot' ausführen."
@@ -359,9 +366,33 @@ XMLEOF
     sleep 4  # Oh-My-Bash Prompt aufbauen lassen
     take_screenshot "2-after" "$profile"
 
-    log ""
-    log "Test abgeschlossen. Ergebnisse: ${log_dir}/"
-    ls -lh "${log_dir}/" 2>/dev/null || true
+    # ── Test-Zusammenfassung ──────────────────────────────────────────────────
+    local test_end; test_end=$(date '+%Y-%m-%d %H:%M:%S')
+    echo ""
+    echo "════════════════════════════════════════════════════"
+    echo "  TEST-ZUSAMMENFASSUNG"
+    echo "  Profil:    ${profile}"
+    echo "  VM:        ${VM_NAME} (${ip})"
+    echo "  Ende:      ${test_end}"
+    echo ""
+
+    # Installierte Komponenten prüfen
+    $SSH "$VM_USER@$ip" "
+echo '  Installierte Komponenten:'
+[ -f /var/lib/nobara-provision/first-boot.done ] && echo '  ✓ First-Boot abgeschlossen' || echo '  ✗ First-Boot fehlt'
+[ -d \${HOME}/.config/gtk-4.0 ] && echo '  ✓ WhiteSur GTK (libadwaita)' || echo '  ✗ WhiteSur GTK fehlt'
+[ -d \${HOME}/.local/share/icons/WhiteSur-dark ] && echo '  ✓ WhiteSur Icons (dark)' || echo '  ✗ WhiteSur Icons fehlen'
+[ -d \${HOME}/.local/share/backgrounds/WhiteSur ] && echo '  ✓ WhiteSur Wallpapers' || echo '  ✗ Wallpapers fehlen'
+[ -d \${HOME}/.oh-my-bash ] && echo '  ✓ Oh-My-Bash' || echo '  ✗ Oh-My-Bash fehlt'
+echo '  Extensions:' \$(gsettings get org.gnome.shell enabled-extensions 2>/dev/null)
+echo '  Wallpaper:' \$(gsettings get org.gnome.desktop.background picture-uri 2>/dev/null)
+" 2>/dev/null || true
+
+    echo ""
+    echo "  Screenshots:"
+    ls -lh "${log_dir}/"*.png 2>/dev/null | awk '{print "  " $NF}' || true
+    echo "  Log: ${log_file}"
+    echo "════════════════════════════════════════════════════"
 }
 
 cmd_status() {
