@@ -278,39 +278,36 @@ XMLEOF
     log "Warte auf Ventoy GRUB-Menü (10s)..."
     sleep 10
 
-    # ── Erkenntnisse aus VM-Tests ──────────────────────────────────────────────
-    # Nobara ISO nutzt CALAMARES (kein Anaconda) → inst.ks wird IGNORIERT
-    # Custom loopback GRUB-Einträge: root=live:CDLABEL= nicht erreichbar in VM
-    # Funktionierender Weg: Ventoy → ISO → "Boot in grub2 mode" → ISO-GRUB
-    # Das ISO-eigene GRUB exponiert CDLABEL korrekt → Live-Session startet
+    # ── Fedora Netinstall via Ventoy ───────────────────────────────────────────
+    # Fedora Netinstall ISO → Anaconda mit vollem Kickstart-Support
+    # Ventoy F6 ExMenu → [m] VM-Test Profil → inst.stage2 + inst.ks korrekt
     # ────────────────────────────────────────────────────────────────────────
 
-    # Schritt 1: Nobara ISO im Ventoy-Hauptmenü auswählen (Enter)
-    log "Wähle Nobara ISO im Ventoy-Menü (Enter)..."
+    # Schritt 1: Fedora ISO im Ventoy-Hauptmenü (erster Eintrag alphabetisch)
+    log "Wähle Fedora ISO im Ventoy-Menü (Enter)..."
     virsh send-key "$ACTIVE_VM" KEY_ENTER
     sleep 5
 
-    # Schritt 2: "Boot in grub2 mode" auswählen (2. Eintrag = Pfeil runter + Enter)
-    # Ventoy zeigt: "Boot in normal mode" / "Boot in grub2 mode" / "File checksum"
-    log "Wähle 'Boot in grub2 mode' (Pfeil-runter + Enter)..."
-    virsh send-key "$ACTIVE_VM" KEY_DOWN
-    sleep 0.5
+    # Schritt 2: Ventoy Boot-Modus — "Boot in normal mode" (erster Eintrag = Enter)
+    log "Wähle 'Boot in normal mode' (Enter)..."
     virsh send-key "$ACTIVE_VM" KEY_ENTER
-    sleep 8  # ISO-eigener GRUB lädt
+    sleep 8  # Fedora GRUB lädt
 
-    # Schritt 3: Im ISO-GRUB "Start Nobara 43" normal booten (erster Eintrag = Enter)
-    # KEIN inst.ks - Nobara nutzt Calamares, kein Anaconda/Kickstart
-    log "ISO-GRUB geladen — boote 'Start Nobara 43' (Enter)..."
+    # Schritt 3: Fedora GRUB → [m] VM-Test via F6 ExMenu
+    # F6 öffnet ExMenu mit unseren ventoy_grub.cfg Einträgen
+    log "Öffne Ventoy ExMenu (F6) für [m] VM-Test Profil..."
+    virsh send-key "$ACTIVE_VM" KEY_F6
+    sleep 3
+    log "Sende Enter → [m] VM-Test (erster Eintrag: inst.stage2 + inst.ks)..."
     virsh send-key "$ACTIVE_VM" KEY_ENTER
-    log "Live-System startet — Calamares öffnet automatisch..."
+    log "Anaconda startet mit nobara-vm.ks — Fedora Netinstall läuft..."
 
     # virt-manager öffnen für visuelle Kontrolle
     virt-manager --connect qemu:///system --show-domain-console "$ACTIVE_VM" &
-    log "virt-manager geöffnet — Installation in Echtzeit sichtbar"
+    log "virt-manager geöffnet — Anaconda Installation in Echtzeit sichtbar"
 
-    # Warte auf Live-System-Start (Plymouth → GNOME → Calamares)
-    # Keine automatische Installation via Kickstart — Calamares öffnet GUI
-    log "Warte auf Live-System + Calamares (~5-8 Min)..."
+    # Warte auf Abschluss — Anaconda rebootet die VM nach erfolgreicher Installation
+    log "Warte auf Anaconda + Fedora-Installation (~15-25 Min über Netzwerk)..."
     local waited=0
     local install_timeout=1800  # 30 Minuten max
     local rebooted=0
