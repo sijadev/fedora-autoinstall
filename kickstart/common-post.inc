@@ -194,7 +194,7 @@ WS_GTK_ARGS="${NOBARA_WS_GTK_ARGS:-}"
 WS_ICON_ARGS="${NOBARA_WS_ICON_ARGS:-}"
 WS_WALL_ARGS="${NOBARA_WS_WALL_ARGS:-}"
 OMB_THEME="${NOBARA_OMB_THEME:-modern}"
-THEMES_DIR="${HOME}/themes"
+THEMES_DIR="/tmp/nobara-themes-build"
 
 # ── 1. Flatpak Extension Manager ──────────────────────────────────────────────
 step "Flatpak Extension Manager"

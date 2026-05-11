@@ -62,7 +62,7 @@ WS_ICON_ARGS="${NOBARA_WS_ICON_ARGS:-}"
 WS_WALL_ARGS="${NOBARA_WS_WALL_ARGS:-}"
 OMB_THEME="${NOBARA_OMB_THEME:-modern}"
 
-THEMES_DIR="${HOME}/themes"
+THEMES_DIR="/tmp/nobara-themes-build"
 
 # ── Profile: headless profiles skip all GUI steps ────────────────────────────
 if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
