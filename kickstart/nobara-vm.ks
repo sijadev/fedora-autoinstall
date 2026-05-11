@@ -16,10 +16,19 @@ network --bootproto=dhcp --device=link --activate
 network --hostname=nobara-workstation
 
 # ── Disk / partitioning ───────────────────────────────────────────────────────
+# Mindest-Diskgröße: 80 GB (squashfs unkomprimiert ~22 GB + Reserve)
 ignoredisk --only-use=vda
 zerombr
 clearpart --all --initlabel --drives=vda
-autopart --type=lvm
+
+# Explizite Partitionierung: swap auf 4 GB begrenzen damit root genug bekommt
+part /boot/efi --fstype=efi   --size=600  --ondrive=vda
+part /boot     --fstype=xfs   --size=1024 --ondrive=vda
+part pv.01                    --size=1    --grow --ondrive=vda
+
+volgroup vg_nobara pv.01
+logvol swap --vgname=vg_nobara --name=swap --fstype=swap --size=4096
+logvol /    --vgname=vg_nobara --name=root --fstype=xfs  --size=1 --grow
 
 # ── Bootloader ────────────────────────────────────────────────────────────────
 bootloader --boot-drive=vda
