@@ -320,9 +320,12 @@ XMLEOF
     log "Ventoy-Pfad in VM: $ventoy_path"
 
     # ── Screenshot VORHER (offenes Terminal) ──────────────────────────────────
-    step "Screenshot: vor Provisioner"
-    open_terminal_in_vm "$ip"
-    take_screenshot "1-before" "$profile"
+    # Screenshots nur für GUI-Profile (headless hat keinen Desktop)
+    if [[ "$profile" == "theme-bash" ]]; then
+        step "Screenshot: vor Provisioner"
+        open_terminal_in_vm "$ip"
+        take_screenshot "1-before" "$profile"
+    fi
 
     # ── Provisioner ausführen ─────────────────────────────────────────────────
     log "Starte nobara-provision.sh --profile ${profile} ..."
@@ -357,14 +360,15 @@ XMLEOF
     fi
 
     # ── Screenshot NACHHER ────────────────────────────────────────────────────
-    step "Screenshot: nach Provisioner"
-    # Activities schließen, neue Shell mit Oh-My-Bash öffnen
-    $SSH "$VM_USER@$ip" \
-        'DISPLAY=:0 xdotool key Escape 2>/dev/null || true' 2>/dev/null || true
-    sleep 1
-    open_terminal_in_vm "$ip"
-    sleep 4  # Oh-My-Bash Prompt aufbauen lassen
-    take_screenshot "2-after" "$profile"
+    if [[ "$profile" == "theme-bash" ]]; then
+        step "Screenshot: nach Provisioner"
+        $SSH "$VM_USER@$ip" \
+            'DISPLAY=:0 xdotool key Escape 2>/dev/null || true' 2>/dev/null || true
+        sleep 1
+        open_terminal_in_vm "$ip"
+        sleep 4
+        take_screenshot "2-after" "$profile"
+    fi
 
     # ── Profil-spezifische Validierung ───────────────────────────────────────
     local test_passed=0
