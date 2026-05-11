@@ -6,6 +6,11 @@
 #   NOBARA_ISO_CDLABEL   — e.g. Nobara-43  (ISO volume label)
 #
 # Hotkeys: [f] Full  [t] Theme  [h] Headless  [v] vLLM-only
+#
+# Disk-Override: Im GRUB-Menü (e) drücken und an die linux-Zeile anhängen:
+#   inst.disk=sdb          (z.B. zweite SATA-Disk)
+#   inst.disk=nvme1n1      (z.B. zweite NVMe)
+# Ohne Override: größte interne Disk wird automatisch gewählt.
 
 menuentry "Nobara -- [f] Vollinstallation  (GNOME + NVIDIA + AI + vLLM)" --hotkey=f {
     search --no-floppy --label --set=root Ventoy
