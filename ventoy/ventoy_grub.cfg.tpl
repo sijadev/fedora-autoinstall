@@ -17,6 +17,15 @@
 #   inst.disk=sdb          (z.B. zweite SATA-Disk)
 # Ohne Override: größte interne Disk wird automatisch gewählt.
 
+# ── [m] VM-Test — bootet ISO, installiert in KVM-VM (vda, 80GB) ─────────────
+menuentry "Nobara -- [m] VM-Test           (ISO-Boot → Anaconda → KVM/virtio)" --hotkey=m {
+    search --no-floppy --label --set=root Ventoy
+    set isofile="/NOBARA_ISO_FILENAME"
+    loopback loop $isofile
+    linux  (loop)/images/pxeboot/vmlinuz root=live:CDLABEL=NOBARA_ISO_CDLABEL rd.live.image nomodeset inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-vm.ks
+    initrd (loop)/images/pxeboot/initrd.img
+}
+
 # ── [f] Vollinstallation — bootet ISO, installiert frisches System ────────────
 menuentry "Nobara -- [f] Vollinstallation  (ISO-Boot → Anaconda → frisches System)" --hotkey=f {
     search --no-floppy --label --set=root Ventoy

@@ -3,6 +3,8 @@
 #
 # Befehle:
 #   vm-test.sh create          VM anlegen (80 GB, UEFI, VirtIO, Ventoy USB-Passthrough)
+#   vm-test.sh install         Frische Installation: VM vom Ventoy USB booten,
+#                              [m] VM-Test Profil per Hotkey auswählen, Anaconda läuft durch
 #   vm-test.sh snapshot        Snapshot "base-nobara" nach erfolgreicher Installation anlegen
 #   vm-test.sh test <profil>   Snapshot zurücksetzen + Provisioner ausführen
 #                              Profil: theme-bash | vllm-only | headless-vllm
@@ -213,6 +215,77 @@ cmd_create() {
     echo -e "     ${CYAN}inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-vm.ks${RESET}"
     echo -e "  3. Installation abwarten, VM startet neu"
     echo -e "  4. Dann: ${BOLD}./scripts/vm-test.sh snapshot${RESET}"
+}
+
+cmd_install() {
+    step "Installations-Test: Ventoy USB → GRUB [m] → Anaconda → nobara-vm.ks"
+
+    vm_exists || die "VM '${VM_NAME}' nicht gefunden. Erst 'create' ausführen."
+
+    # VM muss ausgeschaltet sein (frische Disk)
+    if vm_is_running; then
+        log "VM läuft — stoppe für frischen Install..."
+        virsh destroy "$VM_NAME"
+        sleep 2
+    fi
+
+    # Ventoy USB-Passthrough sicherstellen
+    if ! virsh dumpxml "$VM_NAME" | grep -q "hostdev"; then
+        add_usb_passthrough
+    fi
+
+    log "Starte VM — bootet vom Ventoy USB-Stick..."
+    virsh start "$VM_NAME"
+
+    # Warten bis GRUB geladen ist (~8s nach BIOS POST)
+    log "Warte auf Ventoy GRUB-Menü (10s)..."
+    sleep 10
+
+    # Hotkey [m] senden → wählt nobara-vm.ks Profil
+    log "Sende Hotkey 'm' → VM-Test Profil auswählen..."
+    virsh send-key "$VM_NAME" KEY_M
+    log "Anaconda startet mit nobara-vm.ks — Installation läuft..."
+
+    # virt-manager öffnen für visuelle Kontrolle
+    virt-manager --connect qemu:///system --show-domain-console "$VM_NAME" &
+    log "virt-manager geöffnet — Installation in Echtzeit sichtbar"
+
+    # Auf Abschluss warten: VM startet nach Installation neu
+    log "Warte auf Abschluss (Anaconda rebootet die VM)..."
+    local waited=0
+    local install_timeout=1800  # 30 Minuten
+    local rebooted=0
+
+    # Warte auf ersten Shutdown nach Install (VM rebootet)
+    while [[ $waited -lt $install_timeout ]]; do
+        sleep 10; waited=$((waited + 10))
+        local state; state=$(vm_state)
+        if [[ "$state" =~ ^(ausgeschaltet|shut.off) ]]; then
+            rebooted=1
+            break
+        fi
+        [[ $((waited % 60)) -eq 0 ]] && log "  ... ${waited}s / ${install_timeout}s"
+    done
+
+    if [[ $rebooted -eq 1 ]]; then
+        log "✓ Installation abgeschlossen — VM hat sich ausgeschaltet (reboot nach Install)"
+        log "Starte VM für Post-Install-Check..."
+        virsh start "$VM_NAME"
+        sleep 60  # Boot-Zeit
+
+        local ip; ip=$(get_vm_ip 2>/dev/null || echo "")
+        if [[ -n "$ip" ]]; then
+            log "✓ VM bootet ins installierte System — IP: $ip"
+            log ""
+            log "Nächster Schritt: ./scripts/vm-test.sh snapshot"
+        else
+            warn "VM gestartet aber keine IP nach 60s — manuell prüfen"
+        fi
+    else
+        warn "✗ Installation nicht abgeschlossen nach ${install_timeout}s"
+        log "Aktueller VM-Status: $(vm_state)"
+        log "Prüfe virt-manager für Anaconda-Fehlermeldungen"
+    fi
 }
 
 cmd_snapshot() {
@@ -501,6 +574,7 @@ shift || true
 
 case "$COMMAND" in
     create)   cmd_create   ;;
+    install)  cmd_install  ;;
     snapshot) cmd_snapshot ;;
     test)     cmd_test "$@" ;;
     status)   cmd_status   ;;
