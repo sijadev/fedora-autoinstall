@@ -386,13 +386,31 @@ if lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
     log "Installing HuggingFace CLI + autoawq (GPU detected)..."
     "$VENV_VLLM/bin/pip" install --quiet "huggingface_hub" autoawq \
         || warn "HuggingFace CLI / autoawq install failed (non-fatal)."
+
+    log "Installing vLLM (GPU, CUDA)..."
+    "$VENV_VLLM/bin/pip" install --quiet vllm \
+        || warn "vLLM GPU install failed (non-fatal)."
 else
-    log "Installing HuggingFace CLI (no GPU — autoawq skipped)..."
+    log "Installing HuggingFace CLI + vLLM CPU-Backend (no GPU)..."
     "$VENV_VLLM/bin/pip" install --quiet "huggingface_hub" \
         || warn "HuggingFace CLI install failed (non-fatal)."
+
+    # vLLM CPU-Backend: installiert ohne CUDA-Kompilierung
+    VLLM_TARGET_DEVICE=cpu "$VENV_VLLM/bin/pip" install --quiet vllm \
+        || warn "vLLM CPU install failed (non-fatal)."
+
+    # Kleines Testmodell für VM-Tests vorausholen (250MB)
+    if "$VENV_VLLM/bin/python" -c "import vllm" 2>/dev/null; then
+        log "vLLM CPU-Backend installiert. Lade Test-Modell facebook/opt-125m..."
+        "$VENV_VLLM/bin/huggingface-cli" download facebook/opt-125m \
+            --local-dir "${HOME}/.cache/huggingface/hub/facebook--opt-125m" \
+            --quiet 2>/dev/null \
+            && log "Test-Modell bereit: facebook/opt-125m" \
+            || warn "Modell-Download fehlgeschlagen (non-fatal)."
+    fi
 fi
 
-log "HuggingFace CLI installed. Token will be prompted lazily on first download."
+log "HuggingFace CLI + vLLM installiert."
 
 # ── 10. CUDA 13.2 toolchain for vLLM-Omni ────────────────────────────────────
 step "CUDA ${VLLM_CUDA_VERSION} toolchain"

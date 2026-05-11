@@ -366,6 +366,121 @@ XMLEOF
     sleep 4  # Oh-My-Bash Prompt aufbauen lassen
     take_screenshot "2-after" "$profile"
 
+    # ── Profil-spezifische Validierung ───────────────────────────────────────
+    local test_passed=0
+
+    if [[ "$profile" == "theme-bash" ]]; then
+        # GUI-Profil: Theme + Extensions + Wallpaper prüfen
+        step "Validierung: theme-bash"
+        $SSH "$VM_USER@$ip" "
+echo '  Installierte Komponenten:'
+[ -f /var/lib/nobara-provision/first-boot.done ] && echo '  ✓ First-Boot'           || echo '  ✗ First-Boot fehlt'
+[ -d \${HOME}/.config/gtk-4.0 ]                  && echo '  ✓ WhiteSur GTK'         || echo '  ✗ WhiteSur GTK fehlt'
+[ -d \${HOME}/.local/share/icons/WhiteSur-dark ]  && echo '  ✓ WhiteSur Icons'       || echo '  ✗ WhiteSur Icons fehlen'
+[ -d \${HOME}/.local/share/backgrounds/WhiteSur ] && echo '  ✓ WhiteSur Wallpapers'  || echo '  ✗ Wallpapers fehlen'
+[ -d \${HOME}/.oh-my-bash ]                       && echo '  ✓ Oh-My-Bash'           || echo '  ✗ Oh-My-Bash fehlt'
+echo '  Extensions:' \$(gsettings get org.gnome.shell enabled-extensions 2>/dev/null)
+echo '  Wallpaper:' \$(gsettings get org.gnome.desktop.background picture-uri 2>/dev/null)
+" 2>/dev/null || true
+        test_passed=1
+
+    elif [[ "$profile" =~ ^(vllm-only|headless-vllm)$ ]]; then
+        # AI-Profil: echter vLLM CPU-Server starten und mit curl testen
+        step "Validierung: vLLM CPU-Server + curl-Test"
+        local vllm_model="facebook/opt-125m"
+        local vllm_port=8000
+        local vllm_timeout=300  # 5 Minuten — CPU-Start dauert länger
+
+        # vLLM installiert?
+        if ! $SSH "$VM_USER@$ip" \
+            "\${HOME}/.venvs/bitwig-omni/bin/python -c 'import vllm; print(\"vLLM\", vllm.__version__)'" 2>/dev/null; then
+            warn "✗ vLLM nicht installiert — Test übersprungen"
+        else
+            log "vLLM gefunden. Starte Server mit CPU-Backend + ${vllm_model}..."
+
+            # vLLM-Server im Hintergrund starten
+            $SSH "$VM_USER@$ip" "
+nohup \${HOME}/.venvs/bitwig-omni/bin/vllm serve ${vllm_model} \
+    --device cpu \
+    --dtype float32 \
+    --port ${vllm_port} \
+    --disable-log-requests \
+    &>/tmp/vllm-server.log &
+echo \$! > /tmp/vllm-server.pid
+echo 'vLLM-Server gestartet (PID: '\$(cat /tmp/vllm-server.pid)')'
+" 2>/dev/null || warn "vLLM-Start fehlgeschlagen"
+
+            # Warten bis API antwortet (max 5 Min)
+            log "Warte auf vLLM-API (max ${vllm_timeout}s)..."
+            local waited=0
+            local ready=0
+            until [[ $ready -eq 1 || $waited -gt $vllm_timeout ]]; do
+                sleep 5; waited=$((waited + 5))
+                echo -n "."
+                if $SSH "$VM_USER@$ip" \
+                    "curl -sf http://localhost:${vllm_port}/v1/models &>/dev/null"; then
+                    ready=1
+                fi
+            done
+            echo ""
+
+            if [[ $ready -eq 1 ]]; then
+                log "vLLM-Server bereit nach ${waited}s"
+
+                # GET /v1/models
+                models_resp=$($SSH "$VM_USER@$ip" \
+                    "curl -sf http://localhost:${vllm_port}/v1/models" 2>/dev/null || echo "")
+                if echo "$models_resp" | grep -q '"object"'; then
+                    log "✓ GET /v1/models:"
+                    echo "$models_resp" | python3 -m json.tool 2>/dev/null | sed 's/^/    /' || echo "    $models_resp"
+                    test_passed=1
+                else
+                    warn "✗ GET /v1/models — ungültige Antwort: $models_resp"
+                fi
+
+                # POST /v1/chat/completions
+                log "POST /v1/chat/completions (Frage: 'Hello')..."
+                chat_resp=$($SSH "$VM_USER@$ip" "
+curl -sf http://localhost:${vllm_port}/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{\"model\":\"${vllm_model}\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello, reply with one word.\"}],\"max_tokens\":10}' 2>/dev/null
+" || echo "")
+                if echo "$chat_resp" | grep -q '"choices"'; then
+                    local reply
+                    reply=$(echo "$chat_resp" | python3 -c \
+                        "import sys,json; d=json.load(sys.stdin); print(d['choices'][0]['message']['content'])" 2>/dev/null || echo "?")
+                    log "✓ POST /v1/chat/completions — Antwort: '${reply}'"
+                else
+                    warn "✗ POST /v1/chat/completions — ungültige Antwort"
+                fi
+
+                # vLLM-Server stoppen
+                $SSH "$VM_USER@$ip" \
+                    "kill \$(cat /tmp/vllm-server.pid 2>/dev/null) 2>/dev/null; rm -f /tmp/vllm-server.pid" \
+                    2>/dev/null || true
+                log "vLLM-Server gestoppt."
+            else
+                warn "✗ vLLM-Server nicht erreichbar nach ${vllm_timeout}s"
+                $SSH "$VM_USER@$ip" "tail -20 /tmp/vllm-server.log 2>/dev/null" 2>/dev/null || true
+            fi
+        fi
+
+        # Log auf ERROR-Zeilen prüfen
+        log "Log-Analyse: first-login.log auf Fehler prüfen..."
+        error_count=$($SSH "$VM_USER@$ip" \
+            "grep -c '\[ERROR\]' \${HOME}/.local/share/nobara-provision/first-login.log 2>/dev/null || echo 0" \
+            2>/dev/null || echo "0")
+        if [[ "$error_count" -eq 0 ]]; then
+            log "✓ Keine ERROR-Einträge im first-login.log"
+        else
+            warn "✗ ${error_count} ERROR-Einträge im first-login.log:"
+            $SSH "$VM_USER@$ip" \
+                "grep '\[ERROR\]' \${HOME}/.local/share/nobara-provision/first-login.log 2>/dev/null | head -10" \
+                2>/dev/null || true
+            test_passed=0
+        fi
+    fi
+
     # ── Test-Zusammenfassung ──────────────────────────────────────────────────
     local test_end; test_end=$(date '+%Y-%m-%d %H:%M:%S')
     echo ""
@@ -374,20 +489,11 @@ XMLEOF
     echo "  Profil:    ${profile}"
     echo "  VM:        ${VM_NAME} (${ip})"
     echo "  Ende:      ${test_end}"
-    echo ""
-
-    # Installierte Komponenten prüfen
-    $SSH "$VM_USER@$ip" "
-echo '  Installierte Komponenten:'
-[ -f /var/lib/nobara-provision/first-boot.done ] && echo '  ✓ First-Boot abgeschlossen' || echo '  ✗ First-Boot fehlt'
-[ -d \${HOME}/.config/gtk-4.0 ] && echo '  ✓ WhiteSur GTK (libadwaita)' || echo '  ✗ WhiteSur GTK fehlt'
-[ -d \${HOME}/.local/share/icons/WhiteSur-dark ] && echo '  ✓ WhiteSur Icons (dark)' || echo '  ✗ WhiteSur Icons fehlen'
-[ -d \${HOME}/.local/share/backgrounds/WhiteSur ] && echo '  ✓ WhiteSur Wallpapers' || echo '  ✗ Wallpapers fehlen'
-[ -d \${HOME}/.oh-my-bash ] && echo '  ✓ Oh-My-Bash' || echo '  ✗ Oh-My-Bash fehlt'
-echo '  Extensions:' \$(gsettings get org.gnome.shell enabled-extensions 2>/dev/null)
-echo '  Wallpaper:' \$(gsettings get org.gnome.desktop.background picture-uri 2>/dev/null)
-" 2>/dev/null || true
-
+    if [[ "$test_passed" -eq 1 ]]; then
+        echo "  Status:    ✓ BESTANDEN"
+    else
+        echo "  Status:    ✗ FEHLGESCHLAGEN"
+    fi
     echo ""
     echo "  Screenshots:"
     ls -lh "${log_dir}/"*.png 2>/dev/null | awk '{print "  " $NF}' || true
