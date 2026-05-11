@@ -47,7 +47,7 @@ log "Install profile: ${INSTALL_PROFILE}"
 step "nobara-sync"
 if command -v nobara-sync &>/dev/null; then
     log "Running nobara-sync..."
-    nobara-sync --headless || die "nobara-sync failed."
+    nobara-sync install-updates || die "nobara-sync failed."
     log "nobara-sync completed."
 else
     warn "nobara-sync not found; skipping."
