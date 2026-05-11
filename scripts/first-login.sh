@@ -547,15 +547,17 @@ step "Model download: ${VLLM_MODEL}"
 
 if [[ "$INSTALL_PROFILE" == "headless-vllm" ]]; then
     log "Skipped (headless-vllm: model is downloaded inside the Podman container)."
+elif ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
+    log "Skipped: kein NVIDIA GPU — großes Modell (${VLLM_MODEL}) nur auf echter Hardware laden."
+    log "Testmodell bereits bereit: facebook/opt-125m"
 else
-log "Checking HuggingFace login..."
-log "Downloading model: ${VLLM_MODEL} ..."
-# Lazy token behavior: download will prompt for login only when required.
-"$VENV_VLLM/bin/python" -c "
+    log "Checking HuggingFace login..."
+    log "Downloading model: ${VLLM_MODEL} ..."
+    "$VENV_VLLM/bin/python" -c "
 from huggingface_hub import snapshot_download
 snapshot_download('${VLLM_MODEL}', local_dir='${HOME}/.cache/huggingface/hub/${VLLM_MODEL//\//__}')
 " \
-    || warn "Model download failed or deferred (check HF token / disk space)."
+        || warn "Model download failed or deferred (check HF token / disk space)."
 fi
 
 # ── Final report ──────────────────────────────────────────────────────────────
