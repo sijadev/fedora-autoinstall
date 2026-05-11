@@ -278,9 +278,12 @@ XMLEOF
     log "Warte auf Ventoy GRUB-Menü (10s)..."
     sleep 10
 
-    # Hotkey [m] senden → wählt nobara-vm.ks Profil
-    log "Sende Hotkey 'm' → VM-Test Profil auswählen..."
-    virsh send-key "$ACTIVE_VM" KEY_M
+    # Ventoy ExMenu (F6) öffnen → [m] VM-Test Profil ist erstes Custom-Entry
+    log "Öffne Ventoy ExMenu (F6) → Custom-Profile..."
+    virsh send-key "$ACTIVE_VM" KEY_F6
+    sleep 3  # Warten bis ExMenu geladen
+    log "Sende Enter → [m] VM-Test Profil auswählen (erster Eintrag)..."
+    virsh send-key "$ACTIVE_VM" KEY_ENTER
     log "Anaconda startet mit nobara-vm.ks — Installation läuft..."
 
     # virt-manager öffnen für visuelle Kontrolle
