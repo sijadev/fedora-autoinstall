@@ -256,8 +256,18 @@ GTK_DEST="-d ${HOME}/.local/share/themes"
 ICON_DEST="-d ${HOME}/.local/share/icons"
 
 ws_install_theme "WhiteSur-gtk-theme"   "https://github.com/vinceliuice/WhiteSur-gtk-theme.git"   "$GTK_DEST"   "$WS_GTK_ARGS"
-ws_install_theme "WhiteSur-icon-theme"  "https://github.com/vinceliuice/WhiteSur-icon-theme.git"  "$ICON_DEST"  "$WS_ICON_ARGS"
+# Icon theme: -dark flag removed in newer WhiteSur — use --dark instead
+ws_install_theme "WhiteSur-icon-theme"  "https://github.com/vinceliuice/WhiteSur-icon-theme.git"  "$ICON_DEST"  "--dark"
 ws_install_theme "WhiteSur-wallpapers"  "https://github.com/vinceliuice/WhiteSur-wallpapers.git"  ""            "$WS_WALL_ARGS"
+
+# GNOME theme anwenden (erfordert laufende DBus-Session)
+if command -v gsettings &>/dev/null; then
+    gsettings set org.gnome.desktop.interface gtk-theme    'WhiteSur-Dark' 2>/dev/null || true
+    gsettings set org.gnome.desktop.interface icon-theme   'WhiteSur-Dark' 2>/dev/null || true
+    gsettings set org.gnome.desktop.wm.preferences theme   'WhiteSur-Dark' 2>/dev/null || true
+    gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'   2>/dev/null || true
+    log "GNOME theme applied: WhiteSur-Dark"
+fi
 
 fi  # end: WhiteSur headless guard
 

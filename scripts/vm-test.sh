@@ -351,9 +351,12 @@ XMLEOF
 
     # ── Screenshot NACHHER ────────────────────────────────────────────────────
     step "Screenshot: nach Provisioner"
-    # Neue Shell öffnen damit Oh-My-Bash sichtbar ist
+    # Activities schließen, neue Shell mit Oh-My-Bash öffnen
+    $SSH "$VM_USER@$ip" \
+        'DISPLAY=:0 xdotool key Escape 2>/dev/null || true' 2>/dev/null || true
+    sleep 1
     open_terminal_in_vm "$ip"
-    sleep 3
+    sleep 4  # Oh-My-Bash Prompt aufbauen lassen
     take_screenshot "2-after" "$profile"
 
     log ""
