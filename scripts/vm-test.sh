@@ -24,8 +24,9 @@ VM_CPUS=4
 VM_DISK_GB=80
 VM_STORAGE_DIR="/home/sija/VMs"
 VM_DISK="${VM_STORAGE_DIR}/${VM_NAME}.qcow2"
-VM_SNAPSHOT="base-nobara"
-VM_USER="sija"
+VM_SNAPSHOT="nobara43-default"
+VM_USER="test"
+VM_PASS="test123"
 VM_OS_VARIANT="fedora43"
 
 OVMF_CODE="/usr/share/edk2/ovmf/OVMF_CODE.fd"
@@ -40,8 +41,10 @@ VENTOY_USB_PRODUCT="6545"
 # libvirt system URI — verhindert Verwechslung mit qemu:///session
 export LIBVIRT_DEFAULT_URI="qemu:///system"
 
-SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes"
-SSH_TIMEOUT=120  # Sekunden bis VM SSH-bereit ist
+SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o LogLevel=ERROR"
+SSH_TIMEOUT=300  # Sekunden bis VM SSH-bereit ist (GNOME-Boot ~2-3 min)
+# sshpass für Passwort-basiertes SSH (Test-VM)
+SSH="sshpass -p ${VM_PASS:-test123} ssh $SSH_OPTS"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -61,8 +64,13 @@ step() { echo -e "\n${CYAN}${BOLD}══ $* ══${RESET}"; }
 
 # ── Hilfsfunktionen ────────────────────────────────────────────────────────────
 
-vm_exists()     { virsh dominfo "$VM_NAME" &>/dev/null; }
-vm_is_running() { virsh domstate "$VM_NAME" 2>/dev/null | grep -q "running"; }
+vm_exists() { virsh dominfo "$VM_NAME" &>/dev/null; }
+
+vm_state() { virsh domstate "$VM_NAME" 2>/dev/null || echo "unknown"; }
+
+# Läuft oder pausiert (beides = Domain aktiv, kein Start nötig)
+vm_is_active()  { [[ "$(vm_state)" =~ ^(running|laufend|paused|pausiert) ]]; }
+vm_is_running() { [[ "$(vm_state)" =~ ^(running|laufend) ]]; }
 
 snapshot_exists() {
     virsh snapshot-list "$VM_NAME" 2>/dev/null | grep -q "$VM_SNAPSHOT"
@@ -77,7 +85,7 @@ wait_for_ssh() {
     local ip="$1"
     log "Warte auf SSH ($ip) ..."
     local elapsed=0
-    until ssh $SSH_OPTS "$VM_USER@$ip" true 2>/dev/null; do
+    until $SSH "$VM_USER@$ip" true 2>/dev/null; do
         sleep 3; elapsed=$((elapsed + 3))
         [[ $elapsed -gt $SSH_TIMEOUT ]] && die "SSH nicht erreichbar nach ${SSH_TIMEOUT}s"
         echo -n "."
@@ -195,15 +203,39 @@ cmd_test() {
     vm_exists        || die "VM '${VM_NAME}' nicht gefunden."
     snapshot_exists  || die "Snapshot '${VM_SNAPSHOT}' nicht gefunden. Erst 'snapshot' ausführen."
 
-    # Snapshot zurücksetzen
+    # Snapshot zurücksetzen — VM hart stoppen damit Revert sofort möglich
     log "Setze Snapshot '${VM_SNAPSHOT}' zurück ..."
-    vm_is_running && virsh shutdown "$VM_NAME" && sleep 3
+    if vm_is_running; then
+        virsh destroy "$VM_NAME"
+        sleep 1
+    fi
     virsh snapshot-revert "$VM_NAME" "$VM_SNAPSHOT"
     log "Snapshot zurückgesetzt."
 
-    # VM starten
-    virsh start "$VM_NAME"
-    log "VM gestartet."
+    # USB-Passthrough nach Revert sicherstellen (Snapshot-XML enthält ihn nicht)
+    if ! virsh dumpxml "$VM_NAME" | grep -q "hostdev"; then
+        find_ventoy_usb
+        virsh attach-device "$VM_NAME" --persistent /dev/stdin <<XMLEOF 2>/dev/null || true
+<hostdev mode='subsystem' type='usb' managed='yes'>
+  <source>
+    <vendor id='0x${VENTOY_USB_VENDOR}'/>
+    <product id='0x${VENTOY_USB_PRODUCT}'/>
+  </source>
+</hostdev>
+XMLEOF
+        log "Ventoy USB-Passthrough wiederhergestellt."
+    fi
+
+    # VM in laufenden Zustand bringen (Snapshot kann running/paused/shut-off sein)
+    local state; state=$(vm_state)
+    case "$state" in
+        running|laufend)
+            log "VM läuft bereits." ;;
+        paused|pausiert)
+            virsh resume "$VM_NAME"; log "VM fortgesetzt (war pausiert)." ;;
+        *)
+            virsh start "$VM_NAME"; log "VM gestartet." ;;
+    esac
 
     # Auf IP warten
     local ip=""
@@ -217,21 +249,31 @@ cmd_test() {
 
     wait_for_ssh "$ip"
 
-    # Ventoy-Pfad in VM ermitteln (USB-Passthrough → automount)
-    local ventoy_path
-    ventoy_path=$(ssh $SSH_OPTS "$VM_USER@$ip" \
-        "findmnt -rno TARGET LABEL=Ventoy 2>/dev/null || echo /run/media/${VM_USER}/Ventoy")
+    # Auf GNOME Auto-Login + Ventoy-Automount warten (max 60s)
+    log "Warte auf Ventoy-Mount (GNOME Auto-Login)..."
+    local ventoy_path=""
+    local mount_waited=0
+    until [[ -n "$ventoy_path" ]]; do
+        sleep 3; mount_waited=$((mount_waited + 3))
+        ventoy_path=$($SSH "$VM_USER@$ip" \
+            "findmnt -rno TARGET LABEL=Ventoy 2>/dev/null" || true)
+        [[ $mount_waited -gt 60 ]] && {
+            log "Automount nicht verfügbar — mounte manuell..."
+            $SSH "$VM_USER@$ip" "sudo mkdir -p /run/media/${VM_USER}/Ventoy && sudo mount /dev/sda1 /run/media/${VM_USER}/Ventoy 2>/dev/null" || true
+            ventoy_path="/run/media/${VM_USER}/Ventoy"
+        }
+    done
     log "Ventoy-Pfad in VM: $ventoy_path"
 
     # Provisioner ausführen
     log "Starte nobara-provision.sh --profile ${profile} ..."
-    ssh $SSH_OPTS "$VM_USER@$ip" \
+    $SSH "$VM_USER@$ip" \
         "sudo bash '${ventoy_path}/nobara-provision.sh' --profile '${profile}' --run-now" \
         || warn "Provisioner abgebrochen oder mit Fehler beendet — Logs prüfen"
 
     echo ""
     log "Logs streamen (Ctrl+C zum Beenden):"
-    ssh $SSH_OPTS "$VM_USER@$ip" "journalctl -fu nobara-first-boot.service" || true
+    $SSH "$VM_USER@$ip" "journalctl -fu nobara-first-boot.service" || true
 }
 
 cmd_status() {
@@ -261,7 +303,7 @@ cmd_ssh() {
     local ip; ip=$(get_vm_ip)
     [[ -n "$ip" ]] || die "Keine IP-Adresse."
     wait_for_ssh "$ip"
-    ssh $SSH_OPTS "$VM_USER@$ip"
+    $SSH "$VM_USER@$ip"
 }
 
 cmd_destroy() {
