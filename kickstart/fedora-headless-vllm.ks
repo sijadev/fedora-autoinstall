@@ -1,9 +1,9 @@
 #version=RHEL9
-# Nobara Linux — Vollständige Installation
-# Profil: full — GNOME Desktop + NVIDIA + CUDA + Podman + vLLM + Modelle
-# Ventoy-Menü: "Vollstaendige Installation"
+# Fedora Linux — Headless Podman + vLLM API
+# Profil: headless-vllm — Kein GUI, NVIDIA, Podman-Pipeline, vLLM als Dienst
+# Ventoy-Menü: "Headless Podman + vLLM API"
 
-graphical
+text
 reboot
 
 # ── Disk auto-detection (SATA sda / NVMe nvme0n1 / virtio vda) ───────────────
@@ -44,7 +44,7 @@ timezone Europe/Berlin --utc
 
 # ── Network ───────────────────────────────────────────────────────────────────
 network --bootproto=dhcp --device=link --activate
-network --hostname=nobara-workstation
+network --hostname=fedora-vllm
 
 # ── Disk / Partitioning ───────────────────────────────────────────────────────
 autopart --type=lvm
@@ -54,31 +54,25 @@ autopart --type=lvm
 
 # ── Authentication ────────────────────────────────────────────────────────────
 rootpw --lock
-user --groups=wheel,libvirt,video,audio --name=sija  --password=$6$rounds=4096$BgH86YMKr6lH6yOf$djMfEJ/BUmgeqRFLhj3StKh4OLYfZmpGcIP.0nmTWRreYz6TuQ8js7R5XVrK6HiDWUpeCN.YY7SoxW9EQ9anF1  --iscrypted
+user --groups=wheel,video,audio --name=sija  --password=$6$rounds=4096$BgH86YMKr6lH6yOf$djMfEJ/BUmgeqRFLhj3StKh4OLYfZmpGcIP.0nmTWRreYz6TuQ8js7R5XVrK6HiDWUpeCN.YY7SoxW9EQ9anF1  --iscrypted
 
 # ── Services ──────────────────────────────────────────────────────────────────
 services --enabled=sshd
 
 # ── Packages ──────────────────────────────────────────────────────────────────
 %packages
-@^workstation-product-environment
+@^minimal-environment
 git
 curl
 python3
 python3-pip
 python3-virtualenv
-gnome-shell-extension-user-theme
-gnome-shell-extension-dash-to-dock
-flatpak
+podman
 make
 gcc
 gcc-c++
 cmake
 ninja-build
-podman
-virt-manager
-qemu-kvm
-libvirt
 pciutils
 %end
 
@@ -87,36 +81,16 @@ pciutils
 # ── %post: write profile-specific environment ─────────────────────────────────
 %post --log=/root/ks-profile.log
 
-# ── Nobara-Repos hinzufügen (Fedora → Nobara konvertieren) ───────────────────
-dnf install -y  https://github.com/nicknamen/nobara-releases/releases/download/43/nobara-release-43-1.noarch.rpm  2>/dev/null ||  dnf config-manager addrepo  --from-repofile=https://nobaraproject.org/repos/nobara.repo  2>/dev/null || true
-
-cat > /etc/nobara-provision.env <<'ENVEOF'
-NOBARA_INSTALL_PROFILE="full"
-NOBARA_TARGET_USER="sija"
-NOBARA_PYTORCH_VENV="~/.venvs/ai"
-NOBARA_VLLM_VENV="~/.venvs/bitwig-omni"
-NOBARA_AUDIO_VENV="~/.venvs/kimi-audio"
-NOBARA_VLLM_CUDA_VERSION="13.2"
-NOBARA_VLLM_ARCH_LIST="12.0"
-NOBARA_AUDIO_MODEL="moonshotai/Kimi-Audio-7B-Instruct"
-NOBARA_AGENT_MODEL="Qwen/Qwen3-14B-AWQ"
-NOBARA_NEO4J_URI="bolt://localhost:7687"
-NOBARA_NEO4J_USER="neo4j"
-NOBARA_NEO4J_PASSWORD="bitwig-agent"
-NOBARA_WS_GTK_ARGS="-c Dark"
-NOBARA_WS_ICON_ARGS=""
-NOBARA_WS_WALL_ARGS=""
-NOBARA_OMB_THEME="modern"
-NOBARA_CUDA_SOURCE="nobara"
+cat > /etc/fedora-provision.env <<'ENVEOF'
+FEDORA_INSTALL_PROFILE="headless-vllm"
+FEDORA_TARGET_USER="sija"
+FEDORA_VLLM_CUDA_VERSION="13.2"
+FEDORA_VLLM_ARCH_LIST="12.0"
+FEDORA_AGENT_MODEL="Qwen/Qwen3-14B-AWQ"
+FEDORA_OMB_THEME="modern"
+FEDORA_CUDA_SOURCE="fedora"
 ENVEOF
-chmod 0644 /etc/nobara-provision.env
-
-# ── GDM Autologin ─────────────────────────────────────────────────────────────
-cat > /etc/gdm/custom.conf <<'GDMEOF'
-[daemon]
-AutomaticLoginEnable=True
-AutomaticLogin=sija
-GDMEOF
+chmod 0644 /etc/fedora-provision.env
 
 %end
 

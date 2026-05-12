@@ -17,10 +17,10 @@ def parse_xml(text: str) -> ET.Element:
 
 
 MINIMAL_VALID_XML = """
-<nobara-install>
-  <iso><url>https://example.com/nobara.iso</url></iso>
+<fedora-install>
+  <iso><url>https://example.com/fedora.iso</url></iso>
   <disk>/dev/sda</disk>
-  <hostname>nobara-test</hostname>
+  <hostname>fedora-test</hostname>
   <timezone>Europe/Berlin</timezone>
   <locale>de_DE.UTF-8</locale>
   <keyboard>de</keyboard>
@@ -28,7 +28,7 @@ MINIMAL_VALID_XML = """
     <name>sija</name>
     <password_hash>$6$salt$hashvalue</password_hash>
   </user>
-</nobara-install>
+</fedora-install>
 """
 
 
@@ -179,16 +179,16 @@ class ValidateTests(unittest.TestCase):
         self.assertEqual(xml2ks.validate(minimal_root(), Path("x.xml")), [])
 
     def test_accepts_http_iso_url(self):
-        root = minimal_root(**{"iso/url": "http://mirror.example.com/nobara.iso"})
+        root = minimal_root(**{"iso/url": "http://mirror.example.com/fedora.iso"})
         self.assertEqual(xml2ks.validate(root, Path("x.xml")), [])
 
     def test_rejects_ftp_iso_url(self):
-        root = minimal_root(**{"iso/url": "ftp://example.com/nobara.iso"})
+        root = minimal_root(**{"iso/url": "ftp://example.com/fedora.iso"})
         errors = xml2ks.validate(root, Path("x.xml"))
         self.assertTrue(any("iso/url" in e.lower() for e in errors))
 
     def test_rejects_relative_iso_url(self):
-        root = minimal_root(**{"iso/url": "nobara.iso"})
+        root = minimal_root(**{"iso/url": "fedora.iso"})
         errors = xml2ks.validate(root, Path("x.xml"))
         self.assertTrue(any("iso/url" in e.lower() for e in errors))
 
@@ -241,11 +241,11 @@ class ValidateTests(unittest.TestCase):
 
     def test_custom_partition_requires_kickstart_extra(self):
         root = parse_xml("""
-            <nobara-install>
-              <iso><url>https://example.com/nobara.iso</url></iso>
+            <fedora-install>
+              <iso><url>https://example.com/fedora.iso</url></iso>
               <disk>/dev/sda</disk>
               <partitioning><scheme>custom</scheme></partitioning>
-              <hostname>nobara-test</hostname>
+              <hostname>fedora-test</hostname>
               <timezone>Europe/Berlin</timezone>
               <locale>de_DE.UTF-8</locale>
               <keyboard>de</keyboard>
@@ -253,21 +253,21 @@ class ValidateTests(unittest.TestCase):
                 <name>sija</name>
                 <password_hash>$6$salt$hashvalue</password_hash>
               </user>
-            </nobara-install>
+            </fedora-install>
         """)
         errors = xml2ks.validate(root, Path("x.xml"))
         self.assertTrue(any("kickstart_extra" in e for e in errors))
 
     def test_accepts_custom_partition_with_kickstart_extra(self):
         root = parse_xml("""
-            <nobara-install>
-              <iso><url>https://example.com/nobara.iso</url></iso>
+            <fedora-install>
+              <iso><url>https://example.com/fedora.iso</url></iso>
               <disk>/dev/vda</disk>
               <partitioning>
                 <scheme>custom</scheme>
                 <kickstart_extra>ignoredisk --only-use=vda</kickstart_extra>
               </partitioning>
-              <hostname>nobara-test</hostname>
+              <hostname>fedora-test</hostname>
               <timezone>Europe/Berlin</timezone>
               <locale>de_DE.UTF-8</locale>
               <keyboard>de</keyboard>
@@ -275,17 +275,17 @@ class ValidateTests(unittest.TestCase):
                 <name>sija</name>
                 <password_hash>$6$salt$hashvalue</password_hash>
               </user>
-            </nobara-install>
+            </fedora-install>
         """)
         self.assertEqual(xml2ks.validate(root, Path("x.xml")), [])
 
     def test_rejects_invalid_partition_scheme(self):
         root = parse_xml("""
-            <nobara-install>
-              <iso><url>https://example.com/nobara.iso</url></iso>
+            <fedora-install>
+              <iso><url>https://example.com/fedora.iso</url></iso>
               <disk>/dev/sda</disk>
               <partitioning><scheme>btrfs</scheme></partitioning>
-              <hostname>nobara-test</hostname>
+              <hostname>fedora-test</hostname>
               <timezone>Europe/Berlin</timezone>
               <locale>de_DE.UTF-8</locale>
               <keyboard>de</keyboard>
@@ -293,7 +293,7 @@ class ValidateTests(unittest.TestCase):
                 <name>sija</name>
                 <password_hash>$6$salt$hashvalue</password_hash>
               </user>
-            </nobara-install>
+            </fedora-install>
         """)
         errors = xml2ks.validate(root, Path("x.xml"))
         self.assertTrue(any("scheme" in e for e in errors))
@@ -302,10 +302,10 @@ class ValidateTests(unittest.TestCase):
 
     def test_rejects_invalid_cuda_version_format(self):
         root = parse_xml("""
-            <nobara-install>
-              <iso><url>https://example.com/nobara.iso</url></iso>
+            <fedora-install>
+              <iso><url>https://example.com/fedora.iso</url></iso>
               <disk>/dev/sda</disk>
-              <hostname>nobara-test</hostname>
+              <hostname>fedora-test</hostname>
               <timezone>Europe/Berlin</timezone>
               <locale>de_DE.UTF-8</locale>
               <keyboard>de</keyboard>
@@ -316,17 +316,17 @@ class ValidateTests(unittest.TestCase):
               <first-login>
                 <vllm-omni><cuda-version>13</cuda-version></vllm-omni>
               </first-login>
-            </nobara-install>
+            </fedora-install>
         """)
         errors = xml2ks.validate(root, Path("x.xml"))
         self.assertTrue(any("cuda-version" in e.lower() for e in errors))
 
     def test_accepts_valid_cuda_version(self):
         root = parse_xml("""
-            <nobara-install>
-              <iso><url>https://example.com/nobara.iso</url></iso>
+            <fedora-install>
+              <iso><url>https://example.com/fedora.iso</url></iso>
               <disk>/dev/sda</disk>
-              <hostname>nobara-test</hostname>
+              <hostname>fedora-test</hostname>
               <timezone>Europe/Berlin</timezone>
               <locale>de_DE.UTF-8</locale>
               <keyboard>de</keyboard>
@@ -337,7 +337,7 @@ class ValidateTests(unittest.TestCase):
               <first-login>
                 <vllm-omni><cuda-version>13.2</cuda-version></vllm-omni>
               </first-login>
-            </nobara-install>
+            </fedora-install>
         """)
         self.assertEqual(xml2ks.validate(root, Path("x.xml")), [])
 
@@ -384,7 +384,7 @@ class GenerateKickstartTests(unittest.TestCase):
         self.assertIn("timezone Europe/Berlin --utc", self._ks())
 
     def test_hostname_in_network_directive(self):
-        self.assertIn("network --hostname=nobara-test", self._ks())
+        self.assertIn("network --hostname=fedora-test", self._ks())
 
     # ── User / Auth ───────────────────────────────────────────────────────────
 
@@ -402,8 +402,8 @@ class GenerateKickstartTests(unittest.TestCase):
 
     def test_custom_user_groups(self):
         root = parse_xml("""
-            <nobara-install>
-              <iso><url>https://example.com/nobara.iso</url></iso>
+            <fedora-install>
+              <iso><url>https://example.com/fedora.iso</url></iso>
               <disk>/dev/sda</disk>
               <hostname>h</hostname>
               <timezone>UTC</timezone>
@@ -414,7 +414,7 @@ class GenerateKickstartTests(unittest.TestCase):
                 <password_hash>$6$x$y</password_hash>
                 <groups>wheel,docker,video</groups>
               </user>
-            </nobara-install>
+            </fedora-install>
         """)
         ks = xml2ks.generate_kickstart(root)
         self.assertIn("--groups=wheel,docker,video", ks)
@@ -424,8 +424,8 @@ class GenerateKickstartTests(unittest.TestCase):
 
     def test_custom_gecos(self):
         root = parse_xml("""
-            <nobara-install>
-              <iso><url>https://example.com/nobara.iso</url></iso>
+            <fedora-install>
+              <iso><url>https://example.com/fedora.iso</url></iso>
               <disk>/dev/sda</disk>
               <hostname>h</hostname>
               <timezone>UTC</timezone>
@@ -436,7 +436,7 @@ class GenerateKickstartTests(unittest.TestCase):
                 <password_hash>$6$x$y</password_hash>
                 <gecos>Sija Full Name</gecos>
               </user>
-            </nobara-install>
+            </fedora-install>
         """)
         ks = xml2ks.generate_kickstart(root)
         self.assertIn('--gecos="Sija Full Name"', ks)
@@ -462,8 +462,8 @@ class GenerateKickstartTests(unittest.TestCase):
 
     def test_custom_partition_is_emitted_verbatim(self):
         root = parse_xml("""
-            <nobara-install>
-              <iso><url>https://example.com/nobara.iso</url></iso>
+            <fedora-install>
+              <iso><url>https://example.com/fedora.iso</url></iso>
               <disk>/dev/sda</disk>
               <partitioning>
                 <scheme>custom</scheme>
@@ -474,7 +474,7 @@ class GenerateKickstartTests(unittest.TestCase):
                     part pv.1  --fstype=lvmpv --grow
                 </kickstart_extra>
               </partitioning>
-              <hostname>nobara-test</hostname>
+              <hostname>fedora-test</hostname>
               <timezone>Europe/Berlin</timezone>
               <locale>de_DE.UTF-8</locale>
               <keyboard>de</keyboard>
@@ -482,7 +482,7 @@ class GenerateKickstartTests(unittest.TestCase):
                 <name>sija</name>
                 <password_hash>$6$salt$hashvalue</password_hash>
               </user>
-            </nobara-install>
+            </fedora-install>
         """)
         ks = xml2ks.generate_kickstart(root)
         self.assertIn("ignoredisk --only-use=sda", ks)
@@ -495,14 +495,14 @@ class GenerateKickstartTests(unittest.TestCase):
 
     def test_base_packages_present(self):
         ks = self._ks()
-        for pkg in ("@^nobara-desktop", "git", "curl", "python3", "flatpak"):
+        for pkg in ("@^fedora-desktop", "git", "curl", "python3", "flatpak"):
             with self.subTest(pkg=pkg):
                 self.assertIn(pkg, ks)
 
     def test_extra_packages_included(self):
         root = parse_xml("""
-            <nobara-install>
-              <iso><url>https://example.com/nobara.iso</url></iso>
+            <fedora-install>
+              <iso><url>https://example.com/fedora.iso</url></iso>
               <disk>/dev/sda</disk>
               <hostname>h</hostname>
               <timezone>UTC</timezone>
@@ -516,7 +516,7 @@ class GenerateKickstartTests(unittest.TestCase):
                 <package>podman</package>
                 <package>virt-manager</package>
               </packages>
-            </nobara-install>
+            </fedora-install>
         """)
         ks = xml2ks.generate_kickstart(root)
         self.assertIn("podman", ks)
@@ -524,8 +524,8 @@ class GenerateKickstartTests(unittest.TestCase):
 
     def test_extra_groups_included(self):
         root = parse_xml("""
-            <nobara-install>
-              <iso><url>https://example.com/nobara.iso</url></iso>
+            <fedora-install>
+              <iso><url>https://example.com/fedora.iso</url></iso>
               <disk>/dev/sda</disk>
               <hostname>h</hostname>
               <timezone>UTC</timezone>
@@ -538,7 +538,7 @@ class GenerateKickstartTests(unittest.TestCase):
               <packages>
                 <group>development-tools</group>
               </packages>
-            </nobara-install>
+            </fedora-install>
         """)
         ks = xml2ks.generate_kickstart(root)
         self.assertIn("@development-tools", ks)
@@ -546,24 +546,24 @@ class GenerateKickstartTests(unittest.TestCase):
     # ── Provisioning env vars ─────────────────────────────────────────────────
 
     def test_target_user_in_env_block(self):
-        self.assertIn('NOBARA_TARGET_USER="sija"', self._ks())
+        self.assertIn('FEDORA_TARGET_USER="sija"', self._ks())
 
     def test_vllm_defaults_in_env_block(self):
         ks = self._ks()
-        self.assertIn('NOBARA_VLLM_CUDA_VERSION="13.2"', ks)
-        self.assertIn('NOBARA_VLLM_ARCH_LIST="12.0"', ks)
-        self.assertIn('NOBARA_VLLM_MODEL="Qwen/Qwen3-14B-AWQ"', ks)
+        self.assertIn('FEDORA_VLLM_CUDA_VERSION="13.2"', ks)
+        self.assertIn('FEDORA_VLLM_ARCH_LIST="12.0"', ks)
+        self.assertIn('FEDORA_VLLM_MODEL="Qwen/Qwen3-14B-AWQ"', ks)
 
     def test_pytorch_venv_default(self):
-        self.assertIn('NOBARA_PYTORCH_VENV="~/.venvs/ai"', self._ks())
+        self.assertIn('FEDORA_PYTORCH_VENV="~/.venvs/ai"', self._ks())
 
     def test_omb_theme_default(self):
-        self.assertIn('NOBARA_OMB_THEME="modern"', self._ks())
+        self.assertIn('FEDORA_OMB_THEME="modern"', self._ks())
 
     def test_whitesur_args_from_xml(self):
         root = parse_xml("""
-            <nobara-install>
-              <iso><url>https://example.com/nobara.iso</url></iso>
+            <fedora-install>
+              <iso><url>https://example.com/fedora.iso</url></iso>
               <disk>/dev/sda</disk>
               <hostname>h</hostname>
               <timezone>UTC</timezone>
@@ -580,17 +580,17 @@ class GenerateKickstartTests(unittest.TestCase):
                   <wallpaper-args>-t Mojave</wallpaper-args>
                 </whitesur>
               </first-login>
-            </nobara-install>
+            </fedora-install>
         """)
         ks = xml2ks.generate_kickstart(root)
-        self.assertIn('NOBARA_WS_GTK_ARGS="-l -c Dark"', ks)
-        self.assertIn('NOBARA_WS_ICON_ARGS="-dark"', ks)
-        self.assertIn('NOBARA_WS_WALL_ARGS="-t Mojave"', ks)
+        self.assertIn('FEDORA_WS_GTK_ARGS="-l -c Dark"', ks)
+        self.assertIn('FEDORA_WS_ICON_ARGS="-dark"', ks)
+        self.assertIn('FEDORA_WS_WALL_ARGS="-t Mojave"', ks)
 
     def test_vllm_config_from_xml(self):
         root = parse_xml("""
-            <nobara-install>
-              <iso><url>https://example.com/nobara.iso</url></iso>
+            <fedora-install>
+              <iso><url>https://example.com/fedora.iso</url></iso>
               <disk>/dev/sda</disk>
               <hostname>h</hostname>
               <timezone>UTC</timezone>
@@ -608,18 +608,18 @@ class GenerateKickstartTests(unittest.TestCase):
                 </vllm-omni>
                 <ohmybash theme="modern"/>
               </first-login>
-            </nobara-install>
+            </fedora-install>
         """)
         ks = xml2ks.generate_kickstart(root)
-        self.assertIn('NOBARA_VLLM_CUDA_VERSION="13.0"', ks)
-        self.assertIn('NOBARA_VLLM_ARCH_LIST="12.0"', ks)
+        self.assertIn('FEDORA_VLLM_CUDA_VERSION="13.0"', ks)
+        self.assertIn('FEDORA_VLLM_ARCH_LIST="12.0"', ks)
 
     def test_defaults_for_optional_first_login_fields(self):
         root = parse_xml("""
-            <nobara-install>
-              <iso><url>https://example.com/nobara.iso</url></iso>
+            <fedora-install>
+              <iso><url>https://example.com/fedora.iso</url></iso>
               <disk>/dev/vda</disk>
-              <hostname>nobara-test</hostname>
+              <hostname>fedora-test</hostname>
               <timezone>Europe/Berlin</timezone>
               <locale>de_DE.UTF-8</locale>
               <keyboard>de</keyboard>
@@ -628,13 +628,13 @@ class GenerateKickstartTests(unittest.TestCase):
                 <password_hash>$6$salt$hashvalue</password_hash>
               </user>
               <first-login />
-            </nobara-install>
+            </fedora-install>
         """)
         ks = xml2ks.generate_kickstart(root)
         # Defaults from generate_kickstart (not 13.0)
-        self.assertIn('NOBARA_VLLM_CUDA_VERSION="13.2"', ks)
-        self.assertIn('NOBARA_VLLM_ARCH_LIST="12.0"', ks)
-        self.assertIn('NOBARA_VLLM_MODEL="Qwen/Qwen3-14B-AWQ"', ks)
+        self.assertIn('FEDORA_VLLM_CUDA_VERSION="13.2"', ks)
+        self.assertIn('FEDORA_VLLM_ARCH_LIST="12.0"', ks)
+        self.assertIn('FEDORA_VLLM_MODEL="Qwen/Qwen3-14B-AWQ"', ks)
 
     # ── Embedded scripts ──────────────────────────────────────────────────────
 
@@ -667,13 +667,13 @@ class GenerateKickstartTests(unittest.TestCase):
             first_login_script=None,
         )
         # heredoc delimiters must still be present (empty but valid KS)
-        self.assertIn("cat > /usr/local/sbin/nobara-first-boot.sh <<'FBEOF'", ks)
+        self.assertIn("cat > /usr/local/sbin/fedora-first-boot.sh <<'FBEOF'", ks)
         self.assertIn("FBEOF", ks)
-        self.assertIn("cat > /usr/local/bin/nobara-first-login.sh <<'FLEOF'", ks)
+        self.assertIn("cat > /usr/local/bin/fedora-first-login.sh <<'FLEOF'", ks)
 
     def test_autostart_desktop_entry_for_target_user(self):
         ks = self._ks()
-        self.assertIn("nobara-first-login.desktop", ks)
+        self.assertIn("fedora-first-login.desktop", ks)
         self.assertIn("/home/sija", ks)
         self.assertIn("chown -R sija:sija", ks)
 
@@ -682,16 +682,16 @@ class GenerateKickstartTests(unittest.TestCase):
         self.assertIn("flatpak remote-add", self._ks())
 
     def test_systemd_enable_first_boot(self):
-        self.assertIn("systemctl enable nobara-first-boot.service", self._ks())
+        self.assertIn("systemctl enable fedora-first-boot.service", self._ks())
 
     # ── Full generation integration ───────────────────────────────────────────
 
     def test_full_xml_generates_valid_ks_structure(self):
         root = parse_xml("""
-            <nobara-install>
-              <iso><url>https://example.com/nobara.iso</url></iso>
+            <fedora-install>
+              <iso><url>https://example.com/fedora.iso</url></iso>
               <disk>/dev/vda</disk>
-              <hostname>nobara-test</hostname>
+              <hostname>fedora-test</hostname>
               <timezone>Europe/Berlin</timezone>
               <locale>de_DE.UTF-8</locale>
               <keyboard>de</keyboard>
@@ -715,7 +715,7 @@ class GenerateKickstartTests(unittest.TestCase):
                   <gtk-args>-l -c Dark</gtk-args>
                 </whitesur>
               </first-login>
-            </nobara-install>
+            </fedora-install>
         """)
         ks = xml2ks.generate_kickstart(root)
 
@@ -733,9 +733,9 @@ class GenerateKickstartTests(unittest.TestCase):
         self.assertIn("@development-tools", ks)
 
         # Env
-        self.assertIn('NOBARA_VLLM_CUDA_VERSION="13.2"', ks)
-        self.assertIn('NOBARA_OMB_THEME="agnoster"', ks)
-        self.assertIn('NOBARA_WS_GTK_ARGS="-l -c Dark"', ks)
+        self.assertIn('FEDORA_VLLM_CUDA_VERSION="13.2"', ks)
+        self.assertIn('FEDORA_OMB_THEME="agnoster"', ks)
+        self.assertIn('FEDORA_WS_GTK_ARGS="-l -c Dark"', ks)
 
 
 # ── CLI / main() tests ────────────────────────────────────────────────────────
@@ -781,7 +781,7 @@ class MainCLITests(unittest.TestCase):
                 with patch("sys.stdout", buf):
                     rc = xml2ks.main()
         self.assertEqual(rc, 0)
-        self.assertEqual(buf.getvalue().strip(), "nobara-test")
+        self.assertEqual(buf.getvalue().strip(), "fedora-test")
 
     def test_get_field_disk(self):
         with tempfile.TemporaryDirectory() as td:

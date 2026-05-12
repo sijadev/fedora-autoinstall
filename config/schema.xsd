@@ -5,7 +5,7 @@
   <!-- ═══════════════════════════════════════════════════════════════════════
        Root element
   ═══════════════════════════════════════════════════════════════════════════ -->
-  <xs:element name="nobara-install">
+  <xs:element name="fedora-install">
     <xs:complexType>
       <xs:all>
         <!-- ISO source -->
@@ -93,7 +93,7 @@
   ═══════════════════════════════════════════════════════════════════════════ -->
   <xs:complexType name="FirstBootType">
     <xs:all>
-      <xs:element name="nobara-sync"  type="EnabledType"  minOccurs="0"/>
+      <xs:element name="fedora-sync"  type="EnabledType"  minOccurs="0"/>
       <xs:element name="nvidia-open"  type="EnabledType"  minOccurs="0"/>
       <xs:element name="cuda"         type="CudaType"     minOccurs="0"/>
     </xs:all>
@@ -105,11 +105,11 @@
 
   <xs:complexType name="CudaType">
     <xs:attribute name="enabled" type="xs:boolean" default="true"/>
-    <!-- nobara = prefer Nobara/Fedora dnf repos; nvidia = official CUDA repo -->
+    <!-- fedora = prefer Fedora/Fedora dnf repos; nvidia = official CUDA repo -->
     <xs:attribute name="source">
       <xs:simpleType>
         <xs:restriction base="xs:string">
-          <xs:enumeration value="nobara"/>
+          <xs:enumeration value="fedora"/>
           <xs:enumeration value="nvidia"/>
         </xs:restriction>
       </xs:simpleType>

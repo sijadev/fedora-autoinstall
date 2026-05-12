@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# scripts/podman-pipeline.sh — Layered Podman test pipeline for Nobara provisioning
+# scripts/podman-pipeline.sh — Layered Podman test pipeline for Fedora provisioning
 #
 # Each layer builds on the previous one and is committed as a named image tag.
 # Rerun from any layer without redoing earlier work.
 #
 # Layers:
-#   01-base     Fedora base + Nobara COPR repos + package groups
+#   01-base     Fedora base + Fedora COPR repos + package groups
 #   02-nvidia   NVIDIA Open Driver + CUDA (using host GPU pass-through)
 #   03-themes   WhiteSur themes + Oh My Bash  (runs as target user)
 #   04-vllm     vLLM + PyTorch (cu130/sm120) build
@@ -18,11 +18,11 @@
 # Options:
 #   --from LAYER      Start (or re-run) from this layer (rebuilds it + all after)
 #   --only LAYER      Run only this one layer (must have previous image)
-#   --image PREFIX    Image name prefix  (default: nobara-test)
+#   --image PREFIX    Image name prefix  (default: fedora-test)
 #   --user NAME       Target username inside container (default: sija)
 #   --no-gpu          Skip GPU pass-through (for CI without NVIDIA)
 #   --dry-run         Print commands, don't run
-#   --clean           Remove all nobara-test:* images and exit
+#   --clean           Remove all fedora-test:* images and exit
 #   -h, --help        Show this help
 #
 # Examples:
@@ -37,7 +37,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ── Auto-launch in tmux so downloads survive terminal close + progress visible ─
 # Skip if: already inside tmux, tmux not installed, or --no-tmux passed
 if [[ -z "${TMUX:-}" ]] && command -v tmux &>/dev/null && [[ "${1:-}" != "--no-tmux" ]]; then
-    SESSION="nobara-pipeline"
+    SESSION="fedora-pipeline"
     if tmux has-session -t "$SESSION" 2>/dev/null; then
         echo "[tmux] Session '${SESSION}' already running — attaching..."
         exec tmux attach-session -t "$SESSION"
@@ -68,7 +68,7 @@ if [[ -f "${SCRIPT_DIR}/.env" ]]; then
     set -a; source "${SCRIPT_DIR}/.env"; set +a
 fi
 # ── defaults ──────────────────────────────────────────────────────────────────
-IMAGE_PREFIX="nobara-test"
+IMAGE_PREFIX="fedora-test"
 TARGET_USER="sija"
 WITH_GPU=1
 DRY_RUN=0
@@ -153,8 +153,8 @@ run_layer() {
 
     # Mount project scripts read-only
     local mounts=(
-        -v "${SCRIPT_DIR}/scripts:/opt/nobara/scripts:ro,z"
-        -v "${SCRIPT_DIR}/config:/opt/nobara/config:ro,z"
+        -v "${SCRIPT_DIR}/scripts:/opt/fedora/scripts:ro,z"
+        -v "${SCRIPT_DIR}/config:/opt/fedora/config:ro,z"
     )
 
     # Bind-mount only GPU driver runtime libs; CUDA toolkit is installed inside the container.
@@ -170,7 +170,7 @@ run_layer() {
         "${gpu_flags[@]+"${gpu_flags[@]}"}" \
         "${mounts[@]}" \
         --env "TARGET_USER=${TARGET_USER}" \
-        --env "SCRIPT_DIR=/opt/nobara" \
+        --env "SCRIPT_DIR=/opt/fedora" \
         ${HF_TOKEN:+--env "HF_TOKEN=${HF_TOKEN}"} \
         --privileged \
         "$from_image" \
@@ -193,7 +193,7 @@ run_layer() {
         podman commit \
             --format docker \
             --message "$msg" \
-            --author "nobara-pipeline" \
+            --author "fedora-pipeline" \
             "$cid" "${IMAGE_PREFIX}:${tag}"
         podman rm "$cid" >/dev/null 2>&1 || true
         ok "Layer ${tag} committed → ${IMAGE_PREFIX}:${tag}"
@@ -231,7 +231,7 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 
 layer_01_base() {
-    run_layer "01-base" "scratch" "Fedora base + Nobara repos + core packages" '
+    run_layer "01-base" "scratch" "Fedora base + Fedora repos + core packages" '
 set -euo pipefail
 echo "==> Updating base system..."
 dnf -y update --quiet
@@ -245,40 +245,40 @@ dnf -y install --quiet \
     dnf-plugins-core \
     procps-ng which findutils
 
-echo "==> Adding Nobara COPR repos..."
-# Nobara 43 COPR — provides nobara-sync and Nobara package groups
+echo "==> Adding Fedora COPR repos..."
+# Fedora 43 COPR — provides fedora-sync and Fedora package groups
 dnf -y copr enable --quiet \
-    gloriouseggroll/nobara 2>/dev/null || \
+    gloriouseggroll/fedora 2>/dev/null || \
     dnf -y install --quiet \
     "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm" \
     "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm" \
     2>/dev/null || true
 
-echo "==> Installing nobara-sync if available..."
-dnf -y install --quiet nobara-sync 2>/dev/null || \
-    echo "nobara-sync not available in this environment (expected in CI)"
+echo "==> Installing fedora-sync if available..."
+dnf -y install --quiet fedora-sync 2>/dev/null || \
+    echo "fedora-sync not available in this environment (expected in CI)"
 
 echo "==> Adding target user ${TARGET_USER}..."
 useradd -m -G wheel,video,audio -s /bin/bash "${TARGET_USER}" 2>/dev/null || true
-echo "${TARGET_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/99-nobara-test
+echo "${TARGET_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/99-fedora-test
 
 echo "==> Writing provisioning env..."
 mkdir -p /etc
-cat > /etc/nobara-provision.env <<EOF
-NOBARA_TARGET_USER="${TARGET_USER}"
-NOBARA_PYTORCH_VENV="~/.venvs/ai"
-NOBARA_VLLM_VENV="~/.venvs/bitwig-omni"
-NOBARA_VLLM_CUDA_VERSION="13.0"
-NOBARA_VLLM_ARCH_LIST="12.0"
-NOBARA_AUDIO_MODEL="moonshotai/Kimi-Audio-7B-Instruct"
-NOBARA_AGENT_MODEL="Qwen/Qwen3-14B-AWQ"
-NOBARA_AUDIO_VENV="~/.venvs/kimi-audio"
-NOBARA_NEO4J_URI="bolt://localhost:7687"
-NOBARA_NEO4J_USER="neo4j"
-NOBARA_NEO4J_PASSWORD="bitwig-agent"
-NOBARA_WS_GTK_ARGS="-l -c Dracula"
-NOBARA_WS_ICON_ARGS="-a bold"
-NOBARA_WS_WALL_ARGS=""
+cat > /etc/fedora-provision.env <<EOF
+FEDORA_TARGET_USER="${TARGET_USER}"
+FEDORA_PYTORCH_VENV="~/.venvs/ai"
+FEDORA_VLLM_VENV="~/.venvs/bitwig-omni"
+FEDORA_VLLM_CUDA_VERSION="13.0"
+FEDORA_VLLM_ARCH_LIST="12.0"
+FEDORA_AUDIO_MODEL="moonshotai/Kimi-Audio-7B-Instruct"
+FEDORA_AGENT_MODEL="Qwen/Qwen3-14B-AWQ"
+FEDORA_AUDIO_VENV="~/.venvs/kimi-audio"
+FEDORA_NEO4J_URI="bolt://localhost:7687"
+FEDORA_NEO4J_USER="neo4j"
+FEDORA_NEO4J_PASSWORD="bitwig-agent"
+FEDORA_WS_GTK_ARGS="-l -c Dracula"
+FEDORA_WS_ICON_ARGS="-a bold"
+FEDORA_WS_WALL_ARGS=""
 EOF
 
 echo "==> Layer 01-base complete."
@@ -288,7 +288,7 @@ echo "==> Layer 01-base complete."
 layer_02_nvidia() {
     run_layer "02-nvidia" "01-base" "NVIDIA Open Driver + CUDA toolkit" '
 set -euo pipefail
-source /etc/nobara-provision.env 2>/dev/null || true
+source /etc/fedora-provision.env 2>/dev/null || true
 
 echo "==> Checking GPU availability..."
 if ! nvidia-smi &>/dev/null; then
@@ -310,7 +310,7 @@ dnf -y install --quiet \
     xorg-x11-drv-nvidia-cuda-libs \
     libva-nvidia-driver \
     2>/dev/null || \
-    echo "NVIDIA userspace packages not available — skipping (expected without Nobara repos)"
+    echo "NVIDIA userspace packages not available — skipping (expected without Fedora repos)"
 
 echo "==> Verifying CUDA availability (via host bind-mount)..."
 if command -v nvcc &>/dev/null; then
@@ -341,7 +341,7 @@ echo "==> Layer 02-nvidia complete."
 layer_03_themes() {
     run_layer "03-themes" "02-nvidia" "WhiteSur themes + Oh My Bash (as user)" '
 set -euo pipefail
-source /etc/nobara-provision.env 2>/dev/null || true
+source /etc/fedora-provision.env 2>/dev/null || true
 
 echo "==> Installing Oh My Bash dependencies..."
 dnf -y install --quiet curl git bash
@@ -349,7 +349,7 @@ dnf -y install --quiet curl git bash
 echo "==> Running as user ${TARGET_USER}..."
 su - "${TARGET_USER}" -c '"'"'
 set -euo pipefail
-source /etc/nobara-provision.env 2>/dev/null || true
+source /etc/fedora-provision.env 2>/dev/null || true
 
 THEMES_DIR="${HOME}/themes"
 mkdir -p "$THEMES_DIR"
@@ -361,7 +361,7 @@ if [[ ! -d "${HOME}/.oh-my-bash" ]]; then
         --unattended
 fi
 
-OMB_THEME="${NOBARA_OMB_THEME:-modern}"
+OMB_THEME="${FEDORA_OMB_THEME:-modern}"
 if grep -q "OSH_THEME=" "${HOME}/.bashrc" 2>/dev/null; then
     sed -i "s|^OSH_THEME=.*|OSH_THEME=\"${OMB_THEME}\"|" "${HOME}/.bashrc"
 else
@@ -447,7 +447,7 @@ layer_04_vllm() {
     local _script
     _script=$(cat <<'LAYER04_EOF'
 set -euo pipefail
-source /etc/nobara-provision.env 2>/dev/null || true
+source /etc/fedora-provision.env 2>/dev/null || true
 
 # Ensure Python headers + gcc are present (needed by triton/torch._inductor at vLLM runtime)
 echo "==> Installing build dependencies (python3-devel, gcc)..."
@@ -497,15 +497,15 @@ chmod 755 "$_USR_SCRIPT"
 cat > "$_USR_SCRIPT" << 'USER_EOF'
 #!/bin/bash
 set -euo pipefail
-source /etc/nobara-provision.env 2>/dev/null || true
+source /etc/fedora-provision.env 2>/dev/null || true
 [[ -f /etc/profile.d/cuda.sh ]] && source /etc/profile.d/cuda.sh
 
-PYTORCH_VENV="${NOBARA_PYTORCH_VENV:-${HOME}/.venvs/ai}"
+PYTORCH_VENV="${FEDORA_PYTORCH_VENV:-${HOME}/.venvs/ai}"
 [[ "$PYTORCH_VENV" == '~'* ]] && PYTORCH_VENV="${HOME}${PYTORCH_VENV#\~}"
-VLLM_VENV="${NOBARA_VLLM_VENV:-${HOME}/.venvs/bitwig-omni}"
+VLLM_VENV="${FEDORA_VLLM_VENV:-${HOME}/.venvs/bitwig-omni}"
 [[ "$VLLM_VENV" == '~'* ]] && VLLM_VENV="${HOME}${VLLM_VENV#\~}"
-VLLM_ARCH_LIST="${NOBARA_VLLM_ARCH_LIST:-12.0}"
-CUDA_VER="${NOBARA_VLLM_CUDA_VERSION:-13.2}"
+VLLM_ARCH_LIST="${FEDORA_VLLM_ARCH_LIST:-12.0}"
+CUDA_VER="${FEDORA_VLLM_CUDA_VERSION:-13.2}"
 
 # Detect CUDA version via awk (no grep regex quoting issues)
 detect_cuda_ver() {
@@ -628,10 +628,10 @@ layer_05_models() {
     local _script
     _script=$(cat <<'LAYER05_EOF'
 set -euo pipefail
-source /etc/nobara-provision.env 2>/dev/null || true
+source /etc/fedora-provision.env 2>/dev/null || true
 
-AUDIO_MODEL="${NOBARA_AUDIO_MODEL:-moonshotai/Kimi-Audio-7B-Instruct}"
-AGENT_MODEL="${NOBARA_AGENT_MODEL:-Qwen/Qwen3-14B-AWQ}"
+AUDIO_MODEL="${FEDORA_AUDIO_MODEL:-moonshotai/Kimi-Audio-7B-Instruct}"
+AGENT_MODEL="${FEDORA_AGENT_MODEL:-Qwen/Qwen3-14B-AWQ}"
 echo "==> Checking disk space..."
 AVAIL_GB=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
 (( AVAIL_GB >= 20 )) || echo "WARNING: Only ${AVAIL_GB}GB free — models need ~15GB total."
@@ -641,13 +641,13 @@ chmod 755 "$_USR"
 cat > "$_USR" << 'USER_EOF'
 #!/bin/bash
 set -euo pipefail
-source /etc/nobara-provision.env 2>/dev/null || true
+source /etc/fedora-provision.env 2>/dev/null || true
 
-AUDIO_MODEL="${NOBARA_AUDIO_MODEL:-moonshotai/Kimi-Audio-7B-Instruct}"
-AGENT_MODEL="${NOBARA_AGENT_MODEL:-Qwen/Qwen3-14B-AWQ}"
-VLLM_VENV="${NOBARA_VLLM_VENV:-${HOME}/.venvs/bitwig-omni}"
+AUDIO_MODEL="${FEDORA_AUDIO_MODEL:-moonshotai/Kimi-Audio-7B-Instruct}"
+AGENT_MODEL="${FEDORA_AGENT_MODEL:-Qwen/Qwen3-14B-AWQ}"
+VLLM_VENV="${FEDORA_VLLM_VENV:-${HOME}/.venvs/bitwig-omni}"
 [[ "$VLLM_VENV" == '~'* ]] && VLLM_VENV="${HOME}${VLLM_VENV#\~}"
-AUDIO_VENV="${NOBARA_AUDIO_VENV:-${HOME}/.venvs/kimi-audio}"
+AUDIO_VENV="${FEDORA_AUDIO_VENV:-${HOME}/.venvs/kimi-audio}"
 [[ "$AUDIO_VENV" == '~'* ]] && AUDIO_VENV="${HOME}${AUDIO_VENV#\~}"
 HF_HOME="${HOME}/models"
 export HF_HOME
@@ -713,7 +713,7 @@ layer_06_agent() {
     local _script
     _script=$(cat <<'LAYER06_EOF'
 set -euo pipefail
-source /etc/nobara-provision.env 2>/dev/null || true
+source /etc/fedora-provision.env 2>/dev/null || true
 
 echo "==> Installing Neo4j + agent system deps..."
 dnf -y install --quiet java-21-openjdk-headless 2>/dev/null || true
@@ -723,11 +723,11 @@ chmod 755 "$_USR"
 cat > "$_USR" << 'USER_EOF'
 #!/bin/bash
 set -euo pipefail
-source /etc/nobara-provision.env 2>/dev/null || true
+source /etc/fedora-provision.env 2>/dev/null || true
 
-VLLM_VENV="${NOBARA_VLLM_VENV:-${HOME}/.venvs/bitwig-omni}"
+VLLM_VENV="${FEDORA_VLLM_VENV:-${HOME}/.venvs/bitwig-omni}"
 [[ "$VLLM_VENV" == '~'* ]] && VLLM_VENV="${HOME}${VLLM_VENV#\~}"
-AUDIO_VENV="${NOBARA_AUDIO_VENV:-${HOME}/.venvs/kimi-audio}"
+AUDIO_VENV="${FEDORA_AUDIO_VENV:-${HOME}/.venvs/kimi-audio}"
 [[ "$AUDIO_VENV" == '~'* ]] && AUDIO_VENV="${HOME}${AUDIO_VENV#\~}"
 AGENT_DIR="${HOME}/.local/share/bitwig-agent"
 
@@ -757,7 +757,7 @@ def analyze(audio_path: str) -> dict:
     from transformers import AutoProcessor, AutoModelForCausalLM
 
     model_id = os.environ.get(
-        "NOBARA_AUDIO_MODEL", "moonshotai/Kimi-Audio-7B-Instruct"
+        "FEDORA_AUDIO_MODEL", "moonshotai/Kimi-Audio-7B-Instruct"
     )
     cache_dir = Path.home() / "models" / model_id.replace("/", "__")
 
@@ -799,9 +799,9 @@ Output: {chord_progression, scales, reference_songs, rhythm_patterns}
 import os, json, sys
 from neo4j import GraphDatabase
 
-NEO4J_URI  = os.environ.get("NOBARA_NEO4J_URI",  "bolt://localhost:7687")
-NEO4J_USER = os.environ.get("NOBARA_NEO4J_USER", "neo4j")
-NEO4J_PASS = os.environ.get("NOBARA_NEO4J_PASSWORD", "bitwig-agent")
+NEO4J_URI  = os.environ.get("FEDORA_NEO4J_URI",  "bolt://localhost:7687")
+NEO4J_USER = os.environ.get("FEDORA_NEO4J_USER", "neo4j")
+NEO4J_PASS = os.environ.get("FEDORA_NEO4J_PASSWORD", "bitwig-agent")
 
 def query(analysis: dict) -> dict:
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
@@ -857,7 +857,7 @@ import os, json, sys
 from pathlib import Path
 from vllm import LLM, SamplingParams
 
-AGENT_MODEL = os.environ.get("NOBARA_AGENT_MODEL", "Qwen/Qwen3-14B-AWQ")
+AGENT_MODEL = os.environ.get("FEDORA_AGENT_MODEL", "Qwen/Qwen3-14B-AWQ")
 MODEL_DIR = Path.home() / "models" / AGENT_MODEL.replace("/", "__")
 OUTPUT_DIR = Path.home() / ".local/share/bitwig-agent/output"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -921,13 +921,13 @@ cat > "${AGENT_DIR}/run_pipeline.sh" << 'SHEOF'
 #!/bin/bash
 # Bitwig Agent Pipeline: Audio -> Kimi-Audio -> Neo4j -> Qwen3-14B -> .bwtemplate
 set -euo pipefail
-source /etc/nobara-provision.env 2>/dev/null || true
+source /etc/fedora-provision.env 2>/dev/null || true
 
 AUDIO_FILE="${1:?Usage: run_pipeline.sh <audio_file>}"
 AGENT_DIR="${HOME}/.local/share/bitwig-agent"
-AUDIO_VENV="${NOBARA_AUDIO_VENV:-${HOME}/.venvs/kimi-audio}"
+AUDIO_VENV="${FEDORA_AUDIO_VENV:-${HOME}/.venvs/kimi-audio}"
 [[ "$AUDIO_VENV" == '~'* ]] && AUDIO_VENV="${HOME}${AUDIO_VENV#~}"
-VLLM_VENV="${NOBARA_VLLM_VENV:-${HOME}/.venvs/bitwig-omni}"
+VLLM_VENV="${FEDORA_VLLM_VENV:-${HOME}/.venvs/bitwig-omni}"
 [[ "$VLLM_VENV" == '~'* ]] && VLLM_VENV="${HOME}${VLLM_VENV#~}"
 
 echo "[1/3] Analyzing audio with Kimi-Audio-7B..."
@@ -965,7 +965,7 @@ LAYER06_EOF
 # MAIN — run requested layers
 # ─────────────────────────────────────────────────────────────────────────────
 
-step "Nobara Podman Pipeline"
+step "Fedora Podman Pipeline"
 info "Image prefix : ${IMAGE_PREFIX}"
 info "Target user  : ${TARGET_USER}"
 info "GPU pass-through: $([ "$WITH_GPU" = 1 ] && echo enabled || echo disabled)"
@@ -995,7 +995,7 @@ ok "Rebuild from themes:        ./scripts/podman-pipeline.sh --from 03-themes"
 ok "Run Bitwig agent:           podman run -it --rm ${IMAGE_PREFIX}:06-agent bash"
 ok "  then: ~/.local/share/bitwig-agent/run_pipeline.sh <audio.wav>"
 
-# ── Write smoke-test stamp for nobara-install.sh gate ─────────────────────────
+# ── Write smoke-test stamp for fedora-install.sh gate ─────────────────────────
 if [[ "$DRY_RUN" != "1" ]]; then
     _stamp_dir="${SCRIPT_DIR}/.state"
     _stamp_file="${_stamp_dir}/podman-smoke-passed.stamp"

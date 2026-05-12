@@ -1,15 +1,15 @@
 [Unit]
-Description=Nobara First-Boot Provisioning (one-shot)
-Documentation=https://github.com/user/nobara-install
+Description=Fedora First-Boot Provisioning (one-shot)
+Documentation=https://github.com/user/fedora-install
 After=network-online.target
 Wants=network-online.target
 # Ensure this runs only on first boot; marker file disables it on subsequent boots
-ConditionPathExists=!/var/lib/nobara-provision/first-boot.done
+ConditionPathExists=!/var/lib/fedora-provision/first-boot.done
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/nobara-first-boot.sh
-EnvironmentFile=-/etc/nobara-provision.env
+ExecStart=/usr/local/sbin/fedora-first-boot.sh
+EnvironmentFile=-/etc/fedora-provision.env
 StandardOutput=journal+console
 StandardError=journal+console
 TimeoutStartSec=3600

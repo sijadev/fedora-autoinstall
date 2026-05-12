@@ -1,6 +1,6 @@
 # ── common-post.inc ───────────────────────────────────────────────────────────
-# Shared %post block — included by all Nobara Kickstart profiles.
-# Each profile KS writes /etc/nobara-provision.env BEFORE this %include.
+# Shared %post block — included by all Fedora Kickstart profiles.
+# Each profile KS writes /etc/fedora-provision.env BEFORE this %include.
 #
 # SYNC NOTE: The scripts embedded here must match scripts/first-boot.sh and
 #            scripts/first-login.sh (with profile-aware logic). Update both
@@ -12,23 +12,23 @@
 set -euo pipefail
 
 # ── Read profile (written by profile-specific %post before this %include) ─────
-source /etc/nobara-provision.env 2>/dev/null || true
-INSTALL_PROFILE="${NOBARA_INSTALL_PROFILE:-full}"
-TARGET_USER="${NOBARA_TARGET_USER:-sija}"
+source /etc/fedora-provision.env 2>/dev/null || true
+INSTALL_PROFILE="${FEDORA_INSTALL_PROFILE:-full}"
+TARGET_USER="${FEDORA_TARGET_USER:-sija}"
 USER_HOME="/home/${TARGET_USER}"
 
-echo "[common-post] NOBARA_INSTALL_PROFILE=${INSTALL_PROFILE}"
+echo "[common-post] FEDORA_INSTALL_PROFILE=${INSTALL_PROFILE}"
 
 # ── Write first-boot script ───────────────────────────────────────────────────
-cat > /usr/local/sbin/nobara-first-boot.sh <<'FBEOF'
+cat > /usr/local/sbin/fedora-first-boot.sh <<'FBEOF'
 #!/usr/bin/env bash
-# nobara-first-boot.sh — System-wide one-shot provisioning (runs as root via systemd)
+# fedora-first-boot.sh — System-wide one-shot provisioning (runs as root via systemd)
 set -euo pipefail
 
-MARKER_DIR="/var/lib/nobara-provision"
+MARKER_DIR="/var/lib/fedora-provision"
 MARKER_FILE="$MARKER_DIR/first-boot.done"
-LOG_FILE="/var/log/nobara-first-boot.log"
-ENV_FILE="/etc/nobara-provision.env"
+LOG_FILE="/var/log/fedora-first-boot.log"
+ENV_FILE="/etc/fedora-provision.env"
 CUDA_ENV_FILE="/etc/profile.d/cuda.sh"
 
 exec > >(tee -a "$LOG_FILE") 2>&1
@@ -46,15 +46,15 @@ fi
 mkdir -p "$MARKER_DIR"
 
 [[ -f "$ENV_FILE" ]] && source "$ENV_FILE"
-INSTALL_PROFILE="${NOBARA_INSTALL_PROFILE:-full}"
+INSTALL_PROFILE="${FEDORA_INSTALL_PROFILE:-full}"
 log "Install profile: ${INSTALL_PROFILE}"
 
-# ── 1. nobara-sync ────────────────────────────────────────────────────────────
-step "nobara-sync"
-if command -v nobara-sync &>/dev/null; then
-    nobara-sync install-updates || die "nobara-sync failed."
+# ── 1. fedora-sync ────────────────────────────────────────────────────────────
+step "fedora-sync"
+if command -v fedora-sync &>/dev/null; then
+    fedora-sync install-updates || die "fedora-sync failed."
 else
-    warn "nobara-sync not found; skipping."
+    warn "fedora-sync not found; skipping."
 fi
 
 # ── 2. NVIDIA Open Driver ─────────────────────────────────────────────────────
@@ -90,11 +90,11 @@ if [[ "$INSTALL_PROFILE" == "theme-bash" ]]; then
     log "Profile '${INSTALL_PROFILE}' — CUDA not required. Skipping."
 else
 
-CUDA_SOURCE="${NOBARA_CUDA_SOURCE:-nobara}"
+CUDA_SOURCE="${FEDORA_CUDA_SOURCE:-fedora}"
 
-install_cuda_nobara() {
+install_cuda_fedora() {
     dnf install -y cuda cuda-toolkit cuda-devel \
-        || die "CUDA from Nobara/Fedora repos failed."
+        || die "CUDA from Fedora/Fedora repos failed."
 }
 
 install_cuda_nvidia_repo() {
@@ -108,7 +108,7 @@ install_cuda_nvidia_repo() {
 }
 
 case "$CUDA_SOURCE" in
-    nobara|fedora) install_cuda_nobara   ;;
+    fedora|fedora) install_cuda_fedora   ;;
     nvidia)        install_cuda_nvidia_repo ;;
     *)             die "Unknown CUDA source: $CUDA_SOURCE" ;;
 esac
@@ -123,7 +123,7 @@ log "CUDA at: $CUDA_HOME_DETECTED"
 # ── 4. CUDA environment variables ────────────────────────────────────────────
 step "CUDA environment variables"
 cat > "$CUDA_ENV_FILE" <<ENVEOF
-# Nobara: CUDA environment
+# Fedora: CUDA environment
 export CUDA_HOME="${CUDA_HOME_DETECTED}"
 export PATH="\${CUDA_HOME}/bin\${PATH:+:\$PATH}"
 export LD_LIBRARY_PATH="\${CUDA_HOME}/lib64:\${CUDA_HOME}/targets/x86_64-linux/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
@@ -149,18 +149,18 @@ mkdir -p "$(dirname "$MARKER_FILE")"
 touch "$MARKER_FILE"
 log "First-boot done. Log: $LOG_FILE"
 FBEOF
-chmod 0750 /usr/local/sbin/nobara-first-boot.sh
+chmod 0750 /usr/local/sbin/fedora-first-boot.sh
 
 # ── Write first-login script ──────────────────────────────────────────────────
-cat > /usr/local/bin/nobara-first-login.sh <<'FLEOF'
+cat > /usr/local/bin/fedora-first-login.sh <<'FLEOF'
 #!/usr/bin/env bash
-# nobara-first-login.sh — User-level one-shot provisioning
+# fedora-first-login.sh — User-level one-shot provisioning
 set -euo pipefail
 
-MARKER_DIR="${HOME}/.local/share/nobara-provision"
+MARKER_DIR="${HOME}/.local/share/fedora-provision"
 MARKER_FILE="${MARKER_DIR}/first-login.done"
 LOG_FILE="${MARKER_DIR}/first-login.log"
-ENV_FILE="/etc/nobara-provision.env"
+ENV_FILE="/etc/fedora-provision.env"
 
 mkdir -p "$MARKER_DIR"
 exec > >(tee -a "$LOG_FILE") 2>&1
@@ -175,26 +175,26 @@ have_passwordless_sudo() { sudo -n true 2>/dev/null; }
 
 if [[ -f "$MARKER_FILE" ]]; then
     log "First-login already completed. Cleaning up."
-    rm -f "${HOME}/.config/autostart/nobara-first-login.desktop"
+    rm -f "${HOME}/.config/autostart/fedora-first-login.desktop"
     exit 0
 fi
 
 [[ -f "$ENV_FILE" ]] && source "$ENV_FILE"
 
-INSTALL_PROFILE="${NOBARA_INSTALL_PROFILE:-full}"
+INSTALL_PROFILE="${FEDORA_INSTALL_PROFILE:-full}"
 log "Install profile: ${INSTALL_PROFILE}"
 
-TARGET_USER="${NOBARA_TARGET_USER:-${USER}}"
-PYTORCH_VENV="${NOBARA_PYTORCH_VENV:-${HOME}/.venvs/ai}"
-VLLM_VENV="${NOBARA_VLLM_VENV:-${HOME}/.venvs/bitwig-omni}"
-VLLM_CUDA_VERSION="${NOBARA_VLLM_CUDA_VERSION:-13.2}"
-VLLM_ARCH_LIST="${NOBARA_VLLM_ARCH_LIST:-12.0}"
-VLLM_MODEL="${NOBARA_AGENT_MODEL:-Qwen/Qwen3-14B-AWQ}"
-WS_GTK_ARGS="${NOBARA_WS_GTK_ARGS:-}"
-WS_ICON_ARGS="${NOBARA_WS_ICON_ARGS:-}"
-WS_WALL_ARGS="${NOBARA_WS_WALL_ARGS:-}"
-OMB_THEME="${NOBARA_OMB_THEME:-modern}"
-THEMES_DIR="${HOME}/.cache/nobara-themes-build"
+TARGET_USER="${FEDORA_TARGET_USER:-${USER}}"
+PYTORCH_VENV="${FEDORA_PYTORCH_VENV:-${HOME}/.venvs/ai}"
+VLLM_VENV="${FEDORA_VLLM_VENV:-${HOME}/.venvs/bitwig-omni}"
+VLLM_CUDA_VERSION="${FEDORA_VLLM_CUDA_VERSION:-13.2}"
+VLLM_ARCH_LIST="${FEDORA_VLLM_ARCH_LIST:-12.0}"
+VLLM_MODEL="${FEDORA_AGENT_MODEL:-Qwen/Qwen3-14B-AWQ}"
+WS_GTK_ARGS="${FEDORA_WS_GTK_ARGS:-}"
+WS_ICON_ARGS="${FEDORA_WS_ICON_ARGS:-}"
+WS_WALL_ARGS="${FEDORA_WS_WALL_ARGS:-}"
+OMB_THEME="${FEDORA_OMB_THEME:-modern}"
+THEMES_DIR="${HOME}/.cache/fedora-themes-build"
 
 # ── 1. Flatpak Extension Manager ──────────────────────────────────────────────
 step "Flatpak Extension Manager"
@@ -303,7 +303,7 @@ fi
 if [[ "$INSTALL_PROFILE" == "theme-bash" ]]; then
     step "theme-bash profile — skipping AI provisioning"
     touch "$MARKER_FILE"
-    rm -f "${HOME}/.config/autostart/nobara-first-login.desktop"
+    rm -f "${HOME}/.config/autostart/fedora-first-login.desktop"
     log "First-login done (theme-bash). Log: $LOG_FILE"
     exit 0
 fi
@@ -418,23 +418,23 @@ step "First-login provisioning complete"
     && for e in "${WHITESUR_ERRORS[@]}"; do warn "WhiteSur: $e"; done
 
 touch "$MARKER_FILE"
-rm -f "${HOME}/.config/autostart/nobara-first-login.desktop"
+rm -f "${HOME}/.config/autostart/fedora-first-login.desktop"
 log "First-login done. Log: $LOG_FILE"
 FLEOF
-chmod 0755 /usr/local/bin/nobara-first-login.sh
+chmod 0755 /usr/local/bin/fedora-first-login.sh
 
 # ── Write systemd first-boot unit ────────────────────────────────────────────
-cat > /etc/systemd/system/nobara-first-boot.service <<'UNITEOF'
+cat > /etc/systemd/system/fedora-first-boot.service <<'UNITEOF'
 [Unit]
-Description=Nobara First-Boot Provisioning (one-shot)
+Description=Fedora First-Boot Provisioning (one-shot)
 After=network-online.target
 Wants=network-online.target
-ConditionPathExists=!/var/lib/nobara-provision/first-boot.done
+ConditionPathExists=!/var/lib/fedora-provision/first-boot.done
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/nobara-first-boot.sh
-EnvironmentFile=-/etc/nobara-provision.env
+ExecStart=/usr/local/sbin/fedora-first-boot.sh
+EnvironmentFile=-/etc/fedora-provision.env
 StandardOutput=journal+console
 StandardError=journal+console
 TimeoutStartSec=3600
@@ -445,7 +445,7 @@ User=root
 WantedBy=multi-user.target
 UNITEOF
 
-systemctl enable nobara-first-boot.service
+systemctl enable fedora-first-boot.service
 
 # ── Configure first-login run (GUI vs. headless) ──────────────────────────────
 flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
@@ -455,11 +455,11 @@ AUTOSTART_DIR="${USER_HOME}/.config/autostart"
 if [[ "$INSTALL_PROFILE" =~ ^(full|theme-bash)$ ]]; then
     # GUI profiles: GNOME autostart
     mkdir -p "$AUTOSTART_DIR"
-    cat > "${AUTOSTART_DIR}/nobara-first-login.desktop" <<'DESKTOPEOF'
+    cat > "${AUTOSTART_DIR}/fedora-first-login.desktop" <<'DESKTOPEOF'
 [Desktop Entry]
 Type=Application
-Name=Nobara First-Login Setup
-Exec=/usr/local/bin/nobara-first-login.sh
+Name=Fedora First-Login Setup
+Exec=/usr/local/bin/fedora-first-login.sh
 Hidden=false
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
@@ -469,13 +469,13 @@ DESKTOPEOF
     echo "[common-post] GNOME autostart configured for ${TARGET_USER}"
 else
     # Headless profiles: systemd user service
-    cat > /etc/systemd/system/nobara-provision-user.service <<USRUNITEOF
+    cat > /etc/systemd/system/fedora-provision-user.service <<USRUNITEOF
 [Unit]
-Description=Nobara User Provisioning (${INSTALL_PROFILE})
-After=nobara-first-boot.service network-online.target
-Requires=nobara-first-boot.service
+Description=Fedora User Provisioning (${INSTALL_PROFILE})
+After=fedora-first-boot.service network-online.target
+Requires=fedora-first-boot.service
 Wants=network-online.target
-ConditionPathExists=!${USER_HOME}/.local/share/nobara-provision/first-login.done
+ConditionPathExists=!${USER_HOME}/.local/share/fedora-provision/first-login.done
 
 [Service]
 Type=oneshot
@@ -483,8 +483,8 @@ RemainAfterExit=yes
 User=${TARGET_USER}
 Group=${TARGET_USER}
 Environment=HOME=${USER_HOME}
-EnvironmentFile=-/etc/nobara-provision.env
-ExecStart=/usr/local/bin/nobara-first-login.sh
+EnvironmentFile=-/etc/fedora-provision.env
+ExecStart=/usr/local/bin/fedora-first-login.sh
 StandardOutput=journal
 StandardError=journal
 TimeoutStartSec=7200
@@ -492,7 +492,7 @@ TimeoutStartSec=7200
 [Install]
 WantedBy=multi-user.target
 USRUNITEOF
-    systemctl enable nobara-provision-user.service
+    systemctl enable fedora-provision-user.service
     echo "[common-post] Headless systemd service enabled for ${TARGET_USER}"
 fi
 

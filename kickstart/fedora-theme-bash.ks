@@ -1,9 +1,9 @@
 #version=RHEL9
-# Nobara Linux — Headless Podman + vLLM API
-# Profil: headless-vllm — Kein GUI, NVIDIA, Podman-Pipeline, vLLM als Dienst
-# Ventoy-Menü: "Headless Podman + vLLM API"
+# Fedora Linux — Theme + Bash Installation
+# Profil: theme-bash — GNOME Desktop + WhiteSur + Oh-My-Bash, kein AI/vLLM
+# Ventoy-Menü: "Theme + Bash"
 
-text
+graphical
 reboot
 
 # ── Disk auto-detection (SATA sda / NVMe nvme0n1 / virtio vda) ───────────────
@@ -44,7 +44,7 @@ timezone Europe/Berlin --utc
 
 # ── Network ───────────────────────────────────────────────────────────────────
 network --bootproto=dhcp --device=link --activate
-network --hostname=nobara-vllm
+network --hostname=fedora-workstation
 
 # ── Disk / Partitioning ───────────────────────────────────────────────────────
 autopart --type=lvm
@@ -61,18 +61,13 @@ services --enabled=sshd
 
 # ── Packages ──────────────────────────────────────────────────────────────────
 %packages
-@^minimal-environment
+@^workstation-product-environment
 git
 curl
 python3
-python3-pip
-python3-virtualenv
-podman
-make
-gcc
-gcc-c++
-cmake
-ninja-build
+gnome-shell-extension-user-theme
+gnome-shell-extension-dash-to-dock
+flatpak
 pciutils
 %end
 
@@ -81,16 +76,22 @@ pciutils
 # ── %post: write profile-specific environment ─────────────────────────────────
 %post --log=/root/ks-profile.log
 
-cat > /etc/nobara-provision.env <<'ENVEOF'
-NOBARA_INSTALL_PROFILE="headless-vllm"
-NOBARA_TARGET_USER="sija"
-NOBARA_VLLM_CUDA_VERSION="13.2"
-NOBARA_VLLM_ARCH_LIST="12.0"
-NOBARA_AGENT_MODEL="Qwen/Qwen3-14B-AWQ"
-NOBARA_OMB_THEME="modern"
-NOBARA_CUDA_SOURCE="nobara"
+cat > /etc/fedora-provision.env <<'ENVEOF'
+FEDORA_INSTALL_PROFILE="theme-bash"
+FEDORA_TARGET_USER="sija"
+FEDORA_WS_GTK_ARGS="-c Dark"
+FEDORA_WS_ICON_ARGS=""
+FEDORA_WS_WALL_ARGS=""
+FEDORA_OMB_THEME="modern"
 ENVEOF
-chmod 0644 /etc/nobara-provision.env
+chmod 0644 /etc/fedora-provision.env
+
+# ── GDM Autologin ─────────────────────────────────────────────────────────────
+cat > /etc/gdm/custom.conf <<'GDMEOF'
+[daemon]
+AutomaticLoginEnable=True
+AutomaticLogin=sija
+GDMEOF
 
 %end
 

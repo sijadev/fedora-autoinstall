@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # scripts/first-login.sh — User-level one-shot provisioning for the target user
 #
-# Runs via ~/.config/autostart/nobara-first-login.desktop on first GNOME login.
-# Marker: ~/.local/share/nobara-provision/first-login.done
+# Runs via ~/.config/autostart/fedora-first-login.desktop on first GNOME login.
+# Marker: ~/.local/share/fedora-provision/first-login.done
 #
 # Tasks (in order):
 #   1.  Flatpak Extension Manager
@@ -20,10 +20,10 @@
 
 set -euo pipefail
 
-MARKER_DIR="${HOME}/.local/share/nobara-provision"
+MARKER_DIR="${HOME}/.local/share/fedora-provision"
 MARKER_FILE="${MARKER_DIR}/first-login.done"
 LOG_FILE="${MARKER_DIR}/first-login.log"
-ENV_FILE="/etc/nobara-provision.env"
+ENV_FILE="/etc/fedora-provision.env"
 
 mkdir -p "$MARKER_DIR"
 exec > >(tee -a "$LOG_FILE") 2>&1
@@ -41,28 +41,28 @@ have_passwordless_sudo() {
 # ── Idempotency guard ─────────────────────────────────────────────────────────
 if [[ -f "$MARKER_FILE" ]]; then
     log "First-login already completed. Removing autostart entry."
-    rm -f "${HOME}/.config/autostart/nobara-first-login.desktop"
+    rm -f "${HOME}/.config/autostart/fedora-first-login.desktop"
     exit 0
 fi
 
 # ── Load provisioning env ─────────────────────────────────────────────────────
 [[ -f "$ENV_FILE" ]] && source "$ENV_FILE"
 
-INSTALL_PROFILE="${NOBARA_INSTALL_PROFILE:-full}"
+INSTALL_PROFILE="${FEDORA_INSTALL_PROFILE:-full}"
 log "Install profile: ${INSTALL_PROFILE}"
 
-TARGET_USER="${NOBARA_TARGET_USER:-${USER}}"
-PYTORCH_VENV="${NOBARA_PYTORCH_VENV:-${HOME}/.venvs/ai}"
-VLLM_VENV="${NOBARA_VLLM_VENV:-${HOME}/.venvs/bitwig-omni}"
-VLLM_CUDA_VERSION="${NOBARA_VLLM_CUDA_VERSION:-13.2}"
-VLLM_ARCH_LIST="${NOBARA_VLLM_ARCH_LIST:-12.0}"
-VLLM_MODEL="${NOBARA_VLLM_MODEL:-Qwen/Qwen3-14B-AWQ}"
-WS_GTK_ARGS="${NOBARA_WS_GTK_ARGS:-}"
-WS_ICON_ARGS="${NOBARA_WS_ICON_ARGS:-}"
-WS_WALL_ARGS="${NOBARA_WS_WALL_ARGS:-}"
-OMB_THEME="${NOBARA_OMB_THEME:-modern}"
+TARGET_USER="${FEDORA_TARGET_USER:-${USER}}"
+PYTORCH_VENV="${FEDORA_PYTORCH_VENV:-${HOME}/.venvs/ai}"
+VLLM_VENV="${FEDORA_VLLM_VENV:-${HOME}/.venvs/bitwig-omni}"
+VLLM_CUDA_VERSION="${FEDORA_VLLM_CUDA_VERSION:-13.2}"
+VLLM_ARCH_LIST="${FEDORA_VLLM_ARCH_LIST:-12.0}"
+VLLM_MODEL="${FEDORA_VLLM_MODEL:-Qwen/Qwen3-14B-AWQ}"
+WS_GTK_ARGS="${FEDORA_WS_GTK_ARGS:-}"
+WS_ICON_ARGS="${FEDORA_WS_ICON_ARGS:-}"
+WS_WALL_ARGS="${FEDORA_WS_WALL_ARGS:-}"
+OMB_THEME="${FEDORA_OMB_THEME:-modern}"
 
-THEMES_DIR="${HOME}/.cache/nobara-themes-build"
+THEMES_DIR="${HOME}/.cache/fedora-themes-build"
 
 # ── Profile: headless profiles skip all GUI steps ────────────────────────────
 if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
@@ -292,7 +292,7 @@ if [[ "$INSTALL_PROFILE" == "theme-bash" ]]; then
     step "theme-bash profile — skipping AI/vLLM provisioning"
     log "Steps 7-12 skipped (no GPU compute required for theme-bash)."
     touch "$MARKER_FILE"
-    rm -f "${HOME}/.config/autostart/nobara-first-login.desktop"
+    rm -f "${HOME}/.config/autostart/fedora-first-login.desktop"
     log "First-login provisioning complete (theme-bash). Log: $LOG_FILE"
     exit 0
 fi
@@ -451,7 +451,7 @@ if CUDA_132_PATH=$(find_cuda_version_path "$VLLM_CUDA_VERSION"); then
 else
     log "CUDA ${VLLM_CUDA_VERSION} not found. Attempting installation..."
 
-    # Try dnf first (Nobara/Fedora may have it)
+    # Try dnf first (Fedora/Fedora may have it)
     CUDA_MAJOR=$(echo "$VLLM_CUDA_VERSION" | cut -d. -f1)
     CUDA_MINOR=$(echo "$VLLM_CUDA_VERSION" | cut -d. -f2)
     CUDA_PKG="cuda-toolkit-${CUDA_MAJOR}-${CUDA_MINOR}"
@@ -500,7 +500,7 @@ HOOKEOF
 # Inject into venv's activate script
 if ! grep -q 'activate.cuda' "${VENV_VLLM}/bin/activate"; then
     echo '' >> "${VENV_VLLM}/bin/activate"
-    echo '# Nobara: CUDA toolchain for vLLM-Omni' >> "${VENV_VLLM}/bin/activate"
+    echo '# Fedora: CUDA toolchain for vLLM-Omni' >> "${VENV_VLLM}/bin/activate"
     echo "source \"${VENV_VLLM}/bin/activate.cuda\"" >> "${VENV_VLLM}/bin/activate"
 fi
 log "CUDA ${VLLM_CUDA_VERSION} environment configured for venv: $VENV_VLLM"
@@ -580,6 +580,6 @@ touch "$MARKER_FILE"
 log "Marker written: $MARKER_FILE"
 
 # Remove autostart entry — we're done
-rm -f "${HOME}/.config/autostart/nobara-first-login.desktop"
+rm -f "${HOME}/.config/autostart/fedora-first-login.desktop"
 log "Autostart entry removed."
 log "First-login provisioning finished. Log: $LOG_FILE"

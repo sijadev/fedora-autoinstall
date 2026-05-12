@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# nobara-install.sh — Main orchestrator
+# fedora-install.sh — Main orchestrator
 #
 # Validates XML config, generates Kickstart, downloads ISO,
 # deploys everything to Ventoy USB, and writes ventoy.json.
 #
 # Usage:
-#   sudo ./nobara-install.sh --config config/example.xml [--dry-run] [--reboot]
+#   sudo ./fedora-install.sh --config config/example.xml [--dry-run] [--reboot]
 
 set -euo pipefail
 
@@ -14,10 +14,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/usb.sh"
 
-PROGRAM="nobara-install"
+PROGRAM="fedora-install"
 VERSION="1.0.0"
 
-LOG_FILE="${LOG_FILE:-${SCRIPT_DIR}/logs/nobara-install.log}"
+LOG_FILE="${LOG_FILE:-${SCRIPT_DIR}/logs/fedora-install.log}"
 
 usage() {
     cat <<EOF
@@ -26,7 +26,7 @@ Usage: $PROGRAM [OPTIONS]
 Options:
   -c, --config FILE    Installation config XML file (required)
   -d, --dry-run        Print all actions without executing
-  -l, --log FILE       Log file path (default: logs/nobara-install.log)
+  -l, --log FILE       Log file path (default: logs/fedora-install.log)
   -r, --reboot         Reboot system after deployment (with confirmation)
     -S, --skip-smoke-gate  Bypass required Podman smoke-test gate (not recommended)
        --skip-vm-gate   Alias for --skip-smoke-gate (legacy)
@@ -38,7 +38,7 @@ Environment:
 Examples:
   sudo $PROGRAM --config config/example.xml
   sudo $PROGRAM --config config/example.xml --dry-run
-  sudo $PROGRAM --config config/my-config.xml --log /var/log/nobara-deploy.log
+  sudo $PROGRAM --config config/my-config.xml --log /var/log/fedora-deploy.log
     sudo $PROGRAM --config config/example.xml --skip-vm-gate
 EOF
 }
@@ -87,7 +87,7 @@ assert_podman_smoke_gate() {
     log_info "Podman smoke gate passed: layers=${stamp_layers} stamp_time=${stamp_timestamp}"
 }
 
-log_step "Nobara Auto-Install Orchestrator v${VERSION}"
+log_step "Fedora Auto-Install Orchestrator v${VERSION}"
 [[ "$DRY_RUN" == "1" ]] && log_warn "DRY-RUN mode active — no changes will be made."
 
 # ── Step 1: Validate XML config ───────────────────────────────────────────────
@@ -108,7 +108,7 @@ fi
 # ── Step 2: Generate Kickstart ────────────────────────────────────────────────
 log_step "Generating Kickstart"
 KS_DIR="$SCRIPT_DIR/kickstart"
-KS_FILE="$KS_DIR/nobara-autoinstall.ks"
+KS_FILE="$KS_DIR/fedora-autoinstall.ks"
 
 run mkdir -p "$KS_DIR"
 
@@ -119,7 +119,7 @@ else
         --config "$CONFIG_FILE" \
         --first-boot-script  "$SCRIPT_DIR/scripts/first-boot.sh" \
         --first-login-script "$SCRIPT_DIR/scripts/first-login.sh" \
-        --systemd-unit       "$SCRIPT_DIR/systemd/nobara-first-boot.service" \
+        --systemd-unit       "$SCRIPT_DIR/systemd/fedora-first-boot.service" \
         --output "$KS_FILE"
     log_info "Kickstart written: $KS_FILE"
 fi
@@ -193,14 +193,14 @@ fi
 log_step "Kickstart deployment to Ventoy"
 
 KS_DEST_DIR="$VENTOY_MNT/kickstart"
-KS_DEST="$KS_DEST_DIR/nobara-autoinstall.ks"
+KS_DEST="$KS_DEST_DIR/fedora-autoinstall.ks"
 
 run mkdir -p "$KS_DEST_DIR"
 if [[ "$DRY_RUN" != "1" ]]; then
     cp "$KS_FILE" "$KS_DEST"
     log_info "Kickstart deployed: $KS_DEST"
     # Copy all predefined profiles so GRUB menu entries and auto_install templates work
-    for ks in "$SCRIPT_DIR"/kickstart/nobara-*.ks; do
+    for ks in "$SCRIPT_DIR"/kickstart/fedora-*.ks; do
         [[ -f "$ks" ]] || continue
         dest="$KS_DEST_DIR/$(basename "$ks")"
         cp "$ks" "$dest"
@@ -208,17 +208,17 @@ if [[ "$DRY_RUN" != "1" ]]; then
     done
 else
     log_dry "cp $KS_FILE → $KS_DEST"
-    log_dry "cp kickstart/nobara-*.ks → $KS_DEST_DIR/"
+    log_dry "cp kickstart/fedora-*.ks → $KS_DEST_DIR/"
 fi
 
 # ── Step 6b: Deploy Provisioner + Scripts ────────────────────────────────────
 log_step "Provisioner + Scripts deployment to Ventoy"
 
 if [[ "$DRY_RUN" != "1" ]]; then
-    # nobara-provision.sh — für bestehende Systeme (theme-bash, headless-vllm)
-    cp "$SCRIPT_DIR/nobara-provision.sh" "$VENTOY_MNT/nobara-provision.sh"
-    chmod +x "$VENTOY_MNT/nobara-provision.sh"
-    log_info "Provisioner deployed: nobara-provision.sh"
+    # fedora-provision.sh — für bestehende Systeme (theme-bash, headless-vllm)
+    cp "$SCRIPT_DIR/fedora-provision.sh" "$VENTOY_MNT/fedora-provision.sh"
+    chmod +x "$VENTOY_MNT/fedora-provision.sh"
+    log_info "Provisioner deployed: fedora-provision.sh"
 
     # scripts/ — first-boot.sh, first-login.sh (werden von provision.sh referenziert)
     SCRIPTS_DEST="$VENTOY_MNT/scripts"
@@ -229,7 +229,7 @@ if [[ "$DRY_RUN" != "1" ]]; then
         log_info "Script deployed: scripts/$f"
     done
 
-    # systemd/ — nobara-first-boot.service
+    # systemd/ — fedora-first-boot.service
     SYSTEMD_DEST="$VENTOY_MNT/systemd"
     mkdir -p "$SYSTEMD_DEST"
     for f in "$SCRIPT_DIR"/systemd/*.service; do
@@ -238,7 +238,7 @@ if [[ "$DRY_RUN" != "1" ]]; then
         log_info "Systemd unit deployed: systemd/$(basename "$f")"
     done
 else
-    log_dry "cp nobara-provision.sh → Ventoy root"
+    log_dry "cp fedora-provision.sh → Ventoy root"
     log_dry "cp scripts/first-boot.sh scripts/first-login.sh → Ventoy/scripts/"
     log_dry "cp systemd/*.service → Ventoy/systemd/"
 fi
@@ -252,7 +252,7 @@ VENTOY_JSON_TPL="$SCRIPT_DIR/ventoy/ventoy.json.tpl"
 
 if [[ "$DRY_RUN" != "1" ]]; then
     mkdir -p "$VENTOY_JSON_DIR"
-    sed "s|NOBARA_ISO_FILENAME|${ISO_BASENAME}|g" "$VENTOY_JSON_TPL" > "$VENTOY_JSON"
+    sed "s|FEDORA_ISO_FILENAME|${ISO_BASENAME}|g" "$VENTOY_JSON_TPL" > "$VENTOY_JSON"
     log_info "ventoy.json written: $VENTOY_JSON"
 else
     log_dry "Would write ventoy.json → /${ISO_BASENAME} (4 profiles)"
@@ -265,14 +265,14 @@ VENTOY_GRUB_CFG="$VENTOY_JSON_DIR/ventoy_grub.cfg"
 VENTOY_GRUB_TPL="$SCRIPT_DIR/ventoy/ventoy_grub.cfg.tpl"
 
 if [[ "$DRY_RUN" != "1" ]]; then
-    # Extract ISO volume label from its own GRUB config (fallback: Nobara-NN from filename)
+    # Extract ISO volume label from its own GRUB config (fallback: Fedora-NN from filename)
     ISO_CDLABEL=$(7z e "$ISO_DEST" boot/grub2/grub.cfg -so 2>/dev/null \
         | grep -oP "CDLABEL=\K[^ ']+" | head -1)
     [[ -z "$ISO_CDLABEL" ]] && ISO_CDLABEL=$(basename "$ISO_BASENAME" .iso | cut -d- -f1-2)
     log_info "ISO CDLABEL: $ISO_CDLABEL"
 
-    sed -e "s|NOBARA_ISO_FILENAME|${ISO_BASENAME}|g" \
-        -e "s|NOBARA_ISO_CDLABEL|${ISO_CDLABEL}|g" \
+    sed -e "s|FEDORA_ISO_FILENAME|${ISO_BASENAME}|g" \
+        -e "s|FEDORA_ISO_CDLABEL|${ISO_CDLABEL}|g" \
         "$VENTOY_GRUB_TPL" > "$VENTOY_GRUB_CFG"
     log_info "ventoy_grub.cfg written: $VENTOY_GRUB_CFG"
 else
@@ -290,7 +290,7 @@ fi
 log_info ""
 log_info "Deployment complete."
 log_info "  ISO:            /${ISO_BASENAME}"
-log_info "  Kickstart:      /kickstart/  (4 profiles + nobara-autoinstall.ks)"
+log_info "  Kickstart:      /kickstart/  (4 profiles + fedora-autoinstall.ks)"
 log_info "  ventoy.json:    4 auto_install templates"
 log_info "  ventoy_grub.cfg: 4 GRUB menu entries  [f/t/h/v]"
 log_info ""

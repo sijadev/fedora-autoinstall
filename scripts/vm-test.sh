@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# scripts/vm-test.sh — VM-Test-Workflow für das Nobara Install Framework
+# scripts/vm-test.sh — VM-Test-Workflow für das Fedora Install Framework
 #
 # Befehle:
 #   vm-test.sh create          VM anlegen (80 GB, UEFI, VirtIO, Ventoy USB-Passthrough)
 #   vm-test.sh install         Frische Installation: VM vom Ventoy USB booten,
 #                              [m] VM-Test Profil per Hotkey auswählen, Anaconda läuft durch
-#   vm-test.sh snapshot        Snapshot "base-nobara" nach erfolgreicher Installation anlegen
+#   vm-test.sh snapshot        Snapshot "base-fedora" nach erfolgreicher Installation anlegen
 #   vm-test.sh test <profil>   Snapshot zurücksetzen + Provisioner ausführen
 #                              Profil: theme-bash | headless-vllm
 #   vm-test.sh status          VM-Status und IP anzeigen
@@ -15,7 +15,7 @@
 # Voraussetzungen:
 #   - virt-manager + libvirt installiert und libvirtd aktiv
 #   - Ventoy USB-Stick eingesteckt (/dev/sda, LABEL=Ventoy)
-#   - nobara-vm.ks auf dem Ventoy-Stick
+#   - fedora-vm.ks auf dem Ventoy-Stick
 
 set -euo pipefail
 
@@ -26,7 +26,7 @@ VM_CPUS=4
 VM_DISK_GB=80
 VM_STORAGE_DIR="/home/sija/VMs"
 VM_DISK="${VM_STORAGE_DIR}/${VM_NAME}.qcow2"
-VM_SNAPSHOT="nobara43-default"
+VM_SNAPSHOT="fedora43-default"
 VM_USER="sija"
 VM_PASS="test123"
 VM_OS_VARIANT="fedora43"
@@ -174,12 +174,12 @@ cmd_create() {
 
     # Storage-Verzeichnis anlegen und als libvirt-Pool registrieren
     mkdir -p "$VM_STORAGE_DIR"
-    if ! virsh pool-info nobara-vms &>/dev/null; then
-        virsh pool-define-as nobara-vms dir --target "$VM_STORAGE_DIR"
-        virsh pool-build nobara-vms
-        virsh pool-start nobara-vms
-        virsh pool-autostart nobara-vms
-        log "Storage-Pool 'nobara-vms' angelegt: $VM_STORAGE_DIR"
+    if ! virsh pool-info fedora-vms &>/dev/null; then
+        virsh pool-define-as fedora-vms dir --target "$VM_STORAGE_DIR"
+        virsh pool-build fedora-vms
+        virsh pool-start fedora-vms
+        virsh pool-autostart fedora-vms
+        log "Storage-Pool 'fedora-vms' angelegt: $VM_STORAGE_DIR"
     fi
 
     # Separate VARS-Datei pro VM (UEFI speichert Boot-Einträge darin)
@@ -212,15 +212,15 @@ cmd_create() {
     echo -e "  ${BOLD}Nächste Schritte:${RESET}"
     echo -e "  1. virt-manager öffnen → VM '${VM_NAME}' starten"
     echo -e "  2. Im GRUB-Menü ${BOLD}e${RESET} drücken, an die linux-Zeile anhängen:"
-    echo -e "     ${CYAN}inst.ks=hd:LABEL=Ventoy:/kickstart/nobara-vm.ks${RESET}"
+    echo -e "     ${CYAN}inst.ks=hd:LABEL=Ventoy:/kickstart/fedora-vm.ks${RESET}"
     echo -e "  3. Installation abwarten, VM startet neu"
     echo -e "  4. Dann: ${BOLD}./scripts/vm-test.sh snapshot${RESET}"
 }
 
 cmd_install() {
-    step "Installations-Test: Ventoy USB → GRUB [m] → Anaconda → nobara-vm.ks"
+    step "Installations-Test: Ventoy USB → GRUB [m] → Anaconda → fedora-vm.ks"
 
-    local install_vm="nobara-install-test"
+    local install_vm="fedora-install-test"
     local install_disk="${VM_STORAGE_DIR}/${install_vm}.qcow2"
     local install_nvram="${VM_STORAGE_DIR}/${install_vm}-OVMF_VARS.fd"
 
@@ -286,7 +286,7 @@ XMLEOF
     # F6 ExMenu direkt vom Ventoy-HAUPTMENÜ (NICHT nach ISO-Auswahl!)
     # Erkenntnisse: F6 funktioniert nur im Ventoy-Hauptmenü,
     # nicht nach "Enter → Boot mode selection → normal mode → Fedora GRUB"
-    # Fedora ISO ist alphabetisch erster Eintrag (F vor N=Nobara)
+    # Fedora ISO ist alphabetisch erster Eintrag (F vor N=Fedora)
     log "Warte auf Ventoy Hauptmenü — sende F6 für ExMenu mit inst.ks Profilen..."
     virsh send-key "$ACTIVE_VM" KEY_F6
     sleep 4  # ExMenu lädt
@@ -295,7 +295,7 @@ XMLEOF
     # [m] VM-Test ist erster Eintrag — Enter auswählen
     log "ExMenu offen — wähle [m] VM-Test (Enter: inst.stage2=hd:LABEL=Ventoy + inst.ks)..."
     virsh send-key "$ACTIVE_VM" KEY_ENTER
-    log "Anaconda startet mit inst.ks=nobara-vm.ks — vollautomatische Installation..."
+    log "Anaconda startet mit inst.ks=fedora-vm.ks — vollautomatische Installation..."
 
     # virt-manager öffnen für visuelle Kontrolle
     virt-manager --connect qemu:///system --show-domain-console "$ACTIVE_VM" &
@@ -342,9 +342,9 @@ XMLEOF
 }
 
 cmd_base() {
-    step "Neuen Base-Snapshot aus nobara-install-test ableiten"
+    step "Neuen Base-Snapshot aus fedora-install-test ableiten"
 
-    local install_vm="nobara-install-test"
+    local install_vm="fedora-install-test"
     local install_snapshot="base-fedora43"
     local install_disk="${VM_STORAGE_DIR}/${install_vm}.qcow2"
     local install_nvram="${VM_STORAGE_DIR}/${install_vm}-OVMF_VARS.fd"
@@ -386,7 +386,7 @@ cmd_base() {
     find "${VM_STORAGE_DIR}" -maxdepth 1 -name "${install_vm}.*" \
         ! -name "*.qcow2" ! -name "*.fd" -delete 2>/dev/null || true
 
-    # 4. VM umbenennen: nobara-install-test → fedora43
+    # 4. VM umbenennen: fedora-install-test → fedora43
     log "Benenne ${install_vm} → ${VM_NAME} um ..."
     virsh domrename "$install_vm" "$VM_NAME"
 
@@ -404,7 +404,7 @@ cmd_base() {
     log "Disk: ${VM_DISK}"
     log "NVRAM: ${OVMF_VARS_VM}"
 
-    virsh pool-refresh nobara-vms &>/dev/null || true
+    virsh pool-refresh fedora-vms &>/dev/null || true
 
     # 7. Snapshot anlegen
     cmd_snapshot
@@ -417,7 +417,7 @@ cmd_snapshot() {
     vm_is_running && die "VM läuft noch. Bitte herunterfahren: virsh shutdown ${VM_NAME}"
 
     virsh snapshot-create-as "$VM_NAME" "$VM_SNAPSHOT" \
-        --description "Frische Nobara 43 Installation — Reset-Punkt für Provisioner-Tests"
+        --description "Frische Fedora 43 Installation — Reset-Punkt für Provisioner-Tests"
 
     log "Snapshot '${VM_SNAPSHOT}' angelegt."
     virsh snapshot-list "$VM_NAME"
@@ -441,7 +441,7 @@ cmd_test() {
 
     local test_start; test_start=$(date '+%Y-%m-%d %H:%M:%S')
     echo "════════════════════════════════════════════════════"
-    echo "  Nobara VM-Test — Profil: ${profile}"
+    echo "  Fedora VM-Test — Profil: ${profile}"
     echo "  Gestartet: ${test_start}"
     echo "  VM: ${VM_NAME}  Snapshot: ${VM_SNAPSHOT}"
     echo "  Log: ${log_file}"
@@ -523,9 +523,9 @@ XMLEOF
     fi
 
     # ── Provisioner ausführen ─────────────────────────────────────────────────
-    log "Starte nobara-provision.sh --profile ${profile} ..."
+    log "Starte fedora-provision.sh --profile ${profile} ..."
     $SSH "$VM_USER@$ip" \
-        "echo '${VM_PASS}' | sudo -S bash '${ventoy_path}/nobara-provision.sh' --profile '${profile}' --run-now" \
+        "echo '${VM_PASS}' | sudo -S bash '${ventoy_path}/fedora-provision.sh' --profile '${profile}' --run-now" \
         || warn "Provisioner abgebrochen oder mit Fehler beendet — Logs prüfen"
 
     # ── First-Boot Logs abwarten ──────────────────────────────────────────────
@@ -534,7 +534,7 @@ XMLEOF
     local boot_waited=0
     while [[ $boot_done -eq 0 ]]; do
         sleep 5; boot_waited=$((boot_waited + 5))
-        if $SSH "$VM_USER@$ip" "test -f /var/lib/nobara-provision/first-boot.done" 2>/dev/null; then
+        if $SSH "$VM_USER@$ip" "test -f /var/lib/fedora-provision/first-boot.done" 2>/dev/null; then
             boot_done=1
         elif [[ $boot_waited -gt 600 ]]; then
             warn "First-Boot nicht abgeschlossen nach 600s."
@@ -546,9 +546,9 @@ XMLEOF
     # ── First-Login ausführen (Themes, Oh-My-Bash, GNOME Extensions) ─────────
     if [[ "$profile" == "theme-bash" ]]; then
         step "First-Login: Themes + Oh-My-Bash installieren"
-        log "Starte nobara-first-login.sh als User '${VM_USER}' ..."
+        log "Starte fedora-first-login.sh als User '${VM_USER}' ..."
         $SSH "$VM_USER@$ip" \
-            "DBUS_SESSION_BUS_ADDRESS='unix:path=/run/user/\$(id -u)/bus' bash /usr/local/bin/nobara-first-login.sh 2>&1" \
+            "DBUS_SESSION_BUS_ADDRESS='unix:path=/run/user/\$(id -u)/bus' bash /usr/local/bin/fedora-first-login.sh 2>&1" \
             | while IFS= read -r line; do log "  first-login: $line"; done || \
             warn "First-Login mit Fehler beendet — Logs prüfen"
         log "First-Login abgeschlossen."
@@ -573,7 +573,7 @@ XMLEOF
         step "Validierung: theme-bash"
         $SSH "$VM_USER@$ip" "
 echo '  Installierte Komponenten:'
-[ -f /var/lib/nobara-provision/first-boot.done ] && echo '  ✓ First-Boot'           || echo '  ✗ First-Boot fehlt'
+[ -f /var/lib/fedora-provision/first-boot.done ] && echo '  ✓ First-Boot'           || echo '  ✗ First-Boot fehlt'
 [ -d \${HOME}/.config/gtk-4.0 ]                  && echo '  ✓ WhiteSur GTK'         || echo '  ✗ WhiteSur GTK fehlt'
 [ -d \${HOME}/.local/share/icons/WhiteSur-dark ]  && echo '  ✓ WhiteSur Icons'       || echo '  ✗ WhiteSur Icons fehlen'
 [ -d \${HOME}/.local/share/backgrounds/WhiteSur ] && echo '  ✓ WhiteSur Wallpapers'  || echo '  ✗ Wallpapers fehlen'
@@ -590,7 +590,7 @@ echo '  Wallpaper:' \$(gsettings get org.gnome.desktop.background picture-uri 2>
 
         $SSH "$VM_USER@$ip" "
 echo '  Installierte Komponenten:'
-[ -f /var/lib/nobara-provision/first-boot.done ] \
+[ -f /var/lib/fedora-provision/first-boot.done ] \
     && echo '  ✓ First-Boot abgeschlossen' || echo '  ✗ First-Boot fehlt'
 [ -d \${HOME}/.venvs/ai ] \
     && echo '  ✓ PyTorch venv (~/.venvs/ai)' || echo '  ✗ PyTorch venv fehlt'
@@ -607,7 +607,7 @@ echo '  Installierte Komponenten:'
         # Log auf ERROR-Zeilen prüfen
         log "Log-Analyse: first-login.log auf Fehler prüfen..."
         error_count=$($SSH "$VM_USER@$ip" \
-            "grep -c '\[ERROR\]' \${HOME}/.local/share/nobara-provision/first-login.log 2>/dev/null; true" \
+            "grep -c '\[ERROR\]' \${HOME}/.local/share/fedora-provision/first-login.log 2>/dev/null; true" \
             2>/dev/null | tr -d '[:space:]' || echo "0")
         error_count="${error_count:-0}"
         if [[ "$error_count" -eq 0 ]]; then
@@ -616,7 +616,7 @@ echo '  Installierte Komponenten:'
         else
             warn "✗ ${error_count} ERROR-Einträge im first-login.log:"
             $SSH "$VM_USER@$ip" \
-                "grep '\[ERROR\]' \${HOME}/.local/share/nobara-provision/first-login.log 2>/dev/null | head -10" \
+                "grep '\[ERROR\]' \${HOME}/.local/share/fedora-provision/first-login.log 2>/dev/null | head -10" \
                 2>/dev/null || true
             test_passed=0
         fi

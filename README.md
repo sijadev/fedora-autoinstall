@@ -1,6 +1,6 @@
-# nobara-install
+# fedora-install
 
-Vollautomatisches Unattended-Install-Framework für **Nobara Linux** (Fedora-basiert) via Ventoy USB-Stick.
+Vollautomatisches Unattended-Install-Framework für **Fedora Linux** (Fedora-basiert) via Ventoy USB-Stick.
 
 Ein einziger Befehl beschreibt den USB-Stick mit ISO, Kickstart-Profilen und GRUB-Menü. Beim Booten wählt man ein Profil — der Rest läuft ohne Eingriff durch.
 
@@ -10,12 +10,12 @@ Ein einziger Befehl beschreibt den USB-Stick mit ISO, Kickstart-Profilen und GRU
 
 | Was | Version / Bedingung |
 |---|---|
-| Nobara / Fedora / RHEL-basiertes Host-System | für `nobara-install.sh` |
+| Fedora / Fedora / RHEL-basiertes Host-System | für `fedora-install.sh` |
 | Python 3 | `python3`, `pip`, `venv` |
 | `curl`, `lsblk`, `findmnt`, `sha256sum`, `git` | Standard-Tools |
 | `7z` (p7zip-plugins) | für ISO CDLABEL-Extraktion |
 | Ventoy USB-Stick | ≥ 32 GB empfohlen, Ventoy vorinstalliert |
-| Root-Rechte | `sudo ./nobara-install.sh …` |
+| Root-Rechte | `sudo ./fedora-install.sh …` |
 
 > **Ziel-Hardware:** UEFI-System mit NVIDIA GPU (Turing RTX 20xx oder neuer).  
 > Legacy-BIOS wird nicht unterstützt.
@@ -25,18 +25,18 @@ Ein einziger Befehl beschreibt den USB-Stick mit ISO, Kickstart-Profilen und GRU
 ## Projektstruktur
 
 ```
-nobara-install/
-├── nobara-install.sh          # Haupt-Orchestrator
+fedora-install/
+├── fedora-install.sh          # Haupt-Orchestrator
 │
 ├── config/
 │   ├── example.xml            # Referenz-Konfiguration
 │   └── schema.xsd             # XML-Schema (Validierung)
 │
 ├── kickstart/
-│   ├── nobara-full.ks         # Profil: Vollinstallation (GNOME + NVIDIA + AI)
-│   ├── nobara-theme-bash.ks   # Profil: GNOME + WhiteSur, kein AI
-│   ├── nobara-headless-vllm.ks# Profil: Kein GUI, Podman + vLLM als Dienst
-│   ├── nobara-vm.ks           # Profil: VM (KVM/QEMU, vda)
+│   ├── fedora-full.ks         # Profil: Vollinstallation (GNOME + NVIDIA + AI)
+│   ├── fedora-theme-bash.ks   # Profil: GNOME + WhiteSur, kein AI
+│   ├── fedora-headless-vllm.ks# Profil: Kein GUI, Podman + vLLM als Dienst
+│   ├── fedora-vm.ks           # Profil: VM (KVM/QEMU, vda)
 │   └── common-post.inc        # Gemeinsamer %post-Block (alle Profile)
 │
 ├── ventoy/
@@ -56,12 +56,12 @@ nobara-install/
 │   └── podman-run.sh          # Podman vLLM-Dienst starten
 │
 ├── systemd/
-│   └── nobara-first-boot.service  # Systemd Unit für first-boot.sh
+│   └── fedora-first-boot.service  # Systemd Unit für first-boot.sh
 │
 ├── tests/
 │   └── test_xml2ks.py         # Unit-Tests für xml2ks.py
 │
-└── iso/                       # Lokaler ISO-Cache (wird von nobara-install.sh befüllt)
+└── iso/                       # Lokaler ISO-Cache (wird von fedora-install.sh befüllt)
 ```
 
 ---
@@ -88,13 +88,13 @@ Mindest-Anpassungen in der XML:
 ### 2. USB-Stick beschreiben
 
 ```bash
-sudo ./nobara-install.sh --config config/mein-system.xml
+sudo ./fedora-install.sh --config config/mein-system.xml
 ```
 
 Mit Vorschau (kein Schreiben):
 
 ```bash
-sudo ./nobara-install.sh --config config/mein-system.xml --dry-run
+sudo ./fedora-install.sh --config config/mein-system.xml --dry-run
 ```
 
 ### 3. Profil wählen — ISO-Install oder Provisioner
@@ -104,12 +104,12 @@ Zwei grundlegend verschiedene Mechanismen:
 | Profil | Mechanismus | Wann |
 |---|---|---|
 | `full` | ISO-Boot → Anaconda → frisches System | Neues System / Festplatte leer |
-| `theme-bash` | `nobara-provision.sh` auf laufendem System | Nobara bereits installiert |
-| `headless-vllm` | `nobara-provision.sh` auf laufendem System | Nobara bereits installiert |
+| `theme-bash` | `fedora-provision.sh` auf laufendem System | Fedora bereits installiert |
+| `headless-vllm` | `fedora-provision.sh` auf laufendem System | Fedora bereits installiert |
 
 #### Profil `full` — Frische Installation per ISO
 
-USB-Stick in Zielrechner → Im Ventoy-Menü Nobara-ISO auswählen → **F6** → **`f`** drücken.
+USB-Stick in Zielrechner → Im Ventoy-Menü Fedora-ISO auswählen → **F6** → **`f`** drücken.
 
 Anaconda startet grafisch, die Installation läuft vollautomatisch durch. Nach dem Reboot startet die Provisionierung automatisch.
 
@@ -119,21 +119,21 @@ inst.disk=nvme1n1
 ```
 
 
-USB-Stick einstecken, im laufenden Nobara ausführen:
+USB-Stick einstecken, im laufenden Fedora ausführen:
 
 ```bash
 # Theme + WhiteSur + Oh-My-Bash
-sudo bash /run/media/$USER/Ventoy/nobara-provision.sh --profile theme-bash
+sudo bash /run/media/$USER/Ventoy/fedora-provision.sh --profile theme-bash
 
 # NVIDIA + CUDA + Podman + vLLM als systemd-Dienst
-sudo bash /run/media/$USER/Ventoy/nobara-provision.sh --profile headless-vllm
+sudo bash /run/media/$USER/Ventoy/fedora-provision.sh --profile headless-vllm
 
 # NVIDIA + CUDA + vLLM direkt im Python venv
 ```
 
 Für einen anderen Benutzer:
 ```bash
-sudo bash /run/media/$USER/Ventoy/nobara-provision.sh --profile theme-bash --user max
+sudo bash /run/media/$USER/Ventoy/fedora-provision.sh --profile theme-bash --user max
 ```
 
 Sofort starten statt beim nächsten Boot:
@@ -148,12 +148,12 @@ Sofort starten statt beim nächsten Boot:
 Frische Neuinstallation. GNOME Desktop, NVIDIA Open Driver, CUDA, Podman, vLLM (Blackwell sm120), Kimi-Audio, Qwen3-14B-AWQ, Neo4j, WhiteSur-Theme, Oh-My-Bash.
 
 ### `theme-bash` — Theme + Bash (Provisioner)
-Auf bestehendem Nobara: WhiteSur GTK/Icon/Wallpaper-Themes, Oh-My-Bash. NVIDIA Open Driver wird aktualisiert. Kein AI-Stack, kein CUDA.
+Auf bestehendem Fedora: WhiteSur GTK/Icon/Wallpaper-Themes, Oh-My-Bash. NVIDIA Open Driver wird aktualisiert. Kein AI-Stack, kein CUDA.
 
 ### `headless-vllm` — Podman + vLLM (Provisioner)
-Auf bestehendem Nobara: NVIDIA Open Driver, CUDA, Podman-Pipeline mit vLLM als systemd-Dienst. Kein Anaconda-GUI nötig.
+Auf bestehendem Fedora: NVIDIA Open Driver, CUDA, Podman-Pipeline mit vLLM als systemd-Dienst. Kein Anaconda-GUI nötig.
 
-Auf bestehendem Nobara: NVIDIA Open Driver, CUDA, vLLM direkt im Python venv als systemd-Dienst. Kein Podman.
+Auf bestehendem Fedora: NVIDIA Open Driver, CUDA, vLLM direkt im Python venv als systemd-Dienst. Kein Podman.
 
 ### `vm` — VM (intern)
 KVM/QEMU-Gast, virtio-Disk (`vda`). Wird vom Podman-Smoke-Gate genutzt.
@@ -163,13 +163,13 @@ KVM/QEMU-Gast, virtio-Disk (`vda`). Wird vom Podman-Smoke-Gate genutzt.
 ## Konfiguration (XML)
 
 ```xml
-<nobara-install>
+<fedora-install>
   <iso>
-    <url>https://…/Nobara-43-GNOME-NV-2026-04-25.iso</url>
+    <url>https://…/Fedora-43-GNOME-NV-2026-04-25.iso</url>
     <sha256>abc123…</sha256>          <!-- optional, aber empfohlen -->
   </iso>
 
-  <hostname>nobara-workstation</hostname>
+  <hostname>fedora-workstation</hostname>
   <timezone>Europe/Berlin</timezone>
   <locale>de_DE.UTF-8</locale>
   <keyboard>de</keyboard>
@@ -181,9 +181,9 @@ KVM/QEMU-Gast, virtio-Disk (`vda`). Wird vom Podman-Smoke-Gate genutzt.
   </user>
 
   <first-boot>
-    <nobara-sync enabled="true"/>
+    <fedora-sync enabled="true"/>
     <nvidia-open enabled="true"/>
-    <cuda enabled="true" source="nobara"/>  <!-- oder source="nvidia" -->
+    <cuda enabled="true" source="fedora"/>  <!-- oder source="nvidia" -->
   </first-boot>
 
   <first-login>
@@ -199,7 +199,7 @@ KVM/QEMU-Gast, virtio-Disk (`vda`). Wird vom Podman-Smoke-Gate genutzt.
       <agent-model>Qwen/Qwen3-14B-AWQ</agent-model>
     </vllm-omni>
   </first-login>
-</nobara-install>
+</fedora-install>
 ```
 
 Validierung ohne Deployment:
@@ -214,7 +214,7 @@ python3 lib/xml2ks.py --validate-only config/mein-system.xml
 
 ```
 Ventoy USB
-  └─ ISO (Nobara Live)
+  └─ ISO (Fedora Live)
        └─ GRUB (ventoy_grub.cfg)
             └─ Kernel-Parameter:
                root=live:CDLABEL=<label>  rd.live.image  nomodeset
@@ -222,24 +222,24 @@ Ventoy USB
                     │
                     ├─ %pre: Disk automatisch erkennen (sda / nvme0n1 / vda)
                     ├─ Anaconda (grafisch) installiert das System
-                    ├─ %post: /etc/nobara-provision.env schreiben
+                    ├─ %post: /etc/fedora-provision.env schreiben
                     └─ common-post.inc:
                          ├─ first-boot.sh → /usr/local/sbin/
-                         ├─ nobara-first-boot.service → systemd enable
+                         ├─ fedora-first-boot.service → systemd enable
                          └─ first-login.desktop → ~/.config/autostart/
 ```
 
 ### Nach dem ersten Boot
 
-`nobara-first-boot.service` läuft einmalig als root:
-1. `nobara-sync` — Nobara-Pakete aktualisieren
+`fedora-first-boot.service` läuft einmalig als root:
+1. `fedora-sync` — Fedora-Pakete aktualisieren
 2. NVIDIA Open Driver installieren + `akmods` bauen
-3. CUDA installieren (Nobara-Repo oder NVIDIA-Repo)
+3. CUDA installieren (Fedora-Repo oder NVIDIA-Repo)
 4. CUDA-Umgebungsvariablen systemweit schreiben
 
 ### Nach dem ersten Login (GNOME)
 
-`nobara-first-login.sh` läuft einmalig als User:
+`fedora-first-login.sh` läuft einmalig als User:
 1. Flatpak Extension Manager
 2. GNOME-Extensions aktivieren
 3. WhiteSur GTK / Icon / Wallpaper installieren
@@ -264,17 +264,17 @@ Das funktioniert für SATA (`sda`), NVMe (`nvme0n1`) und virtio (`vda`) ohne Anp
 
 ## Podman Smoke-Gate
 
-Vor jedem echten Deployment prüft `nobara-install.sh`, ob die Kickstart-Skripte zuvor erfolgreich im Container getestet wurden:
+Vor jedem echten Deployment prüft `fedora-install.sh`, ob die Kickstart-Skripte zuvor erfolgreich im Container getestet wurden:
 
 ```bash
 # Test zuerst:
 ./scripts/podman-pipeline.sh
 
 # Dann deployen:
-sudo ./nobara-install.sh --config config/example.xml
+sudo ./fedora-install.sh --config config/example.xml
 
 # Gate überspringen (nicht empfohlen):
-sudo ./nobara-install.sh --config config/example.xml --skip-smoke-gate
+sudo ./fedora-install.sh --config config/example.xml --skip-smoke-gate
 ```
 
 ---
@@ -316,7 +316,7 @@ Folgende Fehler wurden identifiziert und behoben. Ohne diese Fixes startet die I
 
 ### BUG-03 — `text` in Kickstart-Dateien (kein grafischer Installer)
 
-**Dateien:** `kickstart/nobara-full.ks`, `kickstart/nobara-theme-bash.ks`  
+**Dateien:** `kickstart/fedora-full.ks`, `kickstart/fedora-theme-bash.ks`  
 **Symptom:** Anaconda startet im TUI-Modus statt im grafischen Installer.  
 **Ursache:** Die Kickstart-Direktive `text` erzwingt Text-Modus, unabhängig vom Kernel-Parameter.  
 
@@ -333,7 +333,7 @@ Folgende Fehler wurden identifiziert und behoben. Ohne diese Fixes startet die I
 
 ### BUG-05 — Hardcodierte Disk `sda` (Installation schlägt fehl auf NVMe)
 
-**Dateien:** alle `kickstart/nobara-*.ks` (außer `nobara-vm.ks`)  
+**Dateien:** alle `kickstart/fedora-*.ks` (außer `fedora-vm.ks`)  
 **Symptom:** Anaconda bricht mit `Disk sda not found` ab. Installation startet nie.  
 **Ursache:** `ignoredisk --only-use=sda` und `clearpart --drives=sda` setzen SATA-Disk voraus. Auf modernen Systemen mit NVMe heißt die Disk `nvme0n1`.  
 **Fix:** `%pre`-Skript erkennt die erste verfügbare Disk automatisch per `lsblk` und schreibt die Direktiven in `/tmp/disk-setup.cfg`, das dann per `%include` eingebunden wird. Funktioniert für SATA, NVMe und virtio ohne Anpassung.
@@ -342,7 +342,7 @@ Folgende Fehler wurden identifiziert und behoben. Ohne diese Fixes startet die I
 
 ### BUG-06 — `bootloader --location=mbr` auf UEFI-System
 
-**Dateien:** alle `kickstart/nobara-*.ks` (außer `nobara-vm.ks`)  
+**Dateien:** alle `kickstart/fedora-*.ks` (außer `fedora-vm.ks`)  
 **Symptom:** Installation bricht ab oder System startet nach Installation nicht, weil kein UEFI-Bootloader angelegt wurde.  
 **Ursache:** `--location=mbr` erzwingt Legacy-BIOS-Booting. Auf UEFI-Systemen muss Anaconda eine EFI-Systempartition (`/boot/efi`) anlegen und `grub2-efi` installieren. Der `mbr`-Parameter verhindert das.  
 **Fix:** `--location=mbr` entfernt. Anaconda erkennt UEFI vs. BIOS automatisch und richtet den Bootloader korrekt ein.

@@ -1,6 +1,6 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# podman-run.sh — interaktiven nobara-test Container starten
+# podman-run.sh — interaktiven fedora-test Container starten
 #
 # Usage:
 #   ./scripts/podman-run.sh [OPTIONS] [-- COMMAND...]
@@ -8,7 +8,7 @@
 # Options:
 #   --layer TAG      Image-Tag (default: 06-agent)
 #   --user USER      Benutzer im Container (default: sija)
-#   --image PREFIX   Image-Prefix (default: nobara-test)
+#   --image PREFIX   Image-Prefix (default: fedora-test)
 #   --no-gpu         GPU-Geräte und Treiber-Mounts weglassen
 #   --root           Als root einloggen statt als USER
 #   -- CMD...        Beliebiger Befehl statt interaktiver Shell
@@ -17,13 +17,13 @@
 #   ./scripts/podman-run.sh
 #   ./scripts/podman-run.sh --layer 04-vllm
 #   ./scripts/podman-run.sh -- bash -c 'nvidia-smi'
-#   ./scripts/podman-run.sh -- bash /opt/nobara/scripts/run_pipeline.sh /tmp/audio.wav
+#   ./scripts/podman-run.sh -- bash /opt/fedora/scripts/run_pipeline.sh /tmp/audio.wav
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-IMAGE_PREFIX="nobara-test"
+IMAGE_PREFIX="fedora-test"
 TARGET_USER="sija"
 LAYER="06-agent"
 WITH_GPU=1
@@ -53,7 +53,7 @@ IMAGE="${IMAGE_PREFIX}:${LAYER}"
 # ── Image prüfen ──────────────────────────────────────────────────────────────
 if ! podman image exists "$IMAGE" 2>/dev/null; then
     echo "FEHLER: Image '${IMAGE}' nicht gefunden." >&2
-    echo "Verfügbare nobara-test Images:" >&2
+    echo "Verfügbare fedora-test Images:" >&2
     podman images --filter "reference=${IMAGE_PREFIX}:*" --format "  {{.Repository}}:{{.Tag}}" 2>/dev/null || true
     exit 1
 fi

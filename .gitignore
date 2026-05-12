@@ -10,7 +10,7 @@ __pycache__/
 
 # ── Generated artifacts ───────────────────────────────────────────────────────
 # Kickstart generated from XML — not tracked, always regenerated
-kickstart/nobara-autoinstall.ks
+kickstart/fedora-autoinstall.ks
 
 # Downloaded ISOs (large binary, not for git)
 iso/

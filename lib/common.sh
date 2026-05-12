@@ -12,12 +12,12 @@ fi
 
 # ── Global state (can be overridden before sourcing) ──────────────────────────
 DRY_RUN="${DRY_RUN:-0}"
-LOG_FILE="${LOG_FILE:-/tmp/nobara-install.log}"
+LOG_FILE="${LOG_FILE:-/tmp/fedora-install.log}"
 
 # If a previous root-run left an unwritable log file behind, switch to a
 # user-specific fallback instead of spamming tee permission warnings.
 if ! touch "$LOG_FILE" 2>/dev/null; then
-    LOG_FILE="/tmp/nobara-install-${UID}.log"
+    LOG_FILE="/tmp/fedora-install-${UID}.log"
     touch "$LOG_FILE" 2>/dev/null || true
 fi
 

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# nobara-provision.sh — Provisioniert ein bestehendes Nobara-System
+# fedora-provision.sh — Provisioniert ein bestehendes Fedora-System
 #
 # Dieses Skript wird vom Ventoy-USB-Stick aus im LAUFENDEN System gestartet.
 # Es installiert KEIN neues OS — es richtet das gewählte Profil auf dem
 # bereits installierten System ein und startet die Provisionierung.
 #
 # Nutzung:
-#   sudo bash /run/media/$USER/Ventoy/nobara-provision.sh --profile theme-bash
-#   sudo bash /run/media/$USER/Ventoy/nobara-provision.sh --profile headless-vllm
+#   sudo bash /run/media/$USER/Ventoy/fedora-provision.sh --profile theme-bash
+#   sudo bash /run/media/$USER/Ventoy/fedora-provision.sh --profile headless-vllm
 #
 # Optionen:
 #   --profile   theme-bash | headless-vllm  (erforderlich)
@@ -59,28 +59,28 @@ step "Profil: ${PROFILE}  Benutzer: ${TARGET_USER}"
 
 case "$PROFILE" in
     theme-bash)
-        cat > /etc/nobara-provision.env <<ENVEOF
-NOBARA_INSTALL_PROFILE="theme-bash"
-NOBARA_TARGET_USER="${TARGET_USER}"
-NOBARA_OMB_THEME="modern"
-NOBARA_WS_GTK_ARGS="-c Dark"
-NOBARA_WS_ICON_ARGS=""
-NOBARA_WS_WALL_ARGS=""
-NOBARA_CUDA_SOURCE="nobara"
+        cat > /etc/fedora-provision.env <<ENVEOF
+FEDORA_INSTALL_PROFILE="theme-bash"
+FEDORA_TARGET_USER="${TARGET_USER}"
+FEDORA_OMB_THEME="modern"
+FEDORA_WS_GTK_ARGS="-c Dark"
+FEDORA_WS_ICON_ARGS=""
+FEDORA_WS_WALL_ARGS=""
+FEDORA_CUDA_SOURCE="fedora"
 ENVEOF
         ;;
     vllm-only)
         die "Profil 'vllm-only' wurde entfernt (keine GPU-Unterstützung ohne NVIDIA). Verwende 'headless-vllm'."
         ;;
     headless-vllm)
-        cat > /etc/nobara-provision.env <<ENVEOF
-NOBARA_INSTALL_PROFILE="headless-vllm"
-NOBARA_TARGET_USER="${TARGET_USER}"
-NOBARA_VLLM_CUDA_VERSION="13.2"
-NOBARA_VLLM_ARCH_LIST="12.0"
-NOBARA_AGENT_MODEL="Qwen/Qwen3-14B-AWQ"
-NOBARA_OMB_THEME="modern"
-NOBARA_CUDA_SOURCE="nobara"
+        cat > /etc/fedora-provision.env <<ENVEOF
+FEDORA_INSTALL_PROFILE="headless-vllm"
+FEDORA_TARGET_USER="${TARGET_USER}"
+FEDORA_VLLM_CUDA_VERSION="13.2"
+FEDORA_VLLM_ARCH_LIST="12.0"
+FEDORA_AGENT_MODEL="Qwen/Qwen3-14B-AWQ"
+FEDORA_OMB_THEME="modern"
+FEDORA_CUDA_SOURCE="fedora"
 ENVEOF
         ;;
     *)
@@ -88,8 +88,8 @@ ENVEOF
         ;;
 esac
 
-chmod 0644 /etc/nobara-provision.env
-log "/etc/nobara-provision.env geschrieben"
+chmod 0644 /etc/fedora-provision.env
+log "/etc/fedora-provision.env geschrieben"
 
 # ── Scripts vom USB installieren ──────────────────────────────────────────────
 step "Scripts installieren"
@@ -108,26 +108,26 @@ install_file() {
     fi
 }
 
-install_file "${SCRIPTS_SRC}/first-boot.sh"  /usr/local/sbin/nobara-first-boot.sh  0750
-install_file "${SCRIPTS_SRC}/first-login.sh" /usr/local/bin/nobara-first-login.sh  0755
+install_file "${SCRIPTS_SRC}/first-boot.sh"  /usr/local/sbin/fedora-first-boot.sh  0750
+install_file "${SCRIPTS_SRC}/first-login.sh" /usr/local/bin/fedora-first-login.sh  0755
 
 # ── Systemd First-Boot Service ────────────────────────────────────────────────
 step "Systemd Service"
 
-if [[ -f "${SYSTEMD_SRC}/nobara-first-boot.service" ]]; then
-    cp "${SYSTEMD_SRC}/nobara-first-boot.service" /etc/systemd/system/
+if [[ -f "${SYSTEMD_SRC}/fedora-first-boot.service" ]]; then
+    cp "${SYSTEMD_SRC}/fedora-first-boot.service" /etc/systemd/system/
 else
-    cat > /etc/systemd/system/nobara-first-boot.service <<'UNITEOF'
+    cat > /etc/systemd/system/fedora-first-boot.service <<'UNITEOF'
 [Unit]
-Description=Nobara First-Boot Provisioning (one-shot)
+Description=Fedora First-Boot Provisioning (one-shot)
 After=network-online.target
 Wants=network-online.target
-ConditionPathExists=!/var/lib/nobara-provision/first-boot.done
+ConditionPathExists=!/var/lib/fedora-provision/first-boot.done
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/nobara-first-boot.sh
-EnvironmentFile=-/etc/nobara-provision.env
+ExecStart=/usr/local/sbin/fedora-first-boot.sh
+EnvironmentFile=-/etc/fedora-provision.env
 StandardOutput=journal+console
 StandardError=journal+console
 TimeoutStartSec=3600
@@ -140,27 +140,27 @@ UNITEOF
 fi
 
 # Marker zurücksetzen damit first-boot für dieses Profil erneut läuft
-rm -f /var/lib/nobara-provision/first-boot.done
+rm -f /var/lib/fedora-provision/first-boot.done
 
 systemctl daemon-reload
-systemctl enable nobara-first-boot.service
-log "nobara-first-boot.service aktiviert"
+systemctl enable fedora-first-boot.service
+log "fedora-first-boot.service aktiviert"
 
 # ── First-Login: GUI vs. Headless ─────────────────────────────────────────────
 step "First-Login einrichten"
 
 # Alten first-login-Marker zurücksetzen
-rm -f "${USER_HOME}/.local/share/nobara-provision/first-login.done"
+rm -f "${USER_HOME}/.local/share/fedora-provision/first-login.done"
 
 if [[ "$PROFILE" =~ ^(theme-bash)$ ]]; then
     # GUI-Profile: GNOME-Autostart
     AUTOSTART_DIR="${USER_HOME}/.config/autostart"
     mkdir -p "$AUTOSTART_DIR"
-    cat > "${AUTOSTART_DIR}/nobara-first-login.desktop" <<DESKTOPEOF
+    cat > "${AUTOSTART_DIR}/fedora-first-login.desktop" <<DESKTOPEOF
 [Desktop Entry]
 Type=Application
-Name=Nobara First-Login Setup
-Exec=/usr/local/bin/nobara-first-login.sh
+Name=Fedora First-Login Setup
+Exec=/usr/local/bin/fedora-first-login.sh
 Hidden=false
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
@@ -169,12 +169,12 @@ DESKTOPEOF
     log "GNOME-Autostart für '${TARGET_USER}' eingerichtet"
 else
     # Headless-Profile: systemd User-Service
-    cat > /etc/systemd/system/nobara-provision-user.service <<USRUNITEOF
+    cat > /etc/systemd/system/fedora-provision-user.service <<USRUNITEOF
 [Unit]
-Description=Nobara User Provisioning (${PROFILE})
-After=nobara-first-boot.service network-online.target
-Requires=nobara-first-boot.service
-ConditionPathExists=!${USER_HOME}/.local/share/nobara-provision/first-login.done
+Description=Fedora User Provisioning (${PROFILE})
+After=fedora-first-boot.service network-online.target
+Requires=fedora-first-boot.service
+ConditionPathExists=!${USER_HOME}/.local/share/fedora-provision/first-login.done
 
 [Service]
 Type=oneshot
@@ -182,8 +182,8 @@ RemainAfterExit=yes
 User=${TARGET_USER}
 Group=${TARGET_USER}
 Environment=HOME=${USER_HOME}
-EnvironmentFile=-/etc/nobara-provision.env
-ExecStart=/usr/local/bin/nobara-first-login.sh
+EnvironmentFile=-/etc/fedora-provision.env
+ExecStart=/usr/local/bin/fedora-first-login.sh
 StandardOutput=journal
 StandardError=journal
 TimeoutStartSec=7200
@@ -191,8 +191,8 @@ TimeoutStartSec=7200
 [Install]
 WantedBy=multi-user.target
 USRUNITEOF
-    systemctl enable nobara-provision-user.service
-    log "nobara-provision-user.service aktiviert"
+    systemctl enable fedora-provision-user.service
+    log "fedora-provision-user.service aktiviert"
 fi
 
 # ── Flatpak Flathub (GUI-Profile) ─────────────────────────────────────────────
@@ -204,8 +204,8 @@ fi
 # ── Sofort starten (optional) ─────────────────────────────────────────────────
 if [[ "$RUN_NOW" == "1" ]]; then
     step "First-Boot sofort starten"
-    systemctl start nobara-first-boot.service
-    log "first-boot gestartet — Logs: journalctl -fu nobara-first-boot.service"
+    systemctl start fedora-first-boot.service
+    log "first-boot gestartet — Logs: journalctl -fu fedora-first-boot.service"
 else
     echo ""
     log "Einrichtung abgeschlossen."
@@ -214,6 +214,6 @@ else
     echo -e "    Neu starten  →  Provisionierung startet automatisch"
     echo ""
     echo -e "  ${BOLD}Oder sofort starten:${RESET}"
-    echo -e "    sudo systemctl start nobara-first-boot.service"
-    echo -e "    journalctl -fu nobara-first-boot.service"
+    echo -e "    sudo systemctl start fedora-first-boot.service"
+    echo -e "    journalctl -fu fedora-first-boot.service"
 fi

@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Nobara Auto-Install Configuration
+  Fedora Auto-Install Configuration
   ──────────────────────────────────
   Generate password hash:
     openssl passwd minus-six yourpassword
   Validate this file:
     python3 lib/xml2ks.py validate-only config/example.xml
   Generate Kickstart:
-    python3 lib/xml2ks.py config config/example.xml output kickstart/nobara-autoinstall.ks
+    python3 lib/xml2ks.py config config/example.xml output kickstart/fedora-autoinstall.ks
 -->
-<nobara-install>
+<fedora-install>
 
   <!-- ── ISO source ──────────────────────────────────────────────────────── -->
   <iso>
@@ -27,7 +27,7 @@
   </partitioning>
 
   <!-- ── System locale ───────────────────────────────────────────────────── -->
-  <hostname>nobara-workstation</hostname>
+  <hostname>fedora-workstation</hostname>
   <timezone>Europe/Berlin</timezone>
   <locale>de_DE.UTF-8</locale>
   <keyboard>de</keyboard>
@@ -58,8 +58,8 @@
 
   <!-- ── First-boot provisioning (runs as root, exactly once) ───────────── -->
   <first-boot>
-    <!-- Run nobara-sync to update all Nobara-specific packages -->
-    <nobara-sync enabled="true"/>
+    <!-- Run fedora-sync to update all Fedora-specific packages -->
+    <fedora-sync enabled="true"/>
 
     <!-- Install/update NVIDIA Open Kernel Module driver -->
     <!-- Supported: Turing (RTX 20xx), Ampere (RTX 30xx), Ada (RTX 40xx), Blackwell (RTX 50xx) -->
@@ -67,8 +67,8 @@
     <nvidia-open enabled="true"/>
 
     <!-- Install CUDA toolkit -->
-    <cuda enabled="true" source="nobara"/>
-    <!-- source="nobara"  → use Nobara/Fedora dnf repos (preferred)  -->
+    <cuda enabled="true" source="fedora"/>
+    <!-- source="fedora"  → use Fedora/Fedora dnf repos (preferred)  -->
     <!-- source="nvidia"  → use official NVIDIA CUDA repo             -->
   </first-boot>
 
@@ -119,4 +119,4 @@
 
   </first-login>
 
-</nobara-install>
+</fedora-install>

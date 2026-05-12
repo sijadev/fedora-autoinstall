@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 # scripts/first-boot.sh — System-wide one-shot provisioning (runs as root via systemd)
 #
-# Executed by nobara-first-boot.service exactly once after the first boot.
-# Marker: /var/lib/nobara-provision/first-boot.done
+# Executed by fedora-first-boot.service exactly once after the first boot.
+# Marker: /var/lib/fedora-provision/first-boot.done
 #
 # Tasks:
-#   1. nobara-sync
+#   1. fedora-sync
 #   2. NVIDIA Open Driver update
-#   3. CUDA installation (Nobara/Fedora or NVIDIA repo)
+#   3. CUDA installation (Fedora/Fedora or NVIDIA repo)
 #   4. Set system-wide CUDA environment variables
 
 set -euo pipefail
 
-MARKER_DIR="/var/lib/nobara-provision"
+MARKER_DIR="/var/lib/fedora-provision"
 MARKER_FILE="$MARKER_DIR/first-boot.done"
-LOG_FILE="/var/log/nobara-first-boot.log"
-ENV_FILE="/etc/nobara-provision.env"
+LOG_FILE="/var/log/fedora-first-boot.log"
+ENV_FILE="/etc/fedora-provision.env"
 CUDA_ENV_FILE="/etc/profile.d/cuda.sh"
 
 exec > >(tee -a "$LOG_FILE") 2>&1
@@ -40,7 +40,7 @@ if [[ -f "$ENV_FILE" ]]; then
     source "$ENV_FILE"
 fi
 
-INSTALL_PROFILE="${NOBARA_INSTALL_PROFILE:-full}"
+INSTALL_PROFILE="${FEDORA_INSTALL_PROFILE:-full}"
 log "Install profile: ${INSTALL_PROFILE}"
 
 # ── 0. Theme-Abhängigkeiten vorinstallieren (verhindert sudo-Prompts in first-login) ──
@@ -51,14 +51,14 @@ if [[ "$INSTALL_PROFILE" =~ ^(full|theme-bash)$ ]]; then
         || warn "Theme deps/extensions install failed (non-fatal)."
 fi
 
-# ── 1. nobara-sync ────────────────────────────────────────────────────────────
-step "nobara-sync"
-if command -v nobara-sync &>/dev/null; then
-    log "Running nobara-sync..."
-    nobara-sync install-updates || die "nobara-sync failed."
-    log "nobara-sync completed."
+# ── 1. fedora-sync ────────────────────────────────────────────────────────────
+step "fedora-sync"
+if command -v fedora-sync &>/dev/null; then
+    log "Running fedora-sync..."
+    fedora-sync install-updates || die "fedora-sync failed."
+    log "fedora-sync completed."
 else
-    warn "nobara-sync not found; skipping."
+    warn "fedora-sync not found; skipping."
 fi
 
 # ── 2. NVIDIA Open Driver ─────────────────────────────────────────────────────
@@ -109,16 +109,16 @@ elif ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
     warn "No NVIDIA GPU detected — skipping CUDA installation (VM or non-NVIDIA system)."
 else
 
-CUDA_SOURCE="${NOBARA_CUDA_SOURCE:-nobara}"
+CUDA_SOURCE="${FEDORA_CUDA_SOURCE:-fedora}"
 
-install_cuda_nobara() {
-    log "Installing CUDA from Nobara/Fedora repos..."
-    # Nobara packages: 'cuda' (toolkit), 'cuda-cudart-devel' (dev headers)
-    # Note: 'cuda-toolkit' does not exist in Nobara repos (use 'cuda' instead)
+install_cuda_fedora() {
+    log "Installing CUDA from Fedora/Fedora repos..."
+    # Fedora packages: 'cuda' (toolkit), 'cuda-cudart-devel' (dev headers)
+    # Note: 'cuda-toolkit' does not exist in Fedora repos (use 'cuda' instead)
     dnf install -y \
         cuda \
         cuda-cudart-devel \
-        || die "CUDA installation from Nobara/Fedora repos failed."
+        || die "CUDA installation from Fedora/Fedora repos failed."
 }
 
 install_cuda_nvidia_repo() {
@@ -140,7 +140,7 @@ install_cuda_nvidia_repo() {
 }
 
 case "$CUDA_SOURCE" in
-    nobara|fedora) install_cuda_nobara   ;;
+    fedora|fedora) install_cuda_fedora   ;;
     nvidia)        install_cuda_nvidia_repo ;;
     *)             die "Unknown cuda source: $CUDA_SOURCE" ;;
 esac
@@ -164,7 +164,7 @@ log "CUDA version: $CUDA_VERSION_INSTALLED"
 step "CUDA environment variables"
 
 cat > "$CUDA_ENV_FILE" <<ENVEOF
-# Nobara Auto-Install: CUDA environment — managed by nobara-first-boot.sh
+# Fedora Auto-Install: CUDA environment — managed by fedora-first-boot.sh
 export CUDA_HOME="${CUDA_HOME_DETECTED}"
 export PATH="\${CUDA_HOME}/bin\${PATH:+:\$PATH}"
 export LD_LIBRARY_PATH="\${CUDA_HOME}/lib64\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
