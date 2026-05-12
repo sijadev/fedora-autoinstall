@@ -165,7 +165,7 @@ KVM/QEMU-Gast, virtio-Disk (`vda`). Wird vom Podman-Smoke-Gate genutzt.
 ```xml
 <fedora-install>
   <iso>
-    <url>https://…/Fedora-43-GNOME-NV-2026-04-25.iso</url>
+    <url>https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/iso/Fedora-Everything-netinst-x86_64-43-1.6.iso</url>
     <sha256>abc123…</sha256>          <!-- optional, aber empfohlen -->
   </iso>
 
