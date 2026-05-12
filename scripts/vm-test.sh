@@ -7,7 +7,7 @@
 #                              [m] VM-Test Profil per Hotkey auswählen, Anaconda läuft durch
 #   vm-test.sh snapshot        Snapshot "base-nobara" nach erfolgreicher Installation anlegen
 #   vm-test.sh test <profil>   Snapshot zurücksetzen + Provisioner ausführen
-#                              Profil: theme-bash | vllm-only | headless-vllm
+#                              Profil: theme-bash | headless-vllm
 #   vm-test.sh status          VM-Status und IP anzeigen
 #   vm-test.sh ssh             In laufende VM einloggen
 #   vm-test.sh destroy         VM und Disk-Image löschen
@@ -356,11 +356,11 @@ cmd_snapshot() {
 
 cmd_test() {
     local profile="${1:-}"
-    [[ -z "$profile" ]] && die "Profil fehlt. Erlaubt: theme-bash | vllm-only | headless-vllm"
+    [[ -z "$profile" ]] && die "Profil fehlt. Erlaubt: theme-bash | headless-vllm"
 
     case "$profile" in
-        theme-bash|vllm-only|headless-vllm) ;;
-        *) die "Unbekanntes Profil: '$profile'. Erlaubt: theme-bash | vllm-only | headless-vllm" ;;
+        theme-bash|headless-vllm) ;;
+        *) die "Unbekanntes Profil: '$profile'. Erlaubt: theme-bash | headless-vllm" ;;
     esac
 
     # Log-Datei — ZUERST öffnen damit alle Ausgaben erfasst werden
@@ -475,7 +475,7 @@ XMLEOF
     [[ $boot_done -eq 1 ]] && log "First-Boot abgeschlossen."
 
     # ── First-Login ausführen (Themes, Oh-My-Bash, GNOME Extensions) ─────────
-    if [[ "$profile" =~ ^(theme-bash|vllm-only)$ ]]; then
+    if [[ "$profile" == "theme-bash" ]]; then
         step "First-Login: Themes + Oh-My-Bash installieren"
         log "Starte nobara-first-login.sh als User '${VM_USER}' ..."
         $SSH "$VM_USER@$ip" \
@@ -514,7 +514,7 @@ echo '  Wallpaper:' \$(gsettings get org.gnome.desktop.background picture-uri 2>
 " 2>/dev/null || true
         test_passed=1
 
-    elif [[ "$profile" =~ ^(vllm-only|headless-vllm)$ ]]; then
+    elif [[ "$profile" == "headless-vllm" ]]; then
         # AI-Profil: Grundvalidierung (venv, PyTorch, kein ERROR im Log)
         # vLLM curl-Test folgt mit headless-vllm + Podman
         step "Validierung: AI-Profil Grundcheck"

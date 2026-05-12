@@ -65,14 +65,14 @@ OMB_THEME="${NOBARA_OMB_THEME:-modern}"
 THEMES_DIR="${HOME}/.cache/nobara-themes-build"
 
 # ── Profile: headless profiles skip all GUI steps ────────────────────────────
-if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
+if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
     step "Headless profile (${INSTALL_PROFILE}) — skipping GUI provisioning"
     log "GNOME steps 1-5 skipped. Oh-My-Bash + AI steps will run via systemd service."
 fi
 
 # ── 1. Flatpak Extension Manager ──────────────────────────────────────────────
 step "Flatpak Extension Manager"
-if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
+if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
     log "Skipped (headless profile)."
 elif ! flatpak list --user 2>/dev/null | grep -q 'com.mattjakeman.ExtensionManager'; then
     log "Installing Extension Manager..."
@@ -84,7 +84,7 @@ fi
 
 # ── 2. GNOME extensions aktivieren ───────────────────────────────────────────
 step "GNOME extensions"
-if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
+if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
     log "Skipped (headless profile)."
 else
     EXTENSIONS=(
@@ -144,7 +144,7 @@ fi
 
 # ── 3-5. WhiteSur themes ──────────────────────────────────────────────────
 step "WhiteSur themes"
-if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
+if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
     log "Skipped (headless profile)."
 else
 
@@ -303,7 +303,6 @@ if [[ "$INSTALL_PROFILE" == "theme-bash" ]]; then
 fi
 
 # ── Profile: headless-vllm skips direct vLLM (handled via Podman) ────────────
-# vllm-only installs vLLM directly; headless-vllm relies on Podman pipeline.
 if [[ "$INSTALL_PROFILE" == "headless-vllm" ]]; then
     step "headless-vllm profile — skipping direct vLLM (Podman pipeline handles it)"
     log "vLLM steps 7-11 skipped. Model download still runs to cache locally."

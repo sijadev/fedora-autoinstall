@@ -7,11 +7,10 @@
 #
 # Nutzung:
 #   sudo bash /run/media/$USER/Ventoy/nobara-provision.sh --profile theme-bash
-#   sudo bash /run/media/$USER/Ventoy/nobara-provision.sh --profile vllm-only
 #   sudo bash /run/media/$USER/Ventoy/nobara-provision.sh --profile headless-vllm
 #
 # Optionen:
-#   --profile   theme-bash | vllm-only | headless-vllm  (erforderlich)
+#   --profile   theme-bash | headless-vllm  (erforderlich)
 #   --user      Ziel-Benutzer (Standard: $SUDO_USER)
 #   --run-now   first-boot sofort starten statt nur einrichten
 
@@ -49,7 +48,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-[[ -z "$PROFILE" ]] && die "--profile fehlt. Erlaubt: theme-bash | vllm-only | headless-vllm"
+[[ -z "$PROFILE" ]] && die "--profile fehlt. Erlaubt: theme-bash | headless-vllm"
 [[ "$EUID" -ne 0 ]] && die "Bitte als root ausführen: sudo bash $0 --profile $PROFILE"
 id "$TARGET_USER" &>/dev/null || die "Benutzer nicht gefunden: $TARGET_USER"
 
@@ -71,17 +70,7 @@ NOBARA_CUDA_SOURCE="nobara"
 ENVEOF
         ;;
     vllm-only)
-        cat > /etc/nobara-provision.env <<ENVEOF
-NOBARA_INSTALL_PROFILE="vllm-only"
-NOBARA_TARGET_USER="${TARGET_USER}"
-NOBARA_PYTORCH_VENV="~/.venvs/ai"
-NOBARA_VLLM_VENV="~/.venvs/bitwig-omni"
-NOBARA_VLLM_CUDA_VERSION="13.2"
-NOBARA_VLLM_ARCH_LIST="12.0"
-NOBARA_AGENT_MODEL="Qwen/Qwen3-14B-AWQ"
-NOBARA_OMB_THEME="modern"
-NOBARA_CUDA_SOURCE="nobara"
-ENVEOF
+        die "Profil 'vllm-only' wurde entfernt (keine GPU-Unterstützung ohne NVIDIA). Verwende 'headless-vllm'."
         ;;
     headless-vllm)
         cat > /etc/nobara-provision.env <<ENVEOF
@@ -95,7 +84,7 @@ NOBARA_CUDA_SOURCE="nobara"
 ENVEOF
         ;;
     *)
-        die "Unbekanntes Profil: '${PROFILE}'. Erlaubt: theme-bash | vllm-only | headless-vllm"
+        die "Unbekanntes Profil: '${PROFILE}'. Erlaubt: theme-bash | headless-vllm"
         ;;
 esac
 
@@ -163,7 +152,7 @@ step "First-Login einrichten"
 # Alten first-login-Marker zurücksetzen
 rm -f "${USER_HOME}/.local/share/nobara-provision/first-login.done"
 
-if [[ "$PROFILE" =~ ^(theme-bash|vllm-only)$ ]]; then
+if [[ "$PROFILE" =~ ^(theme-bash)$ ]]; then
     # GUI-Profile: GNOME-Autostart
     AUTOSTART_DIR="${USER_HOME}/.config/autostart"
     mkdir -p "$AUTOSTART_DIR"
@@ -207,7 +196,7 @@ USRUNITEOF
 fi
 
 # ── Flatpak Flathub (GUI-Profile) ─────────────────────────────────────────────
-if [[ "$PROFILE" =~ ^(theme-bash|vllm-only)$ ]]; then
+if [[ "$PROFILE" =~ ^(theme-bash)$ ]]; then
     flatpak remote-add --if-not-exists flathub \
         https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
 fi

@@ -215,7 +215,7 @@ fi
 log_step "Provisioner + Scripts deployment to Ventoy"
 
 if [[ "$DRY_RUN" != "1" ]]; then
-    # nobara-provision.sh — für bestehende Systeme (theme-bash, vllm-only, headless-vllm)
+    # nobara-provision.sh — für bestehende Systeme (theme-bash, headless-vllm)
     cp "$SCRIPT_DIR/nobara-provision.sh" "$VENTOY_MNT/nobara-provision.sh"
     chmod +x "$VENTOY_MNT/nobara-provision.sh"
     log_info "Provisioner deployed: nobara-provision.sh"

@@ -14,10 +14,6 @@
                 {
                     "path": "/kickstart/nobara-headless-vllm.ks",
                     "tip": "Headless Podman + vLLM API (kein GUI, NVIDIA + Podman, vLLM als Dienst)"
-                },
-                {
-                    "path": "/kickstart/nobara-vllm-only.ks",
-                    "tip": "Nur vLLM direkt            (kein GUI, kein Podman, Python venv + vLLM API)"
                 }
             ]
         }

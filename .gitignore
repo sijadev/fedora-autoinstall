@@ -14,6 +14,7 @@ kickstart/nobara-autoinstall.ks
 
 # Downloaded ISOs (large binary, not for git)
 iso/
+test-results/
 
 # ── Runtime state ─────────────────────────────────────────────────────────────
 .state/

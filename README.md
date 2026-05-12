@@ -36,7 +36,6 @@ nobara-install/
 │   ├── nobara-full.ks         # Profil: Vollinstallation (GNOME + NVIDIA + AI)
 │   ├── nobara-theme-bash.ks   # Profil: GNOME + WhiteSur, kein AI
 │   ├── nobara-headless-vllm.ks# Profil: Kein GUI, Podman + vLLM als Dienst
-│   ├── nobara-vllm-only.ks    # Profil: Kein GUI, Python venv + vLLM
 │   ├── nobara-vm.ks           # Profil: VM (KVM/QEMU, vda)
 │   └── common-post.inc        # Gemeinsamer %post-Block (alle Profile)
 │
@@ -107,7 +106,6 @@ Zwei grundlegend verschiedene Mechanismen:
 | `full` | ISO-Boot → Anaconda → frisches System | Neues System / Festplatte leer |
 | `theme-bash` | `nobara-provision.sh` auf laufendem System | Nobara bereits installiert |
 | `headless-vllm` | `nobara-provision.sh` auf laufendem System | Nobara bereits installiert |
-| `vllm-only` | `nobara-provision.sh` auf laufendem System | Nobara bereits installiert |
 
 #### Profil `full` — Frische Installation per ISO
 
@@ -120,7 +118,6 @@ Disk-Override (falls nicht die größte interne Disk gewählt werden soll): Im G
 inst.disk=nvme1n1
 ```
 
-#### Profile `theme-bash`, `headless-vllm`, `vllm-only` — Bestehende Installation
 
 USB-Stick einstecken, im laufenden Nobara ausführen:
 
@@ -132,7 +129,6 @@ sudo bash /run/media/$USER/Ventoy/nobara-provision.sh --profile theme-bash
 sudo bash /run/media/$USER/Ventoy/nobara-provision.sh --profile headless-vllm
 
 # NVIDIA + CUDA + vLLM direkt im Python venv
-sudo bash /run/media/$USER/Ventoy/nobara-provision.sh --profile vllm-only
 ```
 
 Für einen anderen Benutzer:
@@ -142,7 +138,6 @@ sudo bash /run/media/$USER/Ventoy/nobara-provision.sh --profile theme-bash --use
 
 Sofort starten statt beim nächsten Boot:
 ```bash
-sudo bash /run/media/$USER/Ventoy/nobara-provision.sh --profile vllm-only --run-now
 ```
 
 ---
@@ -158,7 +153,6 @@ Auf bestehendem Nobara: WhiteSur GTK/Icon/Wallpaper-Themes, Oh-My-Bash. NVIDIA O
 ### `headless-vllm` — Podman + vLLM (Provisioner)
 Auf bestehendem Nobara: NVIDIA Open Driver, CUDA, Podman-Pipeline mit vLLM als systemd-Dienst. Kein Anaconda-GUI nötig.
 
-### `vllm-only` — Python venv + vLLM (Provisioner)
 Auf bestehendem Nobara: NVIDIA Open Driver, CUDA, vLLM direkt im Python venv als systemd-Dienst. Kein Podman.
 
 ### `vm` — VM (intern)
@@ -325,7 +319,6 @@ Folgende Fehler wurden identifiziert und behoben. Ohne diese Fixes startet die I
 **Dateien:** `kickstart/nobara-full.ks`, `kickstart/nobara-theme-bash.ks`  
 **Symptom:** Anaconda startet im TUI-Modus statt im grafischen Installer.  
 **Ursache:** Die Kickstart-Direktive `text` erzwingt Text-Modus, unabhängig vom Kernel-Parameter.  
-**Fix:** `text` → `graphical` in den beiden GUI-Profilen. Headless-Profile (`headless-vllm`, `vllm-only`) behalten `text` — dort ist kein Display vorhanden.
 
 ---
 
