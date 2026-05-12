@@ -111,6 +111,13 @@ NOBARA_CUDA_SOURCE="nobara"
 ENVEOF
 chmod 0644 /etc/nobara-provision.env
 
+# ── GDM Autologin ─────────────────────────────────────────────────────────────
+cat > /etc/gdm/custom.conf <<'GDMEOF'
+[daemon]
+AutomaticLoginEnable=True
+AutomaticLogin=sija
+GDMEOF
+
 %end
 
 %include /kickstart/common-post.inc

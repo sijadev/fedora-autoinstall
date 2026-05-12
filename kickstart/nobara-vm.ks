@@ -89,6 +89,13 @@ NOBARA_OMB_THEME="modern"
 ENVEOF
 chmod 0644 /etc/nobara-provision.env
 
+# ── GDM Autologin ─────────────────────────────────────────────────────────────
+cat > /etc/gdm/custom.conf <<'GDMEOF'
+[daemon]
+AutomaticLoginEnable=True
+AutomaticLogin=sija
+GDMEOF
+
 # ── Write first-boot script ───────────────────────────────────────────────────
 cat > /usr/local/sbin/nobara-first-boot.sh <<'FBEOF'
 #!/usr/bin/env bash
