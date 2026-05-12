@@ -27,7 +27,7 @@ VM_DISK_GB=80
 VM_STORAGE_DIR="/home/sija/VMs"
 VM_DISK="${VM_STORAGE_DIR}/${VM_NAME}.qcow2"
 VM_SNAPSHOT="nobara43-default"
-VM_USER="test"
+VM_USER="sija"
 VM_PASS="test123"
 VM_OS_VARIANT="fedora43"
 
@@ -44,7 +44,7 @@ VENTOY_USB_PRODUCT="6545"
 export LIBVIRT_DEFAULT_URI="qemu:///system"
 
 SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o LogLevel=ERROR"
-SSH_TIMEOUT=300  # Sekunden bis VM SSH-bereit ist (GNOME-Boot ~2-3 min)
+SSH_TIMEOUT=600  # Sekunden bis VM SSH-bereit ist (Erstboot mit first-boot-service ~5-8 min)
 # sshpass für Passwort-basiertes SSH (Test-VM)
 SSH="sshpass -p ${VM_PASS:-test123} ssh $SSH_OPTS"
 
@@ -341,6 +341,75 @@ XMLEOF
     fi
 }
 
+cmd_base() {
+    step "Neuen Base-Snapshot aus nobara-install-test ableiten"
+
+    local install_vm="nobara-install-test"
+    local install_snapshot="base-fedora43"
+    local install_disk="${VM_STORAGE_DIR}/${install_vm}.qcow2"
+    local install_nvram="${VM_STORAGE_DIR}/${install_vm}-OVMF_VARS.fd"
+
+    # Voraussetzungen prüfen
+    virsh dominfo "$install_vm" &>/dev/null || \
+        die "VM '${install_vm}' nicht gefunden. Erst './vm-test.sh install' ausführen."
+    virsh snapshot-info "$install_vm" "$install_snapshot" &>/dev/null || \
+        die "Snapshot '${install_snapshot}' fehlt auf '${install_vm}'. 'install' nochmal ausführen."
+
+    # 1. install_vm stoppen
+    if virsh domstate "$install_vm" 2>/dev/null | grep -qE "running|laufend"; then
+        log "Stoppe ${install_vm} ..."
+        virsh shutdown "$install_vm" &>/dev/null || true
+        local i=0
+        while virsh domstate "$install_vm" 2>/dev/null | grep -qE "running|laufend" && (( i < 20 )); do
+            sleep 2; i=$(( i + 1 ))
+        done
+        virsh domstate "$install_vm" 2>/dev/null | grep -qE "running|laufend" && \
+            virsh destroy "$install_vm" &>/dev/null || true
+    fi
+
+    # 2. Alte fedora43-VM ZUERST entfernen (gibt USB-Gerät frei)
+    if vm_exists; then
+        log "Entferne alte VM '${VM_NAME}' ..."
+        vm_is_running && virsh destroy "$VM_NAME" &>/dev/null || true
+        virsh undefine "$VM_NAME" --snapshots-metadata --nvram 2>/dev/null || \
+            virsh undefine "$VM_NAME" --snapshots-metadata
+        [[ -f "$VM_DISK" ]]      && rm -f "$VM_DISK"      && log "Gelöscht: $VM_DISK"
+        [[ -f "$OVMF_VARS_VM" ]] && rm -f "$OVMF_VARS_VM" && log "Gelöscht: $OVMF_VARS_VM"
+        rm -f "/var/lib/libvirt/images/${VM_NAME}.qcow2" 2>/dev/null || true
+    fi
+
+    # 3. Zum Post-Install-Snapshot zurückkehren (Provisioning verwerfen)
+    log "Revertiere ${install_vm} → ${install_snapshot} ..."
+    virsh snapshot-revert "$install_vm" "$install_snapshot"
+    virsh snapshot-delete "$install_vm" "$install_snapshot"
+    # Overlay-Datei entfernen (nach Revert nicht mehr aktiv)
+    find "${VM_STORAGE_DIR}" -maxdepth 1 -name "${install_vm}.*" \
+        ! -name "*.qcow2" ! -name "*.fd" -delete 2>/dev/null || true
+
+    # 4. VM umbenennen: nobara-install-test → fedora43
+    log "Benenne ${install_vm} → ${VM_NAME} um ..."
+    virsh domrename "$install_vm" "$VM_NAME"
+
+    # 5. Disk- und NVRAM-Pfade in der XML-Konfiguration aktualisieren
+    log "Aktualisiere VM-Konfiguration (Disk, NVRAM) ..."
+    virsh dumpxml "$VM_NAME" > /tmp/${VM_NAME}-base.xml
+    sed -i "s|${install_disk}|${VM_DISK}|g"    /tmp/${VM_NAME}-base.xml
+    sed -i "s|${install_nvram}|${OVMF_VARS_VM}|g" /tmp/${VM_NAME}-base.xml
+    virsh define /tmp/${VM_NAME}-base.xml
+    rm -f /tmp/${VM_NAME}-base.xml
+
+    # 6. Dateien umbenennen (auf btrfs: sofort, kein Kopieren)
+    mv "$install_disk" "$VM_DISK"
+    mv "$install_nvram" "$OVMF_VARS_VM"
+    log "Disk: ${VM_DISK}"
+    log "NVRAM: ${OVMF_VARS_VM}"
+
+    virsh pool-refresh nobara-vms &>/dev/null || true
+
+    # 7. Snapshot anlegen
+    cmd_snapshot
+}
+
 cmd_snapshot() {
     step "Snapshot anlegen: ${VM_SNAPSHOT}"
 
@@ -439,7 +508,7 @@ XMLEOF
             "findmnt -rno TARGET LABEL=Ventoy 2>/dev/null" || true)
         [[ $mount_waited -gt 60 ]] && {
             log "Automount nicht verfügbar — mounte manuell..."
-            $SSH "$VM_USER@$ip" "sudo mkdir -p /run/media/${VM_USER}/Ventoy && sudo mount /dev/sda1 /run/media/${VM_USER}/Ventoy 2>/dev/null" || true
+            $SSH "$VM_USER@$ip" "echo '${VM_PASS}' | sudo -S bash -c 'mkdir -p /run/media/${VM_USER}/Ventoy && mount /dev/sda1 /run/media/${VM_USER}/Ventoy' 2>/dev/null" || true
             ventoy_path="/run/media/${VM_USER}/Ventoy"
         }
     done
@@ -456,7 +525,7 @@ XMLEOF
     # ── Provisioner ausführen ─────────────────────────────────────────────────
     log "Starte nobara-provision.sh --profile ${profile} ..."
     $SSH "$VM_USER@$ip" \
-        "sudo bash '${ventoy_path}/nobara-provision.sh' --profile '${profile}' --run-now" \
+        "echo '${VM_PASS}' | sudo -S bash '${ventoy_path}/nobara-provision.sh' --profile '${profile}' --run-now" \
         || warn "Provisioner abgebrochen oder mit Fehler beendet — Logs prüfen"
 
     # ── First-Boot Logs abwarten ──────────────────────────────────────────────
@@ -467,8 +536,8 @@ XMLEOF
         sleep 5; boot_waited=$((boot_waited + 5))
         if $SSH "$VM_USER@$ip" "test -f /var/lib/nobara-provision/first-boot.done" 2>/dev/null; then
             boot_done=1
-        elif [[ $boot_waited -gt 300 ]]; then
-            warn "First-Boot nicht abgeschlossen nach 300s."
+        elif [[ $boot_waited -gt 600 ]]; then
+            warn "First-Boot nicht abgeschlossen nach 600s."
             break
         fi
     done
@@ -479,7 +548,7 @@ XMLEOF
         step "First-Login: Themes + Oh-My-Bash installieren"
         log "Starte nobara-first-login.sh als User '${VM_USER}' ..."
         $SSH "$VM_USER@$ip" \
-            "bash /usr/local/bin/nobara-first-login.sh 2>&1" \
+            "DBUS_SESSION_BUS_ADDRESS='unix:path=/run/user/\$(id -u)/bus' bash /usr/local/bin/nobara-first-login.sh 2>&1" \
             | while IFS= read -r line; do log "  first-login: $line"; done || \
             warn "First-Login mit Fehler beendet — Logs prüfen"
         log "First-Login abgeschlossen."
@@ -628,6 +697,7 @@ shift || true
 case "$COMMAND" in
     create)   cmd_create   ;;
     install)  cmd_install  ;;
+    base)     cmd_base     ;;
     snapshot) cmd_snapshot ;;
     test)     cmd_test "$@" ;;
     status)   cmd_status   ;;
@@ -637,6 +707,6 @@ case "$COMMAND" in
         grep '^#' "$0" | head -20 | sed 's/^# \?//'
         ;;
     *)
-        die "Unbekannter Befehl: '$COMMAND'. Erlaubt: create | snapshot | test | status | ssh | destroy"
+        die "Unbekannter Befehl: '$COMMAND'. Erlaubt: create | install | base | snapshot | test | status | ssh | destroy"
         ;;
 esac
