@@ -223,8 +223,13 @@ ws_install_theme \
 walls_dir="${THEMES_DIR}/WhiteSur-wallpapers"
 log "WhiteSur: WhiteSur-wallpapers"
 mkdir -p "$THEMES_DIR"
-git clone --depth=1 "https://github.com/vinceliuice/WhiteSur-wallpapers.git" "$walls_dir" 2>&1 | \
-    while read -r l; do log "  git: $l"; done || { WHITESUR_ERRORS+=("WhiteSur-wallpapers: clone failed"); }
+if [[ -d "${walls_dir}/.git" ]]; then
+    git -C "$walls_dir" pull --ff-only 2>&1 | while read -r l; do log "  git: $l"; done || \
+        warn "  git pull failed for wallpapers (continuing)."
+else
+    git clone --depth=1 "https://github.com/vinceliuice/WhiteSur-wallpapers.git" "$walls_dir" 2>&1 | \
+        while read -r l; do log "  git: $l"; done || { WHITESUR_ERRORS+=("WhiteSur-wallpapers: clone failed"); }
+fi
 if [[ -x "${walls_dir}/install-gnome-backgrounds.sh" ]]; then
     (cd "$walls_dir" && bash install-gnome-backgrounds.sh $WS_WALL_ARGS) 2>&1 | \
         while read -r l; do log "  install: $l"; done \
