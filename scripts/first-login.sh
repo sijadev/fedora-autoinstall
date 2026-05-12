@@ -188,10 +188,15 @@ ws_install_theme() {
     fi
 
     # shellcheck disable=SC2086
-    if (cd "$install_dir" && bash "./install.sh" $install_dest_flag $args_var) 2>&1 | \
-           while read -r l; do log "  install: $l"; done; then
+    local _tmpout
+    _tmpout=$(mktemp)
+    if (cd "$install_dir" && bash "./install.sh" $install_dest_flag $args_var) >"$_tmpout" 2>&1; then
+        while IFS= read -r l; do log "  install: $l"; done < "$_tmpout"
+        rm -f "$_tmpout"
         log "  $repo_name installed successfully."
     else
+        while IFS= read -r l; do log "  install: $l"; done < "$_tmpout"
+        rm -f "$_tmpout"
         WHITESUR_ERRORS+=("$repo_name: install.sh exited with error")
     fi
 }
