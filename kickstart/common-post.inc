@@ -455,6 +455,7 @@ Hidden=false
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
 DESKTOPEOF
+    chown "${TARGET_USER}:${TARGET_USER}" "${USER_HOME}/.config"
     chown -R "${TARGET_USER}:${TARGET_USER}" "$AUTOSTART_DIR"
     echo "[common-post] GNOME autostart configured for ${TARGET_USER}"
 else

@@ -240,10 +240,7 @@ ws_install_theme \
     ""
 
 # GNOME theme + Wallpaper anwenden
-_dbus_addr=$(cat /proc/$(pgrep -u "$USER" gnome-session | head -1)/environ 2>/dev/null \
-    | tr '\0' '\n' | grep DBUS_SESSION_BUS_ADDRESS | cut -d= -f2- || true)
-[[ -z "$_dbus_addr" ]] && _dbus_addr="${DBUS_SESSION_BUS_ADDRESS:-}"
-
+_dbus_addr="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}"
 gs() { DBUS_SESSION_BUS_ADDRESS="$_dbus_addr" gsettings "$@" 2>/dev/null || true; }
 
 if command -v gsettings &>/dev/null; then

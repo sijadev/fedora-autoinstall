@@ -697,6 +697,7 @@ Hidden=false
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
 DESKTOPEOF
+chown sija:sija "$USER_HOME/.config"
 chown -R sija:sija "$AUTOSTART_DIR"
 
 %end
