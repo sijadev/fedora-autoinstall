@@ -89,6 +89,10 @@ NOBARA_OMB_THEME="modern"
 ENVEOF
 chmod 0644 /etc/nobara-provision.env
 
+# ── Passwordless sudo für Test-VM (kein interaktives Passwort via SSH) ────────
+echo 'sija ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/99-sija-nopasswd
+chmod 0440 /etc/sudoers.d/99-sija-nopasswd
+
 # ── GDM Autologin ─────────────────────────────────────────────────────────────
 cat > /etc/gdm/custom.conf <<'GDMEOF'
 [daemon]
@@ -376,11 +380,8 @@ ws_install_theme() {
             }
     fi
 
-    # Determine install arguments
+    # Determine install arguments — skip interactive prompt (run with defaults if empty)
     local args_var="$extra_args"
-    if [[ -z "$args_var" ]]; then
-        read -r -p "  Enter install.sh args for ${repo_name} (Enter to skip): " args_var || true
-    fi
 
     # Run installer
     local install_sh="${install_dir}/install.sh"
@@ -390,9 +391,16 @@ ws_install_theme() {
     fi
 
     # shellcheck disable=SC2086
-    if bash "$install_sh" $install_dest_flag $args_var 2>&1 |  while read -r l; do log "  install: $l"; done; then
+    # TERM=xterm: setterm inside install.sh fails with TERM=dumb/unset (no TTY in %post), exiting non-zero
+    local _tmpout
+    _tmpout=$(mktemp)
+    if TERM=xterm bash "$install_sh" $install_dest_flag $args_var >"$_tmpout" 2>&1; then
+        while IFS= read -r l; do log "  install: $l"; done < "$_tmpout"
+        rm -f "$_tmpout"
         log "  $repo_name installed successfully."
     else
+        while IFS= read -r l; do log "  install: $l"; done < "$_tmpout"
+        rm -f "$_tmpout"
         WHITESUR_ERRORS+=("$repo_name: install.sh exited with error")
     fi
 }
@@ -680,6 +688,8 @@ WantedBy=multi-user.target
 UNITEOF
 
 systemctl enable nobara-first-boot.service
+systemctl set-default graphical.target
+systemctl enable gdm.service
 
 # ── Install Extension Manager (Flatpak) at system level ──────────────────────
 flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
@@ -697,7 +707,6 @@ Hidden=false
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
 DESKTOPEOF
-chown sija:sija "$USER_HOME/.config"
-chown -R sija:sija "$AUTOSTART_DIR"
+chown -R sija:sija "$USER_HOME/.config"
 
 %end

@@ -246,10 +246,19 @@ ws_install_theme() {
     fi
     local install_sh="${install_dir}/install.sh"
     [[ -x "$install_sh" ]] || { WHITESUR_ERRORS+=("$repo_name: install.sh missing"); return; }
+    # TERM=xterm: setterm inside install.sh fails with TERM=dumb/unset (no TTY in %post), exiting non-zero
     # shellcheck disable=SC2086
-    bash "$install_sh" $install_dest_flag $extra_args 2>&1 | \
-        while read -r l; do log "  install: $l"; done \
-        || WHITESUR_ERRORS+=("$repo_name: install.sh failed")
+    local _tmpout
+    _tmpout=$(mktemp)
+    if TERM=xterm bash "$install_sh" $install_dest_flag $extra_args >"$_tmpout" 2>&1; then
+        while IFS= read -r l; do log "  install: $l"; done < "$_tmpout"
+        rm -f "$_tmpout"
+        log "  $repo_name installed successfully."
+    else
+        while IFS= read -r l; do log "  install: $l"; done < "$_tmpout"
+        rm -f "$_tmpout"
+        WHITESUR_ERRORS+=("$repo_name: install.sh failed")
+    fi
 }
 
 GTK_DEST="-d ${HOME}/.local/share/themes"

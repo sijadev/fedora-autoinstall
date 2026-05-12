@@ -174,11 +174,7 @@ ws_install_theme() {
             }
     fi
 
-    # Determine install arguments
     local args_var="$extra_args"
-    if [[ -z "$args_var" ]]; then
-        read -r -p "  Enter install.sh args for ${repo_name} (Enter to skip): " args_var || true
-    fi
 
     # Run installer — cd into repo dir so relative paths (e.g. 'dist/') work
     local install_sh="${install_dir}/install.sh"
@@ -187,10 +183,11 @@ ws_install_theme() {
         return
     fi
 
+    # TERM=xterm: setterm -cursor off inside install.sh fails with TERM=dumb (SSH default), exiting non-zero
     # shellcheck disable=SC2086
     local _tmpout
     _tmpout=$(mktemp)
-    if (cd "$install_dir" && bash "./install.sh" $install_dest_flag $args_var) >"$_tmpout" 2>&1; then
+    if (cd "$install_dir" && TERM=xterm bash "./install.sh" $install_dest_flag $args_var) >"$_tmpout" 2>&1; then
         while IFS= read -r l; do log "  install: $l"; done < "$_tmpout"
         rm -f "$_tmpout"
         log "  $repo_name installed successfully."
@@ -204,12 +201,10 @@ ws_install_theme() {
 GTK_DEST="-d ${HOME}/.local/share/themes"
 ICON_DEST="-d ${HOME}/.local/share/icons"
 
-# GTK Theme — auf GNOME 49+ (libadwaita) nur -l -c Dark
-# install.sh ohne -l erzeugt auf GNOME 49 keine Dateien (nur libadwaita wird unterstützt)
 ws_install_theme \
     "WhiteSur-gtk-theme" \
     "https://github.com/vinceliuice/WhiteSur-gtk-theme.git" \
-    "" \
+    "$GTK_DEST" \
     "-l -c Dark"
 
 # Icon Theme (kein dark-Variant vorhanden — Standard WhiteSur blau)
