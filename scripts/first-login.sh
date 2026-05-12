@@ -240,15 +240,20 @@ ws_install_theme \
     ""
 
 # GNOME theme + Wallpaper anwenden
+_dbus_addr=$(cat /proc/$(pgrep -u "$USER" gnome-session | head -1)/environ 2>/dev/null \
+    | tr '\0' '\n' | grep DBUS_SESSION_BUS_ADDRESS | cut -d= -f2- || true)
+[[ -z "$_dbus_addr" ]] && _dbus_addr="${DBUS_SESSION_BUS_ADDRESS:-}"
+
+gs() { DBUS_SESSION_BUS_ADDRESS="$_dbus_addr" gsettings "$@" 2>/dev/null || true; }
+
 if command -v gsettings &>/dev/null; then
-    gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'      2>/dev/null || true
-    gsettings set org.gnome.desktop.interface icon-theme   'WhiteSur-dark'    2>/dev/null || true
-    gsettings set org.gnome.desktop.interface cursor-theme 'WhiteSur-cursors' 2>/dev/null || true
-    # Wallpaper setzen (erste verfügbare WhiteSur-Datei)
+    gs set org.gnome.desktop.interface color-scheme 'prefer-dark'
+    gs set org.gnome.desktop.interface icon-theme   'WhiteSur-dark'
+    gs set org.gnome.desktop.interface cursor-theme 'WhiteSur-cursors'
     wallpaper=$(find "${HOME}/.local/share/backgrounds/WhiteSur" -name "*.jpg" -o -name "*.png" 2>/dev/null | head -1)
     [[ -n "$wallpaper" ]] && {
-        gsettings set org.gnome.desktop.background picture-uri       "file://${wallpaper}" 2>/dev/null || true
-        gsettings set org.gnome.desktop.background picture-uri-dark  "file://${wallpaper}" 2>/dev/null || true
+        gs set org.gnome.desktop.background picture-uri      "file://${wallpaper}"
+        gs set org.gnome.desktop.background picture-uri-dark "file://${wallpaper}"
         log "Wallpaper gesetzt: $wallpaper"
     }
     log "GNOME theme applied: WhiteSur libadwaita + WhiteSur-dark icons + WhiteSur-cursors"
