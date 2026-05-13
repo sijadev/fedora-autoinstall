@@ -91,36 +91,15 @@ else
         "user-theme@gnome-shell-extensions.gcampax.github.com"
         "dash-to-dock@micxgx.gmail.com"
     )
+    # dash-to-panel kollidiert mit dash-to-dock — explizit ausgeschlossen
+    CONFLICTING=("dash-to-panel@jderose9.github.com")
 
-    # Methode 1: gnome-extensions enable (nur wenn Extension in laufender Session geladen)
-    # Methode 1a: gnome-extensions enable (nur wenn Extension in laufender Session geladen)
-    if command -v gnome-extensions &>/dev/null; then
-        for ext in "${EXTENSIONS[@]}"; do
-            gnome-extensions enable "$ext" 2>/dev/null \
-                && log "Enabled via gnome-extensions: $ext" \
-                || true
-        done
-    fi
-
-    # Methode 1b: DBUS — GNOME Shell direkt mitteilen Extensions zu laden
-    dbus_addr=$(cat /proc/$(pgrep -u "$USER" gnome-shell 2>/dev/null | head -1)/environ 2>/dev/null \
-        | tr '\0' '\n' | grep DBUS_SESSION_BUS_ADDRESS | cut -d= -f2- || true)
-    if [[ -n "$dbus_addr" ]]; then
-        for ext in "${EXTENSIONS[@]}"; do
-            DBUS_SESSION_BUS_ADDRESS="$dbus_addr" \
-                gdbus call --session \
-                --dest org.gnome.Shell \
-                --object-path /org/gnome/Shell \
-                --method org.gnome.Shell.Extensions.EnableExtension \
-                "$ext" 2>/dev/null \
-                && log "Enabled via DBUS: $ext" \
-                || true
-        done
-    fi
-
-    # Methode 2: gsettings — fügt Extensions zur enabled-Liste hinzu (wirkt nach GNOME-Restart)
+    # Nur gsettings schreiben — kein DBUS Enable/Disable.
+    # DBUS EnableExtension triggert GNOME Shell zur sofortigen Neubewertung und
+    # überschreibt dconf wieder wenn dash-to-dock nicht im laufenden Scan-Ergebnis
+    # auftaucht (race condition bei frisch installierten System-Extensions).
+    # gsettings-Wert wirkt sicher beim nächsten GNOME-Start.
     if command -v gsettings &>/dev/null; then
-        # GVariant @as [] bereinigen → nur echte Extension-IDs behalten
         current=$(gsettings get org.gnome.shell enabled-extensions 2>/dev/null || echo "[]")
         current=$(echo "$current" | grep -oP "'[^']+'" | tr -d "'" | grep -v '^$' || true)
         new_list=""
@@ -128,11 +107,11 @@ else
             new_list+="'${ext}', "
             echo "$current" | grep -qF "$ext" || log "Füge zur enabled-Liste hinzu: $ext"
         done
-        # Bestehende Extensions übernehmen (ohne Duplikate)
         while IFS= read -r e; do
             [[ -z "$e" ]] && continue
             found=0
             for ext in "${EXTENSIONS[@]}"; do [[ "$e" == "$ext" ]] && found=1; done
+            for ext in "${CONFLICTING[@]}"; do [[ "$e" == "$ext" ]] && found=1; done
             [[ $found -eq 0 ]] && new_list+="'${e}', "
         done <<< "$current"
         new_list="[${new_list%, }]"
@@ -140,6 +119,39 @@ else
             && log "Extensions in gsettings gesetzt: $new_list" \
             || warn "gsettings enabled-extensions fehlgeschlagen."
     fi
+
+    # ── Dash-to-Dock Konfiguration (macOS-Stil) ───────────────────────────────
+    dtd() { gsettings set org.gnome.shell.extensions.dash-to-dock "$@" 2>/dev/null || true; }
+    dtd dock-position            BOTTOM
+    dtd dock-fixed               false
+    dtd autohide                 true
+    dtd intellihide              true
+    dtd intellihide-mode         FOCUS_APPLICATION_WINDOWS
+    dtd animation-time           0.15
+    dtd require-pressure-to-show false
+    dtd show-delay               0.1
+    dtd hide-delay               0.2
+    dtd transparency-mode        DYNAMIC
+    dtd min-alpha                0.85
+    dtd max-alpha                0.95
+    dtd dash-max-icon-size       48
+    dtd icon-size-fixed          false
+    dtd running-indicator-style  DOTS
+    dtd show-running             true
+    dtd show-trash               true
+    dtd show-mounts              true
+    dtd show-apps-at-top         true
+    dtd click-action             cycle-windows
+    dtd scroll-action            switch-workspace
+    dtd hot-keys                 true
+    dtd isolate-workspaces       false
+    dtd extend-height            false
+    dtd disable-overview-on-startup true
+    log "Dash-to-Dock konfiguriert (macOS-Stil)."
+
+    # GNOME Shell: Overview beim Login nicht anzeigen → direkt zum Desktop
+    gsettings set org.gnome.shell disable-overview-on-startup true 2>/dev/null || true
+    log "GNOME Overview-on-startup deaktiviert."
 fi
 
 # ── 3-5. WhiteSur themes ──────────────────────────────────────────────────
@@ -218,6 +230,10 @@ ws_install_theme \
 walls_dir="${THEMES_DIR}/WhiteSur-wallpapers"
 log "WhiteSur: WhiteSur-wallpapers"
 mkdir -p "$THEMES_DIR"
+# Sicherstellen dass gnome-background-properties ein Verzeichnis ist, nicht eine Datei
+[[ -f "${HOME}/.local/share/gnome-background-properties" ]] && \
+    rm -f "${HOME}/.local/share/gnome-background-properties"
+mkdir -p "${HOME}/.local/share/gnome-background-properties"
 if [[ -d "${walls_dir}/.git" ]]; then
     git -C "$walls_dir" pull --ff-only 2>&1 | while read -r l; do log "  git: $l"; done || \
         warn "  git pull failed for wallpapers (continuing)."
@@ -239,6 +255,7 @@ ws_install_theme \
     "$ICON_DEST" \
     ""
 
+
 # GNOME theme + Wallpaper anwenden
 _dbus_addr="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}"
 gs() { DBUS_SESSION_BUS_ADDRESS="$_dbus_addr" gsettings "$@" 2>/dev/null || true; }
@@ -251,9 +268,22 @@ if command -v gsettings &>/dev/null; then
     [[ -n "$wallpaper" ]] && {
         gs set org.gnome.desktop.background picture-uri      "file://${wallpaper}"
         gs set org.gnome.desktop.background picture-uri-dark "file://${wallpaper}"
+        # dconf write als direktes Fallback — funktioniert ohne aktive GNOME-Session
+        if command -v dconf &>/dev/null; then
+            dconf write /org/gnome/desktop/background/picture-uri      "'file://${wallpaper}'" 2>/dev/null || true
+            dconf write /org/gnome/desktop/background/picture-uri-dark "'file://${wallpaper}'" 2>/dev/null || true
+        fi
         log "Wallpaper gesetzt: $wallpaper"
     }
     log "GNOME theme applied: WhiteSur libadwaita + WhiteSur-dark icons + WhiteSur-cursors"
+
+    # ── GNOME/GTK display tweaks ──────────────────────────────────────────────
+    gs set org.gnome.desktop.interface font-antialiasing  'rgba'
+    gs set org.gnome.desktop.interface font-hinting       'slight'
+    gs set org.gnome.desktop.interface enable-animations  true
+    gs set org.gnome.desktop.interface clock-format       '24h'
+    gs set org.gnome.desktop.sound     event-sounds       false
+    log "GNOME tweaks applied: font-antialiasing=rgba, font-hinting=slight, clock=24h, bell=off."
 fi
 
 # Repos nach Installation entfernen — Theme-Dateien sind in ~/.local/share/ installiert

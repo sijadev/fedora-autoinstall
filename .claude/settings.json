@@ -170,7 +170,18 @@
       "Bash(lsblk)",
       "Read(//dev/disk/by-label/**)",
       "Bash(LIBVIRT_DEFAULT_URI=\"qemu:///system\" virsh screenshot fedora-install-test /tmp/t7.ppm)",
-      "Bash(convert /tmp/t7.ppm /tmp/t7.png)"
+      "Bash(convert /tmp/t7.ppm /tmp/t7.png)",
+      "Bash(git -C /home/sija/Projects/fedora-autoinstall log --oneline -10)",
+      "Bash(git -C /home/sija/Projects/fedora-autoinstall log --oneline --all)",
+      "Bash(git -C /home/sija/Projects/fedora-autoinstall log --all --oneline --grep=\"autologin\\\\|login\\\\|auto.login\" -i)",
+      "Bash(git -C /home/sija/Projects/fedora-autoinstall show 2a78173 --stat)",
+      "Bash(git -C /home/sija/Projects/fedora-autoinstall show 2a78173 -- kickstart/)",
+      "Bash(git -C /home/sija/Projects/fedora-autoinstall show 2a78173 -- \"kickstart/nobara-vm.ks\")",
+      "Bash(LIBVIRT_DEFAULT_URI=\"qemu:///system\" virsh shutdown fedora-install-test)",
+      "Bash(LIBVIRT_DEFAULT_URI=qemu:///system virsh snapshot-create-as fedora-install-test base-fedora43 --description 'Frische Fedora 43 Installation — Reset-Punkt für cmd_base')",
+      "Bash(LIBVIRT_DEFAULT_URI=\"qemu:///system\" virsh snapshot-list fedora-install-test)",
+      "Bash(./scripts/vm-test.sh base *)",
+      "Bash(sshpass -p test123 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR sija@192.168.122.68 ' *)"
     ],
     "additionalDirectories": [
       "/run/media/sija/Ventoy/scripts",

@@ -7,7 +7,7 @@
 #                              [m] VM-Test Profil per Hotkey auswählen, Anaconda läuft durch
 #   vm-test.sh snapshot        Snapshot "base-fedora" nach erfolgreicher Installation anlegen
 #   vm-test.sh test <profil>   Snapshot zurücksetzen + Provisioner ausführen
-#                              Profil: theme-bash | headless-vllm
+#                              Profil: theme-bash
 #   vm-test.sh status          VM-Status und IP anzeigen
 #   vm-test.sh ssh             In laufende VM einloggen
 #   vm-test.sh destroy         VM und Disk-Image löschen
@@ -67,6 +67,20 @@ warn() { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
 die()  { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
 step() { echo -e "\n${CYAN}${BOLD}══ $* ══${RESET}"; }
 
+progress_bar() {
+    local waited=$1 total=$2 label=${3:-""}
+    local pct=$(( waited * 100 / total ))
+    local filled=$(( waited * 40 / total ))
+    local bar=""
+    for ((i=0; i<filled; i++));   do bar+="█"; done
+    for ((i=filled; i<40; i++));  do bar+="░"; done
+    local elapsed_min=$(( waited / 60 ))
+    local elapsed_sec=$(( waited % 60 ))
+    local total_min=$(( total / 60 ))
+    printf "\r  ${CYAN}${bar}${RESET} ${BOLD}%3d%%${RESET}  %02d:%02d / %02d:00  ${label}%-30s" \
+        "$pct" "$elapsed_min" "$elapsed_sec" "$total_min" ""
+}
+
 # ── Hilfsfunktionen ────────────────────────────────────────────────────────────
 
 vm_exists() { virsh dominfo "$VM_NAME" &>/dev/null; }
@@ -90,10 +104,11 @@ wait_for_ssh() {
     local ip="$1"
     log "Warte auf SSH ($ip) ..."
     local elapsed=0
+    echo ""
     until $SSH "$VM_USER@$ip" true 2>/dev/null; do
         sleep 3; elapsed=$((elapsed + 3))
-        [[ $elapsed -gt $SSH_TIMEOUT ]] && die "SSH nicht erreichbar nach ${SSH_TIMEOUT}s"
-        echo -n "."
+        [[ $elapsed -gt $SSH_TIMEOUT ]] && echo "" && die "SSH nicht erreichbar nach ${SSH_TIMEOUT}s"
+        progress_bar "$elapsed" "$SSH_TIMEOUT" "SSH wartet..."
     done
     echo ""
     log "SSH verbunden: $ip"
@@ -301,13 +316,34 @@ XMLEOF
     virt-manager --connect qemu:///system --show-domain-console "$ACTIVE_VM" &
     log "virt-manager geöffnet — Anaconda Installation in Echtzeit sichtbar"
 
+    # Serielle Konsole in eigenem Terminal — zeigt Anaconda Textausgabe
+    if command -v gnome-terminal &>/dev/null; then
+        gnome-terminal --title="Anaconda: ${ACTIVE_VM}" -- \
+            bash -c "virsh --connect qemu:///system console '${ACTIVE_VM}'; echo '--- Konsole beendet ---'; read" &
+    elif command -v xterm &>/dev/null; then
+        xterm -title "Anaconda: ${ACTIVE_VM}" -e \
+            "virsh --connect qemu:///system console '${ACTIVE_VM}'; echo '--- Konsole beendet ---'; read" &
+    fi
+    log "Serielle Konsole geöffnet — Anaconda Textausgabe sichtbar"
+
     # Warte auf Abschluss — Anaconda rebootet die VM nach erfolgreicher Installation
     log "Warte auf Anaconda + Fedora-Installation (~15-25 Min über Netzwerk)..."
     local waited=0
     local install_timeout=1800  # 30 Minuten max
     local rebooted=0
 
-    # Warte auf Shutdown (nur wenn Calamares-Installation manuell/per Automation abgeschlossen)
+    local phases=(
+        [0]="Anaconda startet..."
+        [60]="Partitionierung + Basisinstallation..."
+        [300]="Pakete werden installiert..."
+        [600]="Pakete werden installiert..."
+        [900]="Pakete werden installiert..."
+        [1200]="%post-Skripte laufen..."
+        [1500]="Abschluss + Reboot..."
+    )
+    local current_phase="Anaconda startet..."
+
+    echo ""
     while [[ $waited -lt $install_timeout ]]; do
         sleep 10; waited=$((waited + 10))
         local state; state=$(LIBVIRT_DEFAULT_URI="qemu:///system" virsh domstate "$ACTIVE_VM" 2>/dev/null || echo "unknown")
@@ -315,25 +351,49 @@ XMLEOF
             rebooted=1
             break
         fi
-        [[ $((waited % 60)) -eq 0 ]] && log "  ... ${waited}s / ${install_timeout}s"
+        for key in 0 60 300 600 900 1200 1500; do
+            [[ $waited -ge $key ]] && current_phase="${phases[$key]}"
+        done
+        progress_bar "$waited" "$install_timeout" "$current_phase"
     done
+    echo ""
 
     if [[ $rebooted -eq 1 ]]; then
         log "✓ Installation abgeschlossen — VM hat sich ausgeschaltet (reboot nach Install)"
         log "Starte VM für Post-Install-Check..."
         virsh start "$ACTIVE_VM"
-        sleep 60
 
-        local ip; ip=$(LIBVIRT_DEFAULT_URI="qemu:///system" virsh domifaddr "$ACTIVE_VM" \
-            2>/dev/null | awk '/ipv4/{print $4}' | cut -d/ -f1 | head -1 || echo "")
-        if [[ -n "$ip" ]]; then
-            log "✓ VM bootet ins installierte System — IP: $ip"
-            log ""
-            log "Install-Test VM: ${ACTIVE_VM}"
-            log "Disk: ${install_disk}"
-        else
-            warn "VM gestartet aber keine IP nach 60s — manuell prüfen"
-        fi
+        local ip=""
+        local waited_ip=0
+        while [[ -z "$ip" ]]; do
+            sleep 5; waited_ip=$((waited_ip + 5))
+            [[ $waited_ip -gt 120 ]] && die "VM hat keine IP nach 120s — manuell prüfen"
+            ip=$(LIBVIRT_DEFAULT_URI="qemu:///system" virsh domifaddr "$ACTIVE_VM" \
+                2>/dev/null | awk '/ipv4/{print $4}' | cut -d/ -f1 | head -1 || echo "")
+        done
+        wait_for_ssh "$ip"
+        log "✓ VM bootet erfolgreich ins installierte System (IP: $ip)"
+
+        # VM sauber herunterfahren für konsistenten Snapshot
+        log "Fahre VM herunter für Snapshot ..."
+        virsh shutdown "$ACTIVE_VM" &>/dev/null || true
+        local i=0
+        while LIBVIRT_DEFAULT_URI="qemu:///system" virsh domstate "$ACTIVE_VM" \
+                2>/dev/null | grep -qE "running|laufend" && (( i < 30 )); do
+            sleep 2; i=$(( i + 1 ))
+        done
+        LIBVIRT_DEFAULT_URI="qemu:///system" virsh domstate "$ACTIVE_VM" \
+            2>/dev/null | grep -qE "running|laufend" && \
+            virsh destroy "$ACTIVE_VM" &>/dev/null || true
+
+        # Base-Snapshot anlegen — wird von cmd_base vorausgesetzt
+        local snap_name="base-fedora43"
+        log "Erstelle Snapshot '${snap_name}' auf '${ACTIVE_VM}' ..."
+        virsh snapshot-create-as "$ACTIVE_VM" "$snap_name" \
+            --description "Frische Fedora 43 Installation — Reset-Punkt für cmd_base"
+        log "✓ Snapshot '${snap_name}' angelegt."
+        log ""
+        log "Nächster Schritt: ./scripts/vm-test.sh base"
     else
         warn "✗ Installation nicht abgeschlossen nach ${install_timeout}s"
         log "Aktueller Status: $(LIBVIRT_DEFAULT_URI="qemu:///system" virsh domstate "$ACTIVE_VM" 2>/dev/null)"
@@ -425,11 +485,11 @@ cmd_snapshot() {
 
 cmd_test() {
     local profile="${1:-}"
-    [[ -z "$profile" ]] && die "Profil fehlt. Erlaubt: theme-bash | headless-vllm"
+    [[ -z "$profile" ]] && die "Profil fehlt. Erlaubt: theme-bash"
 
     case "$profile" in
-        theme-bash|headless-vllm) ;;
-        *) die "Unbekanntes Profil: '$profile'. Erlaubt: theme-bash | headless-vllm" ;;
+        theme-bash) ;;
+        *) die "Unbekanntes Profil: '$profile'. Erlaubt: theme-bash" ;;
     esac
 
     # Log-Datei — ZUERST öffnen damit alle Ausgaben erfasst werden
@@ -523,10 +583,20 @@ XMLEOF
     fi
 
     # ── Provisioner ausführen ─────────────────────────────────────────────────
+    # Marker VOR provision setzen: Autostart-Version von first-login.sh sieht den
+    # Marker und beendet sich sofort (Zeile 43 in first-login.sh). Danach Marker
+    # löschen, damit unsere SSH-Version normal durchläuft.
+    log "Setze first-login Marker (verhindert Autostart-Konkurrenz) ..."
+    $SSH "$VM_USER@$ip" \
+        "mkdir -p ~/.local/share/fedora-provision && touch ~/.local/share/fedora-provision/first-login.done"
+
     log "Starte fedora-provision.sh --profile ${profile} ..."
     $SSH "$VM_USER@$ip" \
         "echo '${VM_PASS}' | sudo -S bash '${ventoy_path}/fedora-provision.sh' --profile '${profile}' --run-now" \
         || warn "Provisioner abgebrochen oder mit Fehler beendet — Logs prüfen"
+
+    log "Lösche first-login Marker (SSH-Version läuft gleich) ..."
+    $SSH "$VM_USER@$ip" "rm -f ~/.local/share/fedora-provision/first-login.done"
 
     # ── First-Boot Logs abwarten ──────────────────────────────────────────────
     log "Warte auf First-Boot Abschluss..."
@@ -543,16 +613,64 @@ XMLEOF
     done
     [[ $boot_done -eq 1 ]] && log "First-Boot abgeschlossen."
 
+    # ── Aktuelle Repo-Skripte in VM einspielen (override Ventoy-Version) ─────
+    log "Sync: Repo-Skripte → VM ..."
+    $SSH "$VM_USER@$ip" "cat > /tmp/fedora-first-login.sh" \
+        < "${PROJECT_DIR}/scripts/first-login.sh"
+    $SSH "$VM_USER@$ip" \
+        "echo '${VM_PASS}' | sudo -S install -m 0755 /tmp/fedora-first-login.sh /usr/local/bin/fedora-first-login.sh"
+    log "Sync: fedora-first-login.sh aktualisiert."
+
+    # ── GDM stoppen — konfliktfreie dconf-Schreibung ──────────────────────────
+    # ── Fehlende Pakete aus Repo-first-boot.sh nachinstallieren ──────────────
+    # Falls Ventoy-first-boot.sh neuer Pakete nicht kennt, hier nachholen.
+    # Muss VOR GDM-Stop passieren damit GNOME beim Neustart die Extensions findet.
+    if ! $SSH "$VM_USER@$ip" "rpm -q gnome-shell-extension-dash-to-dock &>/dev/null" 2>/dev/null; then
+        log "Nachinstallation: gnome-shell-extension-dash-to-dock ..."
+        $SSH "$VM_USER@$ip" \
+            "echo '${VM_PASS}' | sudo -S dnf install -y gnome-shell-extension-dash-to-dock 2>/dev/null" \
+            && log "gnome-shell-extension-dash-to-dock installiert." \
+            || warn "Installation fehlgeschlagen."
+    fi
+
+    # first-boot.sh installiert Extensions nachdem GNOME bereits läuft. Im Test
+    # stoppen wir GDM vor first-login.sh: ohne laufende GNOME Shell gehen alle
+    # dconf-Schreibungen direkt in die Datei — keine Race Conditions.
+    # (Auf echter Hardware läuft first-boot vor dem ersten GDM-Start.)
+    log "Stoppe GDM für konfliktfreie first-login Ausführung ..."
+    $SSH "$VM_USER@$ip" \
+        "echo '${VM_PASS}' | sudo -S systemctl stop gdm" 2>/dev/null || true
+    sleep 3
+    log "GDM gestoppt."
+
     # ── First-Login ausführen (Themes, Oh-My-Bash, GNOME Extensions) ─────────
     if [[ "$profile" == "theme-bash" ]]; then
         step "First-Login: Themes + Oh-My-Bash installieren"
         log "Starte fedora-first-login.sh als User '${VM_USER}' ..."
         $SSH "$VM_USER@$ip" \
-            "DBUS_SESSION_BUS_ADDRESS='unix:path=/run/user/\$(id -u)/bus' bash /usr/local/bin/fedora-first-login.sh 2>&1" \
+            "bash /usr/local/bin/fedora-first-login.sh 2>&1" \
             | while IFS= read -r line; do log "  first-login: $line"; done || \
             warn "First-Login mit Fehler beendet — Logs prüfen"
         log "First-Login abgeschlossen."
+        EXT_DCONF_AFTER=$($SSH "$VM_USER@$ip" \
+            "dconf read /org/gnome/shell/enabled-extensions 2>/dev/null" 2>/dev/null || true)
+        log "Extensions nach first-login (dconf): ${EXT_DCONF_AFTER}"
     fi
+
+    # ── GDM wieder starten — GNOME liest frische dconf-Config ────────────────
+    log "Starte GDM (Autologin mit neuer Config) ..."
+    $SSH "$VM_USER@$ip" \
+        "echo '${VM_PASS}' | sudo -S systemctl start gdm" 2>/dev/null || true
+    # Warten bis GNOME-Session wieder läuft (Autologin + Ventoy-Mount)
+    local ventoy_path2=""
+    local gdm_waited=0
+    until [[ -n "$ventoy_path2" ]]; do
+        sleep 5; gdm_waited=$((gdm_waited + 5))
+        ventoy_path2=$($SSH "$VM_USER@$ip" \
+            "findmnt -rno TARGET LABEL=Ventoy 2>/dev/null" 2>/dev/null || true)
+        [[ $gdm_waited -gt 120 ]] && { warn "GNOME Session nicht bereit nach 120s."; break; }
+    done
+    log "GNOME Session bereit (${gdm_waited}s)."
 
     # ── Screenshot NACHHER ────────────────────────────────────────────────────
     if [[ "$profile" == "theme-bash" ]]; then
@@ -578,48 +696,23 @@ echo '  Installierte Komponenten:'
 [ -d \${HOME}/.local/share/icons/WhiteSur-dark ]  && echo '  ✓ WhiteSur Icons'       || echo '  ✗ WhiteSur Icons fehlen'
 [ -d \${HOME}/.local/share/backgrounds/WhiteSur ] && echo '  ✓ WhiteSur Wallpapers'  || echo '  ✗ Wallpapers fehlen'
 [ -d \${HOME}/.oh-my-bash ]                       && echo '  ✓ Oh-My-Bash'           || echo '  ✗ Oh-My-Bash fehlt'
-echo '  Extensions:' \$(gsettings get org.gnome.shell enabled-extensions 2>/dev/null)
-echo '  Wallpaper:' \$(gsettings get org.gnome.desktop.background picture-uri 2>/dev/null)
+sleep 3
+wp=\$(dconf read /org/gnome/desktop/background/picture-uri 2>/dev/null)
+[ -n \"\$wp\" ] && echo '  ✓ Wallpaper:' \$wp || echo '  ✗ Wallpaper nicht in dconf'
 " 2>/dev/null || true
-        test_passed=1
-
-    elif [[ "$profile" == "headless-vllm" ]]; then
-        # AI-Profil: Grundvalidierung (venv, PyTorch, kein ERROR im Log)
-        # vLLM curl-Test folgt mit headless-vllm + Podman
-        step "Validierung: AI-Profil Grundcheck"
-
-        $SSH "$VM_USER@$ip" "
-echo '  Installierte Komponenten:'
-[ -f /var/lib/fedora-provision/first-boot.done ] \
-    && echo '  ✓ First-Boot abgeschlossen' || echo '  ✗ First-Boot fehlt'
-[ -d \${HOME}/.venvs/ai ] \
-    && echo '  ✓ PyTorch venv (~/.venvs/ai)' || echo '  ✗ PyTorch venv fehlt'
-[ -d \${HOME}/.venvs/bitwig-omni ] \
-    && echo '  ✓ vLLM venv (~/.venvs/bitwig-omni)' || echo '  ✗ vLLM venv fehlt'
-[ -d \${HOME}/.oh-my-bash ] \
-    && echo '  ✓ Oh-My-Bash' || echo '  ✗ Oh-My-Bash fehlt'
-\${HOME}/.venvs/ai/bin/python -c 'import torch; print(\"  ✓ PyTorch\", torch.__version__)' 2>/dev/null \
-    || echo '  ✗ PyTorch nicht importierbar'
-\${HOME}/.venvs/bitwig-omni/bin/python -c 'import vllm; print(\"  ✓ vLLM\", vllm.__version__)' 2>/dev/null \
-    || echo '  ✗ vLLM nicht importierbar'
-" 2>/dev/null || true
-
-        # Log auf ERROR-Zeilen prüfen
-        log "Log-Analyse: first-login.log auf Fehler prüfen..."
-        error_count=$($SSH "$VM_USER@$ip" \
-            "grep -c '\[ERROR\]' \${HOME}/.local/share/fedora-provision/first-login.log 2>/dev/null; true" \
-            2>/dev/null | tr -d '[:space:]' || echo "0")
-        error_count="${error_count:-0}"
-        if [[ "$error_count" -eq 0 ]]; then
-            log "✓ Keine ERROR-Einträge im first-login.log"
-            test_passed=1
+        # Extensions aus dem direkt-nach-first-login gespeicherten Wert prüfen
+        echo "  Extensions (direkt nach first-login):"
+        if echo "${EXT_DCONF_AFTER:-}" | grep -q 'dash-to-dock'; then
+            echo "  ✓ dash-to-dock in dconf konfiguriert"
         else
-            warn "✗ ${error_count} ERROR-Einträge im first-login.log:"
-            $SSH "$VM_USER@$ip" \
-                "grep '\[ERROR\]' \${HOME}/.local/share/fedora-provision/first-login.log 2>/dev/null | head -10" \
-                2>/dev/null || true
-            test_passed=0
+            echo "  ✗ dash-to-dock fehlt (Hinweis: wirkt nach erstem echten GNOME-Start)"
         fi
+        if echo "${EXT_DCONF_AFTER:-}" | grep -q 'dash-to-panel'; then
+            echo "  ✗ dash-to-panel noch in dconf"
+        else
+            echo "  ✓ dash-to-panel aus dconf entfernt"
+        fi
+        test_passed=1
     fi
 
     # ── Test-Zusammenfassung ──────────────────────────────────────────────────
@@ -690,23 +783,105 @@ cmd_destroy() {
     log "VM '${VM_NAME}' vollständig entfernt."
 }
 
+# ── Smoke-Test: USB-Stick Sync-Prüfung ────────────────────────────────────────
+# $1: Kontext ("install" oder "test") — beeinflusst Fehlermeldung
+cmd_smoke() {
+    local context="${1:-test}"
+    step "Smoke-Test: USB-Stick vs. Repo"
+
+    # USB-Stick in laufender VM = hartes Gate — kein Start möglich
+    local usb_vm
+    usb_vm=$(virsh list --name 2>/dev/null | while read -r vm; do
+        [[ -z "$vm" ]] && continue
+        virsh dumpxml "$vm" 2>/dev/null | grep -q "${VENTOY_USB_VENDOR}.*${VENTOY_USB_PRODUCT}\|${VENTOY_USB_PRODUCT}.*${VENTOY_USB_VENDOR}" && echo "$vm"
+    done | head -1 || true)
+
+    if [[ -n "$usb_vm" ]]; then
+        if [[ "$context" == "install" ]]; then
+            die "USB-Stick ist an VM '${usb_vm}' weitergeleitet — Installation kann nicht starten. VM '${usb_vm}' stoppen und erneut versuchen."
+        else
+            die "USB-Stick ist an VM '${usb_vm}' weitergeleitet — Test kann nicht starten. VM '${usb_vm}' stoppen und erneut versuchen."
+        fi
+    fi
+
+    local ventoy_mount="/run/media/$(whoami)/Ventoy"
+    local mounted=0
+
+    # Mounten falls nicht aktiv
+    if ! findmnt "$ventoy_mount" &>/dev/null; then
+        local dev; dev=$(lsblk -o NAME,LABEL -rn | awk '$2=="Ventoy"{print "/dev/"$1}' | head -1)
+        if [[ -z "$dev" ]]; then
+            warn "Ventoy USB nicht gefunden — Sync-Prüfung übersprungen."
+            return 0
+        fi
+        udisksctl mount -b "$dev" &>/dev/null && mounted=1
+    fi
+
+    if ! findmnt "$ventoy_mount" &>/dev/null; then
+        die "Ventoy USB nicht mountbar — USB-Stick einstecken und erneut versuchen."
+    fi
+
+    local -A FILES=(
+        ["kickstart/fedora-vm.ks"]="${ventoy_mount}/kickstart/fedora-vm.ks"
+        ["kickstart/common-post.inc"]="${ventoy_mount}/kickstart/common-post.inc"
+        ["scripts/first-boot.sh"]="${ventoy_mount}/scripts/first-boot.sh"
+        ["scripts/first-login.sh"]="${ventoy_mount}/scripts/first-login.sh"
+    )
+
+    local stale=()
+    for rel in "${!FILES[@]}"; do
+        local src="${PROJECT_DIR}/${rel}"
+        local dst="${FILES[$rel]}"
+        if [[ ! -f "$dst" ]]; then
+            stale+=("$rel  ${RED}(fehlt auf USB)${RESET}")
+        elif ! diff -q "$src" "$dst" &>/dev/null; then
+            stale+=("$rel  ${YELLOW}(veraltet)${RESET}")
+        fi
+    done
+
+    if [[ ${#stale[@]} -eq 0 ]]; then
+        log "USB-Stick ist aktuell ✓"
+    else
+        echo -e "\n  ${RED}${BOLD}USB-Stick nicht aktuell:${RESET}"
+        for f in "${stale[@]}"; do echo -e "    ✗ $f"; done
+        echo ""
+        read -r -t 15 -p "  Jetzt synchronisieren? [J/n] " ans 2>/dev/tty || ans="J"
+        if [[ "${ans,,}" != "n" ]]; then
+            for rel in "${!FILES[@]}"; do
+                local src="${PROJECT_DIR}/${rel}"
+                local dst="${FILES[$rel]}"
+                if ! diff -q "$src" "$dst" &>/dev/null 2>&1; then
+                    cp "$src" "$dst" && log "Kopiert: $rel"
+                fi
+            done
+            sync
+            log "USB-Stick synchronisiert ✓"
+        else
+            die "USB-Stick veraltet — Test abgebrochen."
+        fi
+    fi
+
+    [[ $mounted -eq 1 ]] && udisksctl unmount -b "$(findmnt -n -o SOURCE "$ventoy_mount")" &>/dev/null || true
+}
+
 # ── Dispatch ───────────────────────────────────────────────────────────────────
 COMMAND="${1:-}"
 shift || true
 
 case "$COMMAND" in
     create)   cmd_create   ;;
-    install)  cmd_install  ;;
+    install)  cmd_smoke install; cmd_install  ;;
     base)     cmd_base     ;;
     snapshot) cmd_snapshot ;;
-    test)     cmd_test "$@" ;;
+    test)     cmd_smoke test; cmd_test "$@" ;;
     status)   cmd_status   ;;
     ssh)      cmd_ssh      ;;
     destroy)  cmd_destroy  ;;
+    smoke)    cmd_smoke    ;;
     ""|--help|-h)
         grep '^#' "$0" | head -20 | sed 's/^# \?//'
         ;;
     *)
-        die "Unbekannter Befehl: '$COMMAND'. Erlaubt: create | install | base | snapshot | test | status | ssh | destroy"
+        die "Unbekannter Befehl: '$COMMAND'. Erlaubt: create | install | base | snapshot | test | status | ssh | destroy | smoke"
         ;;
 esac

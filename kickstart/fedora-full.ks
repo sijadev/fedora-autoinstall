@@ -32,6 +32,12 @@ ignoredisk --only-use=${DISK}
 zerombr
 clearpart --all --initlabel --drives=${DISK}
 bootloader --boot-drive=${DISK}
+part /boot/efi --fstype=efi    --size=600  --ondrive=${DISK}
+part /boot     --fstype=xfs    --size=1024 --ondrive=${DISK}
+part btrfs.01  --fstype=btrfs  --size=1    --grow --ondrive=${DISK}
+btrfs none  --data=single --metadata=single  btrfs.01
+btrfs /     --subvol --name=@      LABEL=fedora
+btrfs /home --subvol --name=@home  LABEL=fedora
 EOFCFG
 %end
 
@@ -47,7 +53,7 @@ network --bootproto=dhcp --device=link --activate
 network --hostname=fedora-workstation
 
 # ── Disk / Partitioning ───────────────────────────────────────────────────────
-autopart --type=lvm
+# Btrfs-Layout via %pre erzeugt (disk-setup.cfg) — kein autopart
 
 # ── Bootloader ────────────────────────────────────────────────────────────────
 # (drive set dynamically via %pre / %include above)

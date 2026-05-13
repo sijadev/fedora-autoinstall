@@ -4,7 +4,7 @@
 # !! Do not edit by hand — regenerate from XML config !!
 
 graphical
-reboot
+poweroff
 
 # ── Locale / keyboard / timezone ─────────────────────────────────────────────
 keyboard --xlayouts='de'
@@ -21,14 +21,15 @@ ignoredisk --only-use=vda
 zerombr
 clearpart --all --initlabel --drives=vda
 
-# Explizite Partitionierung: swap auf 4 GB begrenzen damit root genug bekommt
-part /boot/efi --fstype=efi   --size=600  --ondrive=vda
-part /boot     --fstype=xfs   --size=1024 --ondrive=vda
-part pv.01                    --size=1    --grow --ondrive=vda
+# Btrfs mit @ / @home Subvolumes — Timeshift-kompatibel
+# Swap entfällt: zram-generator übernimmt Swap im RAM
+part /boot/efi --fstype=efi    --size=600  --ondrive=vda
+part /boot     --fstype=xfs    --size=1024 --ondrive=vda
+part btrfs.01  --fstype=btrfs  --size=1    --grow --ondrive=vda
 
-volgroup vg_fedora pv.01
-logvol swap --vgname=vg_fedora --name=swap --fstype=swap --size=4096
-logvol /    --vgname=vg_fedora --name=root --fstype=xfs  --size=1 --grow
+btrfs none  --data=single --metadata=single  btrfs.01
+btrfs /     --subvol --name=@      LABEL=fedora
+btrfs /home --subvol --name=@home  LABEL=fedora
 
 # ── Bootloader ────────────────────────────────────────────────────────────────
 bootloader --boot-drive=vda
@@ -89,6 +90,11 @@ FEDORA_OMB_THEME="modern"
 ENVEOF
 chmod 0644 /etc/fedora-provision.env
 
+# ── Btrfs mount options: compress + noatime ───────────────────────────────────
+if grep -q 'btrfs' /etc/fstab 2>/dev/null; then
+    sed -i '/\sbtrfs\s/ s/defaults/defaults,compress=zstd:1,noatime/' /etc/fstab
+fi
+
 # ── Passwordless sudo für Test-VM (kein interaktives Passwort via SSH) ────────
 echo 'sija ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/99-sija-nopasswd
 chmod 0440 /etc/sudoers.d/99-sija-nopasswd
@@ -144,14 +150,16 @@ if [[ -f "$ENV_FILE" ]]; then
     source "$ENV_FILE"
 fi
 
-# ── 1. fedora-sync ────────────────────────────────────────────────────────────
-step "fedora-sync"
+# ── 1. System-Update ──────────────────────────────────────────────────────────
+step "System-Update"
 if command -v fedora-sync &>/dev/null; then
     log "Running fedora-sync..."
     fedora-sync --headless || die "fedora-sync failed."
     log "fedora-sync completed."
 else
-    warn "fedora-sync not found; skipping."
+    log "Running dnf upgrade..."
+    dnf upgrade -y || die "dnf upgrade failed."
+    log "dnf upgrade completed."
 fi
 
 # ── 2. NVIDIA Open Driver ─────────────────────────────────────────────────────
@@ -167,7 +175,8 @@ check_nvidia_open_compat() {
     local gpu_info
     gpu_info=$(lspci -nn | grep -i 'NVIDIA' || true)
     if [[ -z "$gpu_info" ]]; then
-        die "No NVIDIA GPU detected. Cannot install NVIDIA Open Driver."
+        warn "No NVIDIA GPU detected (VM or non-NVIDIA system) — skipping NVIDIA driver."
+        return 1
     fi
     # Turing and later are supported; check for pre-Turing (GTX 10xx / Pascal GP1xx)
     if echo "$gpu_info" | grep -qiE 'GP10[0-9]|GP1[0-9]{2}'; then
@@ -176,20 +185,24 @@ check_nvidia_open_compat() {
     log "NVIDIA GPU detected (Open Driver compatible): $gpu_info"
 }
 
-check_nvidia_open_compat
+if check_nvidia_open_compat; then
+    log "Installing/updating NVIDIA Open Kernel Module driver..."
+    dnf install -y  kernel-devel  kernel-headers  akmod-nvidia-open  xorg-x11-drv-nvidia-cuda  || die "NVIDIA Open Driver installation failed. No proprietary fallback."
 
-log "Installing/updating NVIDIA Open Kernel Module driver..."
-dnf install -y  kernel-devel  kernel-headers  akmod-nvidia-open  xorg-x11-drv-nvidia-cuda  || die "NVIDIA Open Driver installation failed. No proprietary fallback."
-
-# Wait for the kmod to be built (akmods)
-if command -v akmods &>/dev/null; then
-    log "Building kernel modules (akmods)..."
-    akmods --force || die "akmods failed for NVIDIA Open Driver."
+    # Wait for the kmod to be built (akmods)
+    if command -v akmods &>/dev/null; then
+        log "Building kernel modules (akmods)..."
+        akmods --force || die "akmods failed for NVIDIA Open Driver."
+    fi
+    log "NVIDIA Open Driver installed/updated."
 fi
-log "NVIDIA Open Driver installed/updated."
 
 # ── 3. CUDA installation ──────────────────────────────────────────────────────
 step "CUDA installation"
+
+if ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
+    log "No NVIDIA GPU — skipping CUDA installation."
+else
 
 CUDA_SOURCE="${FEDORA_CUDA_SOURCE:-fedora}"
 
@@ -218,7 +231,11 @@ case "$CUDA_SOURCE" in
     *)             die "Unknown cuda source: $CUDA_SOURCE" ;;
 esac
 
-# Discover installed CUDA path
+fi  # end: NVIDIA GPU check
+
+# Discover installed CUDA path and write env (only if GPU present)
+if lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
+
 CUDA_HOME_DETECTED=""
 for candidate in /usr/local/cuda /usr/local/cuda-*; do
     if [[ -x "${candidate}/bin/nvcc" ]]; then
@@ -252,6 +269,19 @@ cat > /etc/systemd/system.conf.d/cuda-env.conf <<SYSENVEOF
 DefaultEnvironment=CUDA_HOME=${CUDA_HOME_DETECTED}
 SYSENVEOF
 systemctl daemon-reload
+
+fi  # end: CUDA env setup
+
+# ── 5. GDM Autologin ──────────────────────────────────────────────────────────
+step "GDM Autologin setup"
+# Add autologin to daemon section
+if grep -q 'AutomaticLoginEnable' /etc/gdm/custom.conf; then
+    log "GDM autologin already configured."
+else
+    sed -i '/^\[daemon\]/a AutomaticLoginEnable=true' /etc/gdm/custom.conf
+    sed -i '/AutomaticLoginEnable=true/a AutomaticLogin=sija' /etc/gdm/custom.conf
+fi
+log "GDM autologin configured."
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 step "First-boot provisioning complete"

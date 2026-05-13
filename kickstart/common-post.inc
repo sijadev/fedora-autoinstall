@@ -19,6 +19,11 @@ USER_HOME="/home/${TARGET_USER}"
 
 echo "[common-post] FEDORA_INSTALL_PROFILE=${INSTALL_PROFILE}"
 
+# ── Btrfs mount options: compress=zstd:1 + noatime ───────────────────────────
+if grep -q 'btrfs' /etc/fstab 2>/dev/null; then
+    sed -i '/\sbtrfs\s/ s/defaults/defaults,compress=zstd:1,noatime/' /etc/fstab
+fi
+
 # ── Write first-boot script ───────────────────────────────────────────────────
 cat > /usr/local/sbin/fedora-first-boot.sh <<'FBEOF'
 #!/usr/bin/env bash
