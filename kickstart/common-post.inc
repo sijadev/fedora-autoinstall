@@ -504,3 +504,38 @@ fi
 echo "[common-post] Done. Profile: ${INSTALL_PROFILE}"
 
 %end
+
+# ── %post --nochroot: Btrfs Subvolumes → @/@home umbenennen (Timeshift-kompatibel) ──
+%post --nochroot --log=/root/ks-post-btrfs-rename.log
+
+set -euo pipefail
+
+SYSIMAGE="/mnt/sysimage"
+BTRFS_DEV=$(findmnt -n -o SOURCE "${SYSIMAGE}" 2>/dev/null | sed 's/\[.*\]//' || true)
+
+if [[ -z "$BTRFS_DEV" ]]; then
+    echo "WARN: Kein btrfs Device erkannt — Subvolume-Rename übersprungen."
+    exit 0
+fi
+
+MOUNT_TMP=$(mktemp -d)
+mount -o subvolid=5 "$BTRFS_DEV" "$MOUNT_TMP"
+
+if [[ -d "${MOUNT_TMP}/root" ]] && [[ ! -d "${MOUNT_TMP}/@" ]]; then
+    btrfs subvolume snapshot "${MOUNT_TMP}/root" "${MOUNT_TMP}/@"
+    echo "Subvolume Snapshot: root → @"
+fi
+
+if [[ -d "${MOUNT_TMP}/home" ]] && [[ ! -d "${MOUNT_TMP}/@home" ]]; then
+    btrfs subvolume snapshot "${MOUNT_TMP}/home" "${MOUNT_TMP}/@home"
+    echo "Subvolume Snapshot: home → @home"
+fi
+
+umount "$MOUNT_TMP"
+rmdir "$MOUNT_TMP"
+
+sed -i 's/subvol=root\b/subvol=@/g'      "${SYSIMAGE}/etc/fstab"
+sed -i 's/subvol=home\b/subvol=@home/g'  "${SYSIMAGE}/etc/fstab"
+echo "fstab aktualisiert: subvol=root → @, subvol=home → @home"
+
+%end

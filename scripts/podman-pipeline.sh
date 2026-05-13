@@ -23,6 +23,8 @@
 #   --no-gpu          Skip GPU pass-through (for CI without NVIDIA)
 #   --dry-run         Print commands, don't run
 #   --clean           Remove all fedora-test:* images and exit
+#   --build-vllm      Custom vLLM image für RTX 9070 (Blackwell sm_120) bauen
+#                     Nutzt Containerfile.vllm → fedora-vllm:latest (~30-60 Min)
 #   -h, --help        Show this help
 #
 # Examples:
@@ -30,6 +32,7 @@
 #   ./scripts/podman-pipeline.sh --from 03-themes       # rebuild from themes onward
 #   ./scripts/podman-pipeline.sh --only 04-vllm         # re-run vllm layer only
 #   ./scripts/podman-pipeline.sh --no-gpu --from 01-base
+#   ./scripts/podman-pipeline.sh --build-vllm           # custom Blackwell vLLM Image
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -101,6 +104,23 @@ while [[ $# -gt 0 ]]; do
         --user)       TARGET_USER="$2"; shift 2 ;;
         --no-gpu)     WITH_GPU=0; shift ;;
         --dry-run)    DRY_RUN=1; shift ;;
+        --build-vllm)
+            step "Custom vLLM Image (Blackwell sm_120)"
+            CONTAINERFILE="${SCRIPT_DIR}/Containerfile.vllm"
+            [[ -f "$CONTAINERFILE" ]] || die "Containerfile.vllm nicht gefunden: ${CONTAINERFILE}"
+            VLLM_TAG="fedora-vllm:latest"
+            info "Baue ${VLLM_TAG} aus ${CONTAINERFILE}..."
+            info "Dauer: ~30-60 Min (CUDA-Kernel-Kompilierung für sm_120)"
+            run podman build \
+                -f "$CONTAINERFILE" \
+                -t "$VLLM_TAG" \
+                --build-arg "MAX_JOBS=$(nproc)" \
+                --build-arg "TORCH_CUDA_ARCH_LIST=12.0+PTX" \
+                --build-arg "NVCC_THREADS=2" \
+                "${SCRIPT_DIR}"
+            ok "Image gebaut: ${VLLM_TAG}"
+            info "Quadlet aktualisieren: Image=${VLLM_TAG} in ~/.config/containers/systemd/vllm.container"
+            exit 0 ;;
         --clean)
             info "Removing images: ${IMAGE_PREFIX}:*"
             podman images --format '{{.Repository}}:{{.Tag}}' \
@@ -233,6 +253,14 @@ fi
 layer_01_base() {
     run_layer "01-base" "scratch" "Fedora base + Fedora repos + core packages" '
 set -euo pipefail
+
+echo "==> DNF Optimierungen..."
+cat >> /etc/dnf/dnf.conf <<DNFEOF
+max_parallel_downloads=10
+fastestmirror=True
+deltarpm=True
+DNFEOF
+
 echo "==> Updating base system..."
 dnf -y update --quiet
 
@@ -597,8 +625,10 @@ if [[ -x "${CUDA_PATH}/bin/nvcc" ]]; then
         export PATH="${VLLM_VENV}/bin:${CUDA_PATH}/bin:${PATH}"
         export CUDA_HOME="$CUDA_PATH"
         export LD_LIBRARY_PATH="${CUDA_PATH}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-        export TORCH_CUDA_ARCH_LIST="${VLLM_ARCH_LIST}"
+        # Blackwell sm_120 optimiert — gleiche Flags wie Containerfile.vllm
+        export TORCH_CUDA_ARCH_LIST="${VLLM_ARCH_LIST}+PTX"
         export MAX_JOBS="${MAX_JOBS:-$(nproc)}"
+        export NVCC_THREADS=2
 
         # Use explicit venv python3 -m pip to guarantee correct interpreter
         if (cd "$VLLM_SRC" && "${VLLM_VENV}/bin/python3" -m pip install --no-build-isolation .); then
@@ -618,10 +648,24 @@ su - "${TARGET_USER}" -c "bash $_USR_SCRIPT"
 _exit=$?
 rm -f "$_USR_SCRIPT"
 (( _exit == 0 )) || exit $_exit
+echo "==> Schreibe Runtime-Optimierungen nach /etc/profile.d/vllm-perf.sh..."
+cat > /etc/profile.d/vllm-perf.sh <<'VLLMPERFEOF'
+# vLLM Performance-Optimierungen (Blackwell + Container)
+export NCCL_DMABUF_ENABLE=1
+export VLLM_FLASH_ATTN_VERSION=2
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export PYTHONUNBUFFERED=1
+# OMP-Threads auf physische Kerne begrenzen (verhindert CPU-Überlastung)
+export OMP_NUM_THREADS=$(nproc --ignore=2 2>/dev/null || echo 4)
+export TOKENIZERS_PARALLELISM=false
+export TORCHINDUCTOR_CACHE_DIR=/root/.cache/torchinductor
+VLLMPERFEOF
+chmod 0644 /etc/profile.d/vllm-perf.sh
+
 echo "==> Layer 04-vllm complete."
 LAYER04_EOF
 )
-    run_layer "04-vllm" "03-themes" "PyTorch venv + vLLM-Omni build + smoke test" "$_script"
+    run_layer "04-vllm" "03-themes" "PyTorch venv + vLLM-Omni build (sm_120) + perf-env" "$_script"
 }
 
 layer_05_models() {
@@ -631,8 +675,8 @@ set -euo pipefail
 source /etc/fedora-provision.env 2>/dev/null || true
 
 AUDIO_MODEL="${FEDORA_AUDIO_MODEL:-moonshotai/Kimi-Audio-7B-Instruct}"
-AGENT_MODEL="${FEDORA_AGENT_MODEL:-Qwen/Qwen3-14B-AWQ}"
-echo "==> Checking disk space..."
+AGENT_MODEL="${FEDORA_AGENT_MODEL:-Qwen/Qwen3-8B}"
+echo "==> Checking disk space (Kimi-Audio ~14GB FP16 + Qwen3-8B ~5GB = ~19GB)..."
 AVAIL_GB=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
 (( AVAIL_GB >= 20 )) || echo "WARNING: Only ${AVAIL_GB}GB free — models need ~15GB total."
 
@@ -644,14 +688,14 @@ set -euo pipefail
 source /etc/fedora-provision.env 2>/dev/null || true
 
 AUDIO_MODEL="${FEDORA_AUDIO_MODEL:-moonshotai/Kimi-Audio-7B-Instruct}"
-AGENT_MODEL="${FEDORA_AGENT_MODEL:-Qwen/Qwen3-14B-AWQ}"
+AGENT_MODEL="${FEDORA_AGENT_MODEL:-Qwen/Qwen3-8B}"
 VLLM_VENV="${FEDORA_VLLM_VENV:-${HOME}/.venvs/bitwig-omni}"
 [[ "$VLLM_VENV" == '~'* ]] && VLLM_VENV="${HOME}${VLLM_VENV#\~}"
 AUDIO_VENV="${FEDORA_AUDIO_VENV:-${HOME}/.venvs/kimi-audio}"
 [[ "$AUDIO_VENV" == '~'* ]] && AUDIO_VENV="${HOME}${AUDIO_VENV#\~}"
-HF_HOME="${HOME}/models"
+HF_HOME="${HOME}/.models/huggingface"
 export HF_HOME
-HF_CACHE="${HOME}/models"
+HF_CACHE="${HOME}/.models/huggingface"
 
 hf_download() {
     local model="$1" dest="${HF_CACHE}/${2:-${1//\//__}}"
@@ -745,41 +789,52 @@ mkdir -p "$AGENT_DIR"
 cat > "${AGENT_DIR}/analyze_audio.py" << 'PYEOF'
 #!/usr/bin/env python3
 """
-Step 1: Audio Analysis via Kimi-Audio-7B
+Step 1: Audio Analysis via Kimi-Audio-7B (Port 8000)
 Input:  audio file path
-Output: {tempo, key, scale, genre, mood, time_signature}
+Output: {tempo, key, scale, genre, mood, time_signature, chord_progression}
 """
-import sys, json, os
+import sys, json, os, base64
 from pathlib import Path
+from openai import OpenAI
+
+AUDIO_API = os.environ.get("AUDIO_API_URL", "http://localhost:8000/v1")
 
 def analyze(audio_path: str) -> dict:
-    import torch
-    from transformers import AutoProcessor, AutoModelForCausalLM
+    client = OpenAI(base_url=AUDIO_API, api_key="none")
 
-    model_id = os.environ.get(
-        "FEDORA_AUDIO_MODEL", "moonshotai/Kimi-Audio-7B-Instruct"
+    # Audio als base64 kodieren für den API-Call
+    audio_b64 = base64.b64encode(Path(audio_path).read_bytes()).decode()
+    suffix = Path(audio_path).suffix.lstrip(".") or "wav"
+
+    response = client.chat.completions.create(
+        model="audio",
+        messages=[{
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_audio",
+                    "input_audio": {"data": audio_b64, "format": suffix}
+                },
+                {
+                    "type": "text",
+                    "text": (
+                        "Analyze this music track in detail. "
+                        "Return ONLY valid JSON with: "
+                        '"tempo" (BPM float), "key" (e.g. "Am"), '
+                        '"scale" (e.g. "minor"), "genre" (e.g. "techno"), '
+                        '"mood" (e.g. "dark"), "time_signature" (e.g. "4/4"), '
+                        '"chord_progression" (list of chords), '
+                        '"energy" (low/mid/high), "instruments" (list).'
+                    )
+                }
+            ]
+        }],
+        max_tokens=512,
     )
-    cache_dir = Path.home() / "models" / model_id.replace("/", "__")
 
-    processor = AutoProcessor.from_pretrained(str(cache_dir), trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        str(cache_dir), torch_dtype=torch.float16,
-        device_map="auto", trust_remote_code=True
-    )
-
-    prompt = (
-        "Analyze this audio file. Return ONLY valid JSON with these fields: "
-        '"tempo" (BPM float), "key" (e.g. "Am"), "scale" (e.g. "minor"), '
-        '"genre" (e.g. "techno"), "mood" (e.g. "dark"), '
-        '"time_signature" (e.g. "4/4").'
-    )
-    inputs = processor(text=prompt, audio=audio_path, return_tensors="pt").to(model.device)
-    out = model.generate(**inputs, max_new_tokens=256)
-    text = processor.decode(out[0], skip_special_tokens=True)
-
-    # Extract JSON block
+    text = response.choices[0].message.content
     import re
-    m = re.search(r'\{.*?\}', text, re.DOTALL)
+    m = re.search(r'\{.*\}', text, re.DOTALL)
     if m:
         return json.loads(m.group())
     raise ValueError(f"No JSON in model output: {text}")
@@ -849,58 +904,53 @@ PYEOF
 cat > "${AGENT_DIR}/generate_project.py" << 'PYEOF'
 #!/usr/bin/env python3
 """
-Step 3: Generate Bitwig project via Qwen3-14B agent
+Step 3: Generate Bitwig project via Qwen3-8B (Port 8001, Thinking aktiviert)
 Input:  neo4j context dict
 Output: ~/.local/share/bitwig-agent/output/<title>.bwtemplate.json
 """
-import os, json, sys
+import os, json, sys, re
 from pathlib import Path
-from vllm import LLM, SamplingParams
+from openai import OpenAI
 
-AGENT_MODEL = os.environ.get("FEDORA_AGENT_MODEL", "Qwen/Qwen3-14B-AWQ")
-MODEL_DIR = Path.home() / "models" / AGENT_MODEL.replace("/", "__")
-OUTPUT_DIR = Path.home() / ".local/share/bitwig-agent/output"
+AGENT_API  = os.environ.get("AGENT_API_URL", "http://localhost:8001/v1")
+OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR",
+               str(Path.home() / "bitwig-output")))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-SYSTEM_PROMPT = """
-You are an expert music producer and Bitwig Studio specialist.
-Given audio analysis results and music theory context from Neo4j,
-create a detailed Bitwig project template as JSON.
+SYSTEM_PROMPT = """You are an expert music producer and Bitwig Studio specialist.
+Given audio analysis results and music theory context, create a Bitwig project template.
 
 The JSON must include:
-- project_name (string)
-- tempo (float)
-- time_signature (string)
-- key (string)
-- tracks: list of {name, type (instrument|audio|fx), device, clips}
-- clips: list of {name, length_bars, notes: [{pitch, start, duration, velocity}]}
-- macro_mappings: list of {name, target_device, parameter}
+- project_name, tempo, time_signature, key
+- tracks: [{name, type (instrument|audio|fx), device, clips}]
+- clips: [{name, length_bars, notes: [{pitch, start, duration, velocity}]}]
+- macro_mappings: [{name, target_device, parameter}]
 
-Think step by step. Use <think>...</think> for reasoning, then output ONLY valid JSON.
-"""
+Use <think>...</think> for reasoning, then output ONLY valid JSON."""
 
 def generate(context: dict) -> dict:
-    llm = LLM(model=str(MODEL_DIR), dtype="auto",
-              max_model_len=8192, gpu_memory_utilization=0.9)
+    client = OpenAI(base_url=AGENT_API, api_key="none")
     analysis = context["input_analysis"]
-    prompt = f"""
-{SYSTEM_PROMPT}
 
-Audio Analysis:
-{json.dumps(analysis, indent=2)}
+    response = client.chat.completions.create(
+        model="agent",
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": (
+                f"Audio Analysis:\n{json.dumps(analysis, indent=2)}\n\n"
+                f"Chord Progressions: {json.dumps(context.get('chord_progressions', []))}\n"
+                f"Reference Songs: {json.dumps(context.get('reference_songs', []))}\n"
+                f"Rhythm Patterns: {json.dumps(context.get('rhythm_patterns', []))}\n\n"
+                "Generate the Bitwig project template JSON now:"
+            )}
+        ],
+        max_tokens=4096,
+        temperature=0.3,
+        extra_body={"chat_template_kwargs": {"enable_thinking": True}},
+    )
 
-Music Theory Context (from Neo4j):
-Chord Progressions: {json.dumps(context.get('chord_progressions', []), indent=2)}
-Reference Songs: {json.dumps(context.get('reference_songs', []), indent=2)}
-Rhythm Patterns: {json.dumps(context.get('rhythm_patterns', []), indent=2)}
-
-Generate the Bitwig project template JSON now:
-"""
-    params = SamplingParams(max_tokens=4096, temperature=0.3)
-    out = llm.generate([prompt], params)[0].outputs[0].text
-
-    # Strip <think>...</think> block
-    import re
+    out = response.choices[0].message.content
+    # <think>...</think> Block entfernen
     out = re.sub(r'<think>.*?</think>', '', out, flags=re.DOTALL).strip()
     m = re.search(r'\{.*\}', out, re.DOTALL)
     if not m:
@@ -919,26 +969,74 @@ PYEOF
 
 cat > "${AGENT_DIR}/run_pipeline.sh" << 'SHEOF'
 #!/bin/bash
-# Bitwig Agent Pipeline: Audio -> Kimi-Audio -> Neo4j -> Qwen3-14B -> .bwtemplate
+# Bitwig Agent Pipeline:
+#   Audio -> Kimi-Audio-7B (Port 8000) -> Neo4j -> Qwen3-8B+Thinking (Port 8001) -> .bwtemplate
+#
+# Verzeichnisse (werden beim ersten Aufruf angelegt):
+#   ~/bitwig-input/   — MP3/MIDI/WAV Eingabedateien hier ablegen
+#   ~/bitwig-output/  — generierte .bwtemplate.json Dateien
+#
+# Verwendung:
+#   run_pipeline.sh mein-track.mp3          # einzelne Datei
+#   run_pipeline.sh                         # alle neuen Dateien in ~/bitwig-input/
+#
+# Voraussetzung: beide vLLM Services laufen
+#   systemctl --user start vllm-audio.service vllm-agent.service
 set -euo pipefail
 source /etc/fedora-provision.env 2>/dev/null || true
 
-AUDIO_FILE="${1:?Usage: run_pipeline.sh <audio_file>}"
 AGENT_DIR="${HOME}/.local/share/bitwig-agent"
-AUDIO_VENV="${FEDORA_AUDIO_VENV:-${HOME}/.venvs/kimi-audio}"
-[[ "$AUDIO_VENV" == '~'* ]] && AUDIO_VENV="${HOME}${AUDIO_VENV#~}"
+INPUT_DIR="${HOME}/bitwig-input"
+OUTPUT_DIR="${HOME}/bitwig-output"
 VLLM_VENV="${FEDORA_VLLM_VENV:-${HOME}/.venvs/bitwig-omni}"
 [[ "$VLLM_VENV" == '~'* ]] && VLLM_VENV="${HOME}${VLLM_VENV#~}"
 
-echo "[1/3] Analyzing audio with Kimi-Audio-7B..."
-ANALYSIS=$("${AUDIO_VENV}/bin/python3" "${AGENT_DIR}/analyze_audio.py" "$AUDIO_FILE")
-echo "  Analysis: $ANALYSIS"
+export AUDIO_API_URL="${AUDIO_API_URL:-http://localhost:8000/v1}"
+export AGENT_API_URL="${AGENT_API_URL:-http://localhost:8001/v1}"
+export OUTPUT_DIR
 
-echo "[2/3] Querying Neo4j music theory DB..."
-CONTEXT=$("${AUDIO_VENV}/bin/python3" "${AGENT_DIR}/query_neo4j.py" "$ANALYSIS")
+mkdir -p "$INPUT_DIR" "$OUTPUT_DIR"
 
-echo "[3/3] Generating Bitwig project via Qwen3-14B..."
-"${VLLM_VENV}/bin/python3" "${AGENT_DIR}/generate_project.py" "$CONTEXT"
+# Einzelne Datei oder alle neuen Dateien im Input-Verzeichnis
+if [[ -n "${1:-}" ]]; then
+    FILES=("$1")
+else
+    # Alle Audio-Dateien die noch kein Output haben
+    mapfile -t FILES < <(
+        find "$INPUT_DIR" -maxdepth 1 \
+            \( -name "*.mp3" -o -name "*.wav" -o -name "*.flac" -o -name "*.ogg" \) | sort
+    )
+    [[ ${#FILES[@]} -eq 0 ]] && {
+        echo "Keine Audio-Dateien in ${INPUT_DIR} gefunden."
+        echo "MP3/WAV/FLAC dort ablegen und erneut aufrufen."
+        exit 0
+    }
+fi
+
+for AUDIO_FILE in "${FILES[@]}"; do
+    BASENAME=$(basename "${AUDIO_FILE%.*}")
+    echo ""
+    echo "════════════════════════════════════"
+    echo "  Verarbeite: $(basename "$AUDIO_FILE")"
+    echo "════════════════════════════════════"
+
+    echo "[1/3] Kimi-Audio-7B analysiert..."
+    ANALYSIS=$("${VLLM_VENV}/bin/python3" "${AGENT_DIR}/analyze_audio.py" "$AUDIO_FILE")
+    echo "  → $(echo "$ANALYSIS" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(f"BPM:{d.get(\"tempo\",\"?\")} Key:{d.get(\"key\",\"?\")} Genre:{d.get(\"genre\",\"?\")}"  )' 2>/dev/null || echo "$ANALYSIS")"
+
+    echo "[2/3] Neo4j Musik-Theorie..."
+    CONTEXT=$("${VLLM_VENV}/bin/python3" "${AGENT_DIR}/query_neo4j.py" "$ANALYSIS")
+
+    echo "[3/3] Qwen3-8B generiert Bitwig-Projekt..."
+    OUTPUT_FILE="${OUTPUT_DIR}/${BASENAME}.bwtemplate.json"
+    OUTPUT_DIR="$OUTPUT_DIR" \
+        "${VLLM_VENV}/bin/python3" "${AGENT_DIR}/generate_project.py" "$CONTEXT"
+
+    echo "  ✓ Output: ${OUTPUT_FILE}"
+done
+
+echo ""
+echo "Alle Ergebnisse in: ${OUTPUT_DIR}"
 SHEOF
 chmod +x "${AGENT_DIR}/run_pipeline.sh"
 

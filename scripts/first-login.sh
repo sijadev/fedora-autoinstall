@@ -28,6 +28,11 @@ ENV_FILE="/etc/fedora-provision.env"
 mkdir -p "$MARKER_DIR"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
+# Modell-Verzeichnis von ~/.cache getrennt — überlebt cache-Bereinigungen
+export HF_HOME="${HOME}/.models/huggingface"
+export TRANSFORMERS_CACHE="${HF_HOME}/hub"
+mkdir -p "$HF_HOME"
+
 log()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO]  $*"; }
 warn() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARN]  $*"; }
 err()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $*" >&2; }
@@ -90,6 +95,9 @@ else
     EXTENSIONS=(
         "user-theme@gnome-shell-extensions.gcampax.github.com"
         "dash-to-dock@micxgx.gmail.com"
+        "blur-my-shell@aunetx"
+        "caffeine@patapon.info"
+        "appindicatorsupport@rgcjonas.gmail.com"
     )
     # dash-to-panel kollidiert mit dash-to-dock — explizit ausgeschlossen
     CONFLICTING=("dash-to-panel@jderose9.github.com")
@@ -284,6 +292,14 @@ if command -v gsettings &>/dev/null; then
     gs set org.gnome.desktop.interface clock-format       '24h'
     gs set org.gnome.desktop.sound     event-sounds       false
     log "GNOME tweaks applied: font-antialiasing=rgba, font-hinting=slight, clock=24h, bell=off."
+
+    # ── Night Light (Blaulichtfilter ab 20:00 bis 07:00) ─────────────────────
+    gs set org.gnome.settings-daemon.plugins.color night-light-enabled    true
+    gs set org.gnome.settings-daemon.plugins.color night-light-schedule-automatic false
+    gs set org.gnome.settings-daemon.plugins.color night-light-schedule-from 20.0
+    gs set org.gnome.settings-daemon.plugins.color night-light-schedule-to   7.0
+    gs set org.gnome.settings-daemon.plugins.color night-light-temperature  3500
+    log "Night Light aktiviert: 20:00–07:00, 3500K."
 fi
 
 # Repos nach Installation entfernen — Theme-Dateien sind in ~/.local/share/ installiert
@@ -327,10 +343,34 @@ if [[ "$INSTALL_PROFILE" == "theme-bash" ]]; then
     exit 0
 fi
 
-# ── Profile: headless-vllm skips direct vLLM (handled via Podman) ────────────
-if [[ "$INSTALL_PROFILE" == "headless-vllm" ]]; then
-    step "headless-vllm profile — skipping direct vLLM (Podman pipeline handles it)"
-    log "vLLM steps 7-11 skipped. Model download still runs to cache locally."
+# ── Profile: headless-vllm / vllm-only — Podman vLLM Service aktivieren ──────
+if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
+    step "Podman vLLM Service"
+
+    QUADLET_FILE="${HOME}/.config/containers/systemd/vllm.container"
+    if [[ -f "$QUADLET_FILE" ]]; then
+        systemctl --user daemon-reload 2>/dev/null || true
+
+        # Image vorab pullen
+        VLLM_IMAGE="fedora-vllm:latest"
+        podman image exists "$VLLM_IMAGE" 2>/dev/null || VLLM_IMAGE="vllm/vllm-openai:latest"
+        log "Pulling ${VLLM_IMAGE}..."
+        podman pull "$VLLM_IMAGE" 2>&1 | while read -r l; do
+            [[ "$l" == *"Copying"* || "$l" == *"Writing"* || "$l" == *"manifest"* ]] && log "  $l" || true
+        done || warn "Image pull fehlgeschlagen — Service startet beim ersten Aufruf."
+
+        for svc in vllm-audio.service vllm-agent.service; do
+            systemctl --user enable "$svc" 2>/dev/null \
+                && log "${svc} aktiviert." \
+                || warn "${svc} enable fehlgeschlagen (non-fatal)."
+        done
+
+        log "Kimi-Audio  API: http://localhost:8000/v1  (Musik-Analyse)"
+        log "Qwen3 Agent API: http://localhost:8001/v1  (Reasoning + LangGraph)"
+        log "Starten: systemctl --user start vllm-audio.service vllm-agent.service"
+    else
+        warn "Kein Quadlet-File gefunden — first-boot.sh lief ggf. noch nicht."
+    fi
 fi
 
 # ── 7. Python venv ~/.venvs/ai ────────────────────────────────────────────────
@@ -443,7 +483,7 @@ else
         TMPDIR="${HOME}/.cache/pip-tmp" \
             "$VENV_VLLM/bin/python" -c "
 from huggingface_hub import snapshot_download
-snapshot_download('facebook/opt-125m', local_dir='${HOME}/.cache/huggingface/hub/facebook--opt-125m')
+snapshot_download('facebook/opt-125m', local_dir='${HOME}/.models/huggingface/hub/facebook--opt-125m')
 print('Modell bereit: facebook/opt-125m')
 " 2>/dev/null \
             && log "Test-Modell bereit: facebook/opt-125m" \
@@ -591,7 +631,7 @@ else
     log "Downloading model: ${VLLM_MODEL} ..."
     "$VENV_VLLM/bin/python" -c "
 from huggingface_hub import snapshot_download
-snapshot_download('${VLLM_MODEL}', local_dir='${HOME}/.cache/huggingface/hub/${VLLM_MODEL//\//__}')
+snapshot_download('${VLLM_MODEL}', local_dir='${HOME}/.models/huggingface/hub/${VLLM_MODEL//\//__}')
 " \
         || warn "Model download failed or deferred (check HF token / disk space)."
 fi

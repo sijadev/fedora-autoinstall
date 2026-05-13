@@ -72,6 +72,7 @@ menuentry "Fedora -- [v] vLLM only          (bestehende Installation → Provisi
     echo "Dieses Profil installiert kein neues System."
     echo "Im laufenden System ausfuehren:"
     echo ""
+    echo "  sudo bash /run/media/USER/Ventoy/fedora-provision.sh --profile vllm-only"
     echo ""
     echo "Taste druecken um fortzufahren ..."
     sleep -1

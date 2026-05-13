@@ -23,7 +23,7 @@ set -euo pipefail
 VM_NAME="fedora43"
 VM_RAM_MB=8192
 VM_CPUS=4
-VM_DISK_GB=80
+VM_DISK_GB=100
 VM_STORAGE_DIR="/home/sija/VMs"
 VM_DISK="${VM_STORAGE_DIR}/${VM_NAME}.qcow2"
 VM_SNAPSHOT="fedora43-default"

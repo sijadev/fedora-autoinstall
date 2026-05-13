@@ -43,12 +43,44 @@ fi
 INSTALL_PROFILE="${FEDORA_INSTALL_PROFILE:-full}"
 log "Install profile: ${INSTALL_PROFILE}"
 
-# ── 0. Theme-Abhängigkeiten vorinstallieren (verhindert sudo-Prompts in first-login) ──
-step "Theme dependencies"
+# ── 0. DNF Optimierungen ─────────────────────────────────────────────────────
+step "DNF Optimierungen"
+cat >> /etc/dnf/dnf.conf <<'DNFEOF'
+max_parallel_downloads=10
+fastestmirror=True
+deltarpm=True
+DNFEOF
+log "DNF: max_parallel_downloads=10, fastestmirror, deltarpm."
+
+# ── 0b. Flathub einrichten ────────────────────────────────────────────────────
+step "Flathub"
+if command -v flatpak &>/dev/null; then
+    flatpak remote-add --if-not-exists flathub \
+        https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null \
+        && log "Flathub hinzugefügt." \
+        || warn "Flathub setup fehlgeschlagen (non-fatal)."
+fi
+
+# ── 0c. fstrim (SSD TRIM wöchentlich) ────────────────────────────────────────
+step "fstrim.timer"
+systemctl enable fstrim.timer 2>/dev/null \
+    && log "fstrim.timer aktiviert." \
+    || warn "fstrim.timer enable fehlgeschlagen (non-fatal)."
+
+# ── 0d. Theme-Abhängigkeiten + GNOME Extensions ───────────────────────────────
+step "Theme dependencies + GNOME Extensions"
 if [[ "$INSTALL_PROFILE" =~ ^(full|theme-bash)$ ]]; then
-    dnf install -y sassc glib2-devel gnome-shell-extension-user-theme gnome-shell-extension-dash-to-dock 2>/dev/null \
-        && log "Theme deps + GNOME extensions installed." \
-        || warn "Theme deps/extensions install failed (non-fatal)."
+    dnf install -y \
+        sassc \
+        glib2-devel \
+        gnome-shell-extension-user-theme \
+        gnome-shell-extension-dash-to-dock \
+        gnome-shell-extension-appindicator \
+        gnome-shell-extension-blur-my-shell \
+        gnome-shell-extension-caffeine \
+        2>/dev/null \
+        && log "Theme deps + GNOME extensions installiert." \
+        || warn "Theme deps/extensions install fehlgeschlagen (non-fatal)."
 fi
 
 # ── 1. System-Update ──────────────────────────────────────────────────────────
@@ -101,6 +133,123 @@ if check_nvidia_open_compat; then
     fi
     log "NVIDIA Open Driver installed/updated."
 fi  # end: check_nvidia_open_compat
+
+# ── 2b. Podman + NVIDIA Container Toolkit (headless-vllm / vllm-only) ─────────
+if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
+    step "Podman + NVIDIA Container Toolkit"
+
+    dnf install -y podman podman-compose 2>/dev/null \
+        && log "Podman installiert." \
+        || warn "Podman install fehlgeschlagen (non-fatal)."
+
+    # NVIDIA Container Toolkit — GPU-Passthrough in Podman/Docker
+    if lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
+        if ! rpm -q nvidia-container-toolkit &>/dev/null; then
+            curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo \
+                -o /etc/yum.repos.d/nvidia-container-toolkit.repo 2>/dev/null
+            dnf install -y nvidia-container-toolkit 2>/dev/null \
+                && log "nvidia-container-toolkit installiert." \
+                || warn "nvidia-container-toolkit fehlgeschlagen (non-fatal)."
+        fi
+        nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml 2>/dev/null \
+            && log "NVIDIA CDI-Profil generiert." \
+            || warn "nvidia-ctk CDI fehlgeschlagen (non-fatal)."
+    fi
+
+    # ── vLLM via Podman Quadlet (systemd Container Service) ───────────────────
+    TARGET_USER="${FEDORA_TARGET_USER:-sija}"
+    USER_HOME="/home/${TARGET_USER}"
+    TARGET_USER="${FEDORA_TARGET_USER:-sija}"
+    USER_HOME="/home/${TARGET_USER}"
+    AUDIO_MODEL="${FEDORA_AUDIO_MODEL:-moonshotai/Kimi-Audio-7B-Instruct}"
+    AGENT_MODEL="${FEDORA_AGENT_MODEL:-Qwen/Qwen3-8B}"
+    VLLM_IMAGE="fedora-vllm:latest"
+    podman image exists "$VLLM_IMAGE" 2>/dev/null || VLLM_IMAGE="vllm/vllm-openai:latest"
+    QUADLET_DIR="${USER_HOME}/.config/containers/systemd"
+    mkdir -p "$QUADLET_DIR"
+
+    # ── Kimi-Audio — Port 8000 (Audio-Analyse, ~4 GB VRAM) ───────────────────
+    cat > "${QUADLET_DIR}/vllm-audio.container" <<AUDIOEOF
+[Unit]
+Description=Kimi-Audio-7B — Musik-Analyse (Port 8000)
+After=network-online.target
+
+[Container]
+Image=${VLLM_IMAGE}
+PublishPort=8000:8000
+# Modell-Cache
+Volume=${USER_HOME}/.models/huggingface:/root/.cache/huggingface:Z
+# Eingabe: MP3/WAV/FLAC hier ablegen
+Volume=${USER_HOME}/bitwig-input:/input:Z
+AddDevice=nvidia.com/gpu=all
+SecurityLabelDisable=true
+ShmSize=8g
+PodmanArgs=--ipc=host
+PodmanArgs=--ulimit nofile=65536:65536
+AddCapability=SYS_NICE
+Sysctl=net.core.somaxconn=1024
+Environment=HF_TOKEN=%s
+Environment=VLLM_WORKER_MULTIPROC_METHOD=spawn
+Environment=NCCL_DMABUF_ENABLE=1
+Exec=--model ${AUDIO_MODEL} --trust-remote-code --gpu-memory-utilization 0.40 --max-model-len 4096 --limit-mm-per-prompt audio=5 --served-model-name audio
+
+[Service]
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=600
+
+[Install]
+WantedBy=default.target
+AUDIOEOF
+
+    # ── Qwen3-8B — Port 8001 (Thinking + LangGraph, ~5 GB VRAM) ─────────────
+    cat > "${QUADLET_DIR}/vllm-agent.container" <<AGENTEOF
+[Unit]
+Description=Qwen3-8B — Reasoning + LangGraph Agent (Port 8001)
+After=network-online.target
+
+[Container]
+Image=${VLLM_IMAGE}
+PublishPort=8001:8000
+# Modell-Cache
+Volume=${USER_HOME}/.models/huggingface:/root/.cache/huggingface:Z
+# Ausgabe: .bwtemplate.json Dateien landen hier
+Volume=${USER_HOME}/bitwig-output:/output:Z
+AddDevice=nvidia.com/gpu=all
+SecurityLabelDisable=true
+ShmSize=8g
+PodmanArgs=--ipc=host
+PodmanArgs=--ulimit nofile=65536:65536
+AddCapability=SYS_NICE
+Sysctl=net.core.somaxconn=1024
+Environment=HF_TOKEN=%s
+Environment=VLLM_WORKER_MULTIPROC_METHOD=spawn
+Environment=NCCL_DMABUF_ENABLE=1
+Environment=VLLM_FLASH_ATTN_VERSION=2
+Environment=OUTPUT_DIR=/output
+Exec=--model ${AGENT_MODEL} --gpu-memory-utilization 0.45 --max-model-len 8192 --enable-reasoning --reasoning-parser deepseek_r1 --served-model-name agent
+
+[Service]
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=600
+
+[Install]
+WantedBy=default.target
+AGENTEOF
+
+    HF_ENV="${FEDORA_HF_TOKEN:+Environment=HF_TOKEN=${FEDORA_HF_TOKEN}}"
+    HF_ENV="${HF_ENV:-# Environment=HF_TOKEN=<dein-token>}"
+    sed -i "s|Environment=HF_TOKEN=%s|${HF_ENV}|g" \
+        "${QUADLET_DIR}/vllm-audio.container" \
+        "${QUADLET_DIR}/vllm-agent.container"
+
+    chown -R "${TARGET_USER}:${TARGET_USER}" "$QUADLET_DIR"
+    log "Quadlets angelegt:"
+    log "  vllm-audio  → Port 8000 (${AUDIO_MODEL})"
+    log "  vllm-agent  → Port 8001 (${AGENT_MODEL})"
+    log "Aktivieren: systemctl --user enable --now vllm-audio.service vllm-agent.service"
+fi
 
 # ── 3. CUDA installation ──────────────────────────────────────────────────────
 step "CUDA installation"
@@ -217,9 +366,12 @@ if ! command -v tuned-adm &>/dev/null; then
 fi
 
 if command -v tuned-adm &>/dev/null; then
+    # tuned: throughput-performance für Disk/IRQ/Netzwerk
+    # CPU-Governor wird danach von cpu-schedutil.service auf schedutil gesetzt
+    # (scx_bpfland arbeitet mit schedutil, nicht performance)
     cat > /etc/systemd/system/cpu-performance.service <<'CPUEOF'
 [Unit]
-Description=CPU Performance Governor via tuned
+Description=System throughput profile via tuned (Disk/IRQ/Net)
 After=tuned.service
 Requires=tuned.service
 
@@ -232,13 +384,72 @@ ExecStop=/usr/sbin/tuned-adm profile balanced
 [Install]
 WantedBy=multi-user.target
 CPUEOF
+
+    # schedutil Override: läuft nach tuned und setzt Governor zurück
+    # scx_bpfland braucht schedutil für korrekte Frequenzskalierung
+    cat > /etc/systemd/system/cpu-schedutil.service <<'SUTILEOF'
+[Unit]
+Description=Set CPU Governor to schedutil (für scx_bpfland)
+After=cpu-performance.service
+Wants=cpu-performance.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c 'for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo schedutil > "$f" 2>/dev/null || true; done'
+
+[Install]
+WantedBy=multi-user.target
+SUTILEOF
+
     systemctl daemon-reload
-    systemctl enable tuned.service          2>/dev/null || true
+    systemctl enable tuned.service           2>/dev/null || true
     systemctl enable cpu-performance.service 2>/dev/null || true
-    systemctl start  tuned.service          2>/dev/null || true
+    systemctl enable cpu-schedutil.service   2>/dev/null || true
+    systemctl start  tuned.service           2>/dev/null || true
     tuned-adm profile throughput-performance 2>/dev/null \
-        && log "tuned: throughput-performance aktiv." \
-        || warn "tuned-adm fehlgeschlagen (non-fatal, wirkt ab nächstem Boot)."
+        && log "tuned: throughput-performance aktiv (Disk/IRQ/Net)." \
+        || warn "tuned-adm fehlgeschlagen (non-fatal)."
+    for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+        echo schedutil > "$f" 2>/dev/null || true
+    done
+    log "CPU Governor: schedutil (kompatibel mit scx_bpfland)."
+fi
+
+# ── 6b. scx_bpfland Scheduler ─────────────────────────────────────────────────
+step "scx_bpfland Scheduler"
+if ! rpm -q scx-scheds &>/dev/null; then
+    if ! dnf copr list --enabled 2>/dev/null | grep -q 'bieszczaders'; then
+        dnf copr enable -y bieszczaders/kernel-cachyos-addons 2>/dev/null || true
+    fi
+    dnf install -y scx-scheds scx-tools 2>/dev/null \
+        && log "scx-scheds + scx-tools installiert (COPR bieszczaders)." \
+        || warn "scx-scheds install fehlgeschlagen (non-fatal)."
+fi
+
+if command -v scx_bpfland &>/dev/null; then
+    # scx_bpfland als direkter systemd-Service (einfacher als scx_loader)
+    cat > /etc/systemd/system/scx-bpfland.service <<'SCXEOF'
+[Unit]
+Description=scx_bpfland — Cache-aware scheduler für AMD Ryzen
+Documentation=https://github.com/sched-ext/scx
+After=multi-user.target
+# Nach cpu-schedutil damit Governor bereits schedutil ist
+After=cpu-schedutil.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/scx_bpfland
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+SCXEOF
+    systemctl daemon-reload
+    systemctl enable scx-bpfland.service 2>/dev/null \
+        && log "scx-bpfland.service aktiviert." \
+        || warn "scx-bpfland enable fehlgeschlagen (non-fatal)."
 fi
 
 # ── 7. NVIDIA Persistence Mode ────────────────────────────────────────────────
@@ -265,14 +476,43 @@ NVEOF
         || warn "nvidia-performance.service enable fehlgeschlagen (non-fatal)."
 fi
 
-# ── 8. Timeshift + grub-btrfs (nur bei Btrfs-Root) ───────────────────────────
+# ── 8. WhiteSur GRUB Theme ───────────────────────────────────────────────────
+step "WhiteSur GRUB Theme"
+if [[ "$INSTALL_PROFILE" =~ ^(full|theme-bash|vm)$ ]]; then
+    GRUB_THEMES_DIR="/tmp/grub2-themes-build"
+    if ! git clone --depth=1 "https://github.com/vinceliuice/grub2-themes.git" \
+            "$GRUB_THEMES_DIR" 2>/dev/null; then
+        warn "grub2-themes clone fehlgeschlagen (non-fatal)."
+    elif [[ -x "${GRUB_THEMES_DIR}/install.sh" ]]; then
+        # Auflösung erkennen: 1080p als Standard, 4k falls höher
+        GRUB_RES="1080p"
+        bash "${GRUB_THEMES_DIR}/install.sh" -t whitesur -s "${GRUB_RES}" 2>/dev/null \
+            && log "WhiteSur GRUB Theme installiert (${GRUB_RES})." \
+            || warn "GRUB Theme install fehlgeschlagen (non-fatal)."
+        rm -rf "$GRUB_THEMES_DIR"
+    fi
+fi
+
+# ── 9. Timeshift + grub-btrfs (nur bei Btrfs-Root) ───────────────────────────
 if findmnt -n -o FSTYPE / 2>/dev/null | grep -qx 'btrfs'; then
     step "Timeshift + grub-btrfs"
-    dnf install -y timeshift grub2-btrfs inotify-tools 2>/dev/null \
-        && log "timeshift + grub2-btrfs + inotify-tools installiert." \
-        || warn "timeshift/grub2-btrfs install fehlgeschlagen (non-fatal)."
+    # timeshift ist in Fedora-Repos verfügbar
+    dnf install -y timeshift inotify-tools 2>/dev/null \
+        && log "timeshift + inotify-tools installiert." \
+        || warn "timeshift install fehlgeschlagen (non-fatal)."
 
-    BTRFS_DEV=$(findmnt -n -o SOURCE /)
+    # grub-btrfs benötigt COPR kylegospo/grub-btrfs (nicht in Standard-Repos)
+    # grub-btrfs-timeshift ist das Timeshift-integrierte Paket (ersetzt grub-btrfs)
+    if ! rpm -q grub-btrfs-timeshift &>/dev/null && ! rpm -q grub-btrfs &>/dev/null; then
+        dnf copr enable -y kylegospo/grub-btrfs 2>/dev/null \
+            && dnf install -y grub-btrfs-timeshift 2>/dev/null \
+            && log "grub-btrfs-timeshift installiert (COPR kylegospo)." \
+            || warn "grub-btrfs COPR install fehlgeschlagen (non-fatal)."
+    fi
+
+    # Bei Btrfs-Subvolumes enthält SOURCE den Subvolume-Pfad (z.B. /dev/vda3[@])
+    # → nur den Device-Teil extrahieren
+    BTRFS_DEV=$(findmnt -n -o SOURCE / | sed 's/\[.*\]$//')
     BTRFS_UUID=$(blkid -s UUID -o value "$BTRFS_DEV" 2>/dev/null || true)
 
     # btrfs qgroups für Timeshift aktivieren
@@ -303,6 +543,14 @@ if findmnt -n -o FSTYPE / 2>/dev/null | grep -qx 'btrfs'; then
 TIMESHIFTEOF
         chmod 0644 /etc/timeshift/timeshift.json
         log "Timeshift konfiguriert: BTRFS-Modus, UUID=${BTRFS_UUID}."
+    fi
+
+    # BLS-Entries auf subvol=@ aktualisieren (grubby patcht alle Kernel-Einträge)
+    # grub2-mkconfig liest sonst das laufende Subvolume → wäre falsch beim ersten Boot
+    if command -v grubby &>/dev/null; then
+        grubby --update-kernel=ALL --remove-args='rootflags' --args='rootflags=subvol=@' \
+            && log "grubby: BLS-Entries auf rootflags=subvol=@ gesetzt." \
+            || warn "grubby update fehlgeschlagen (non-fatal)."
     fi
 
     # grub-btrfs: Snapshots automatisch im GRUB-Menü registrieren

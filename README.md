@@ -1,6 +1,6 @@
-# fedora-install
+# fedora-autoinstall
 
-Vollautomatisches Unattended-Install-Framework für **Fedora Linux** (Fedora-basiert) via Ventoy USB-Stick.
+Vollautomatisches Unattended-Install-Framework für **Fedora Linux** via Ventoy USB-Stick.
 
 Ein einziger Befehl beschreibt den USB-Stick mit ISO, Kickstart-Profilen und GRUB-Menü. Beim Booten wählt man ein Profil — der Rest läuft ohne Eingriff durch.
 
@@ -10,14 +10,14 @@ Ein einziger Befehl beschreibt den USB-Stick mit ISO, Kickstart-Profilen und GRU
 
 | Was | Version / Bedingung |
 |---|---|
-| Fedora / Fedora / RHEL-basiertes Host-System | für `fedora-install.sh` |
+| Fedora-basiertes Host-System | für `fedora-install.sh` |
 | Python 3 | `python3`, `pip`, `venv` |
 | `curl`, `lsblk`, `findmnt`, `sha256sum`, `git` | Standard-Tools |
 | `7z` (p7zip-plugins) | für ISO CDLABEL-Extraktion |
 | Ventoy USB-Stick | ≥ 32 GB empfohlen, Ventoy vorinstalliert |
 | Root-Rechte | `sudo ./fedora-install.sh …` |
 
-> **Ziel-Hardware:** UEFI-System mit NVIDIA GPU (Turing RTX 20xx oder neuer).  
+> **Ziel-Hardware:** UEFI-System mit NVIDIA GPU (Turing RTX 20xx oder neuer), AMD Ryzen CPU empfohlen.  
 > Legacy-BIOS wird nicht unterstützt.
 
 ---
@@ -25,22 +25,24 @@ Ein einziger Befehl beschreibt den USB-Stick mit ISO, Kickstart-Profilen und GRU
 ## Projektstruktur
 
 ```
-fedora-install/
+fedora-autoinstall/
 ├── fedora-install.sh          # Haupt-Orchestrator
+├── fedora-provision.sh        # Provisioner für laufende Systeme
+├── Containerfile.vllm         # Custom vLLM Image (Blackwell sm_120 optimiert)
 │
 ├── config/
 │   ├── example.xml            # Referenz-Konfiguration
 │   └── schema.xsd             # XML-Schema (Validierung)
 │
 ├── kickstart/
-│   ├── fedora-full.ks         # Profil: Vollinstallation (GNOME + NVIDIA + AI)
-│   ├── fedora-theme-bash.ks   # Profil: GNOME + WhiteSur, kein AI
-│   ├── fedora-headless-vllm.ks# Profil: Kein GUI, Podman + vLLM als Dienst
-│   ├── fedora-vm.ks           # Profil: VM (KVM/QEMU, vda)
-│   └── common-post.inc        # Gemeinsamer %post-Block (alle Profile)
+│   ├── fedora-full.ks         # Vollinstallation (GNOME + NVIDIA + AI)
+│   ├── fedora-theme-bash.ks   # GNOME + WhiteSur, kein AI
+│   ├── fedora-headless-vllm.ks# Kein GUI, Podman + Kimi-Audio + Qwen3
+│   ├── fedora-vm.ks           # VM (KVM/QEMU, vda)
+│   └── common-post.inc        # Gemeinsamer %post-Block (sync mit scripts/!)
 │
 ├── ventoy/
-│   ├── ventoy_grub.cfg.tpl    # GRUB-Menü-Template (4 Profile, Hotkeys f/t/h/v)
+│   ├── ventoy_grub.cfg.tpl    # GRUB-Menü (5 Profile: m/f/t/h/v)
 │   └── ventoy.json.tpl        # Ventoy auto_install-Template
 │
 ├── lib/
@@ -51,93 +53,46 @@ fedora-install/
 ├── scripts/
 │   ├── first-boot.sh          # Systemweite Provisionierung (root, einmalig)
 │   ├── first-login.sh         # User-Provisionierung (sija, einmalig)
-│   ├── benchmark.sh           # GPU/CPU Benchmark
-│   ├── podman-pipeline.sh     # CI-Pipeline im Container
-│   └── podman-run.sh          # Podman vLLM-Dienst starten
+│   ├── vm-test.sh             # VM-Test via KVM/QEMU + SSH
+│   ├── podman-pipeline.sh     # Layered Container-Build + --build-vllm
+│   └── podman-run.sh          # Interaktiver Container-Start
 │
 ├── systemd/
-│   └── fedora-first-boot.service  # Systemd Unit für first-boot.sh
+│   └── fedora-first-boot.service
 │
-├── tests/
-│   └── test_xml2ks.py         # Unit-Tests für xml2ks.py
-│
-└── iso/                       # Lokaler ISO-Cache (wird von fedora-install.sh befüllt)
+└── iso/                       # Lokaler ISO-Cache
 ```
 
 ---
 
 ## Schnellstart
 
-### 1. Konfiguration anpassen
-
-```bash
-cp config/example.xml config/mein-system.xml
-# Passwort-Hash generieren:
-openssl passwd -6 meinPasswort
-# Hash in config/mein-system.xml unter <password_hash> eintragen
-```
-
-Mindest-Anpassungen in der XML:
-
-| Feld | Bedeutung |
-|---|---|
-| `<password_hash>` | SHA-512 Passwort-Hash des Ziel-Users |
-| `<sha256>` | SHA256-Prüfsumme der ISO (optional, empfohlen) |
-| `<hostname>` | Hostname des Zielsystems |
-
-### 2. USB-Stick beschreiben
+### 1. USB-Stick beschreiben
 
 ```bash
 sudo ./fedora-install.sh --config config/mein-system.xml
 ```
 
-Mit Vorschau (kein Schreiben):
+### 2. Profil wählen
 
-```bash
-sudo ./fedora-install.sh --config config/mein-system.xml --dry-run
-```
+USB einstecken → Im Ventoy-Hauptmenü **F6** drücken → Hotkey wählen:
 
-### 3. Profil wählen — ISO-Install oder Provisioner
+| Taste | Profil | Was passiert |
+|-------|--------|-------------|
+| `m` | VM-Test | Anaconda → `fedora-vm.ks` (KVM/QEMU) |
+| `f` | Vollinstallation | Anaconda → `fedora-full.ks` |
+| `t` | Theme + Bash | Provisioner auf bestehendem System |
+| `h` | Headless vLLM | Provisioner: Podman + Kimi-Audio + Qwen3 |
+| `v` | vLLM only | Provisioner: vLLM only |
 
-Zwei grundlegend verschiedene Mechanismen:
-
-| Profil | Mechanismus | Wann |
-|---|---|---|
-| `full` | ISO-Boot → Anaconda → frisches System | Neues System / Festplatte leer |
-| `theme-bash` | `fedora-provision.sh` auf laufendem System | Fedora bereits installiert |
-| `headless-vllm` | `fedora-provision.sh` auf laufendem System | Fedora bereits installiert |
-
-#### Profil `full` — Frische Installation per ISO
-
-USB-Stick in Zielrechner → Im Ventoy-Menü Fedora-ISO auswählen → **F6** → **`f`** drücken.
-
-Anaconda startet grafisch, die Installation läuft vollautomatisch durch. Nach dem Reboot startet die Provisionierung automatisch.
-
-Disk-Override (falls nicht die größte interne Disk gewählt werden soll): Im GRUB-Menü **`e`** drücken und an die `linux`-Zeile anhängen:
-```
-inst.disk=nvme1n1
-```
-
-
-USB-Stick einstecken, im laufenden Fedora ausführen:
+### 3. Provisioner auf laufendem System
 
 ```bash
 # Theme + WhiteSur + Oh-My-Bash
 sudo bash /run/media/$USER/Ventoy/fedora-provision.sh --profile theme-bash
 
-# NVIDIA + CUDA + Podman + vLLM als systemd-Dienst
+# Podman + Kimi-Audio-7B + Qwen3-8B (AI Agent)
 sudo bash /run/media/$USER/Ventoy/fedora-provision.sh --profile headless-vllm
-
-# NVIDIA + CUDA + vLLM direkt im Python venv
-```
-
-Für einen anderen Benutzer:
-```bash
-sudo bash /run/media/$USER/Ventoy/fedora-provision.sh --profile theme-bash --user max
-```
-
-Sofort starten statt beim nächsten Boot:
-```bash
 ```
 
 ---
@@ -145,68 +100,138 @@ Sofort starten statt beim nächsten Boot:
 ## Profile im Detail
 
 ### `full` — Vollinstallation (ISO-Boot)
-Frische Neuinstallation. GNOME Desktop, NVIDIA Open Driver, CUDA, Podman, vLLM (Blackwell sm120), Kimi-Audio, Qwen3-14B-AWQ, Neo4j, WhiteSur-Theme, Oh-My-Bash.
+Frische Neuinstallation auf leerem System. Btrfs-Dateisystem, GNOME Desktop, NVIDIA Open Driver, CUDA, WhiteSur-Theme, Oh-My-Bash, Podman, AI-Stack.
 
 ### `theme-bash` — Theme + Bash (Provisioner)
-Auf bestehendem Fedora: WhiteSur GTK/Icon/Wallpaper-Themes, Oh-My-Bash. NVIDIA Open Driver wird aktualisiert. Kein AI-Stack, kein CUDA.
+WhiteSur GTK/Icon/Wallpaper/Cursor-Themes, Dash-to-Dock, Blur-my-Shell, Oh-My-Bash. Kein AI-Stack.
 
-### `headless-vllm` — Podman + vLLM (Provisioner)
-Auf bestehendem Fedora: NVIDIA Open Driver, CUDA, Podman-Pipeline mit vLLM als systemd-Dienst. Kein Anaconda-GUI nötig.
-
-Auf bestehendem Fedora: NVIDIA Open Driver, CUDA, vLLM direkt im Python venv als systemd-Dienst. Kein Podman.
+### `headless-vllm` — Podman + KI-Agent (Provisioner)
+NVIDIA Open Driver, CUDA, Podman mit zwei vLLM-Services:
+- **Kimi-Audio-7B** auf Port 8000 — Musik-Analyse
+- **Qwen3-8B** auf Port 8001 — Reasoning + LangGraph
 
 ### `vm` — VM (intern)
-KVM/QEMU-Gast, virtio-Disk (`vda`). Wird vom Podman-Smoke-Gate genutzt.
+KVM/QEMU-Gast, virtio-Disk (`vda`). Für automatisierte VM-Tests.
 
 ---
 
-## Konfiguration (XML)
+## Dateisystem: Btrfs
 
-```xml
-<fedora-install>
-  <iso>
-    <url>https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/iso/Fedora-Everything-netinst-x86_64-43-1.6.iso</url>
-    <sha256>abc123…</sha256>          <!-- optional, aber empfohlen -->
-  </iso>
+Alle Profile nutzen **Btrfs** mit Ubuntu-kompatiblem Subvolume-Layout:
 
-  <hostname>fedora-workstation</hostname>
-  <timezone>Europe/Berlin</timezone>
-  <locale>de_DE.UTF-8</locale>
-  <keyboard>de</keyboard>
+| Subvolume | Mountpoint | Zweck |
+|-----------|-----------|-------|
+| `@` | `/` | Root — Timeshift-Snapshots |
+| `@home` | `/home` | Home-Verzeichnis |
 
-  <user>
-    <name>sija</name>
-    <password_hash>$6$…</password_hash>
-    <groups>wheel,libvirt,video,audio</groups>
-  </user>
+Mount-Optionen: `compress=zstd:1,noatime`  
+Kein Swap-Partition — **zram-generator** übernimmt (50% RAM, zstd-Kompression).
 
-  <first-boot>
-    <fedora-sync enabled="true"/>
-    <nvidia-open enabled="true"/>
-    <cuda enabled="true" source="fedora"/>  <!-- oder source="nvidia" -->
-  </first-boot>
+### Timeshift + GRUB-Snapshots
 
-  <first-login>
-    <whitesur enabled="true">
-      <gtk-args>-l -c Dark</gtk-args>
-      <icon-args>-dark</icon-args>
-    </whitesur>
-    <ohmybash enabled="true" theme="modern"/>
-    <pytorch-venv enabled="true" path="~/.venvs/ai"/>
-    <vllm-omni enabled="true" venv="~/.venvs/bitwig-omni">
-      <cuda-version>13.0</cuda-version>
-      <arch-list>12.0</arch-list>   <!-- sm120 = Blackwell RTX 5070 Ti -->
-      <agent-model>Qwen/Qwen3-14B-AWQ</agent-model>
-    </vllm-omni>
-  </first-login>
-</fedora-install>
+Beim ersten Boot werden automatisch eingerichtet:
+- **Timeshift** (btrfs-Modus) — monatliche Snapshots + Boot-Snapshot
+- **grub-btrfs** — Snapshots erscheinen im GRUB-Auswahlmenü
+
+---
+
+## System-Optimierungen
+
+### Performance (first-boot.sh)
+
+| Bereich | Was |
+|---------|-----|
+| **DNF** | `max_parallel_downloads=10`, `fastestmirror`, `deltarpm` |
+| **Kernel/Sysctl** | `vm.swappiness=10`, `vfs_cache_pressure=50`, `net.core.somaxconn=1024` |
+| **Hugepages** | `madvise` via tmpfiles.d — PyTorch/vLLM nutzen es gezielt |
+| **CPU** | `tuned throughput-performance` + `schedutil` Governor |
+| **scx_bpfland** | Cache-aware Scheduler für AMD Ryzen CCDs (COPR bieszczaders) |
+| **NVIDIA** | Persistence Mode als systemd-Service |
+| **zram** | 50% RAM, zstd — ersetzt Swap-Partition |
+| **irqbalance** | IRQ-Verteilung auf alle CPU-Kerne |
+| **ananicy-cpp** | Prozess-Priorisierung (COPR eriknguyen) |
+| **AMD Ryzen** | P-State EPP=performance, `amd_pstate=active`, `amd_iommu=on` im GRUB |
+| **fstrim** | Wöchentlicher SSD TRIM |
+
+### GNOME (first-login.sh)
+
+| Bereich | Was |
+|---------|-----|
+| **Theme** | WhiteSur GTK/Icons/Wallpaper/Cursor (macOS-Stil) |
+| **Dock** | Dash-to-Dock: unten, autohide, Apps-Button links |
+| **Extensions** | blur-my-shell, caffeine, AppIndicator, user-theme |
+| **Schrift** | `font-antialiasing=rgba`, `font-hinting=slight` |
+| **Night Light** | 20:00–07:00, 3500K |
+| **GRUB Theme** | WhiteSur (passend zum Desktop) |
+
+---
+
+## AI Agent: Bitwig Musik-Pipeline
+
+### Architektur
+
+```
+~/bitwig-input/  (MP3/WAV/FLAC)
+       │
+       ▼
+Kimi-Audio-7B — Port 8000 (~4 GB VRAM)
+  Musik-Analyse: Tempo, Key, Genre, Mood, Chords
+       │
+       ▼
+Neo4j — Musik-Theorie DB
+  Chord Progressions, Reference Songs, Rhythm Patterns
+       │
+       ▼
+Qwen3-8B + Thinking — Port 8001 (~5 GB VRAM)
+  <think>...</think> → LangGraph Slaves
+       │
+       ▼
+~/bitwig-output/  (.bwtemplate.json)
 ```
 
-Validierung ohne Deployment:
+**VRAM gesamt: ~9 GB** — beide Modelle gleichzeitig in 16 GB VRAM.
+
+### Verzeichnisse
+
+| Verzeichnis | Inhalt |
+|-------------|--------|
+| `~/bitwig-input/` | MP3/WAV/FLAC Eingabedateien |
+| `~/bitwig-output/` | Generierte `.bwtemplate.json` Ergebnisse |
+| `~/.models/huggingface/` | Modell-Gewichte (getrennt von `~/.cache/`) |
+
+### Pipeline starten
 
 ```bash
-python3 lib/xml2ks.py --validate-only config/mein-system.xml
+# Services starten
+systemctl --user start vllm-audio.service vllm-agent.service
+
+# Einzelne Datei
+~/.local/share/bitwig-agent/run_pipeline.sh ~/bitwig-input/track.mp3
+
+# Alle Dateien in ~/bitwig-input/
+~/.local/share/bitwig-agent/run_pipeline.sh
 ```
+
+### Custom vLLM Image (Blackwell-optimiert)
+
+```bash
+# Einmaliger Build ~30-60 Min (CUDA sm_120 für RTX 9070)
+./scripts/podman-pipeline.sh --build-vllm
+# → fedora-vllm:latest  (~10-15% mehr tokens/sec)
+```
+
+---
+
+## VM-Test
+
+```bash
+# Vollständiger Test-Zyklus
+./scripts/vm-test.sh install    # Frische Installation (Anaconda)
+./scripts/vm-test.sh base       # Snapshot anlegen
+./scripts/vm-test.sh test theme-bash  # Provisioner testen
+```
+
+**VM-Anforderungen:** 100 GB Disk, 8 GB RAM, 4 vCPUs, Ventoy USB-Passthrough.
 
 ---
 
@@ -214,135 +239,62 @@ python3 lib/xml2ks.py --validate-only config/mein-system.xml
 
 ```
 Ventoy USB
-  └─ ISO (Fedora Live)
-       └─ GRUB (ventoy_grub.cfg)
-            └─ Kernel-Parameter:
-               root=live:CDLABEL=<label>  rd.live.image  nomodeset
-               inst.ks=hd:LABEL=Ventoy:/kickstart/<profil>.ks
-                    │
-                    ├─ %pre: Disk automatisch erkennen (sda / nvme0n1 / vda)
-                    ├─ Anaconda (grafisch) installiert das System
-                    ├─ %post: /etc/fedora-provision.env schreiben
-                    └─ common-post.inc:
-                         ├─ first-boot.sh → /usr/local/sbin/
-                         ├─ fedora-first-boot.service → systemd enable
-                         └─ first-login.desktop → ~/.config/autostart/
+  └─ ISO (Fedora Netinstall)
+       └─ GRUB (ventoy_grub.cfg) — WhiteSur Theme
+            └─ Anaconda (graphical, nomodeset)
+                 ├─ %pre: Disk automatisch erkennen
+                 ├─ Btrfs partitionieren (@ + @home Subvolumes)
+                 ├─ %post: provision.env + first-boot.sh + first-login.desktop
+                 └─ %post --nochroot: fstab + GRUB auf subvol=@ umstellen
 ```
 
-### Nach dem ersten Boot
+### Erster Boot (root, einmalig)
 
-`fedora-first-boot.service` läuft einmalig als root:
-1. `fedora-sync` — Fedora-Pakete aktualisieren
-2. NVIDIA Open Driver installieren + `akmods` bauen
-3. CUDA installieren (Fedora-Repo oder NVIDIA-Repo)
-4. CUDA-Umgebungsvariablen systemweit schreiben
+`fedora-first-boot.service` führt aus:
+1. System-Update
+2. NVIDIA Open Driver + akmods
+3. CUDA (Fedora-Repo oder NVIDIA-Repo)
+4. Kernel-Tuning: sysctl, hugepages, tuned, scx_bpfland
+5. NVIDIA Persistence Mode
+6. WhiteSur GRUB Theme
+7. Timeshift + grub-btrfs
+8. zram, irqbalance, ananicy-cpp
+9. AMD Ryzen P-State + GRUB-Parameter
 
-### Nach dem ersten Login (GNOME)
+### Erster Login (User, einmalig)
 
-`fedora-first-login.sh` läuft einmalig als User:
-1. Flatpak Extension Manager
-2. GNOME-Extensions aktivieren
-3. WhiteSur GTK / Icon / Wallpaper installieren
-4. Oh My Bash installieren und Theme setzen
-5. Python venv `~/.venvs/ai` + PyTorch (CUDA-aware)
-6. vLLM-Omni bauen (CUDA 13.x, sm120)
-7. Modelle laden (Kimi-Audio-7B, Qwen3-14B-AWQ)
+`fedora-first-login.sh` führt aus:
+1. Flathub + Flatpak Extension Manager
+2. GNOME Extensions (dash-to-dock, blur-my-shell, caffeine, appindicator)
+3. WhiteSur Themes + Dash-to-Dock Konfiguration
+4. GNOME Tweaks + Night Light
+5. Oh My Bash
+6. AI-Stack (nur `full`/`headless-vllm`): PyTorch, vLLM, Modelle
 
 ---
 
 ## Disk-Erkennung
 
-Alle physischen Kickstart-Profile erkennen die Ziel-Disk automatisch per `%pre`-Skript:
+Alle physischen Profile erkennen die Ziel-Disk automatisch:
 
 ```bash
 DISK=$(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1; exit}')
 ```
 
-Das funktioniert für SATA (`sda`), NVMe (`nvme0n1`) und virtio (`vda`) ohne Anpassung.
+Funktioniert für SATA (`sda`), NVMe (`nvme0n1`) und virtio (`vda`).
 
----
-
-## Podman Smoke-Gate
-
-Vor jedem echten Deployment prüft `fedora-install.sh`, ob die Kickstart-Skripte zuvor erfolgreich im Container getestet wurden:
-
-```bash
-# Test zuerst:
-./scripts/podman-pipeline.sh
-
-# Dann deployen:
-sudo ./fedora-install.sh --config config/example.xml
-
-# Gate überspringen (nicht empfohlen):
-sudo ./fedora-install.sh --config config/example.xml --skip-smoke-gate
+Override: Im GRUB `e` drücken, an die `linux`-Zeile anhängen:
+```
+inst.disk=nvme1n1
 ```
 
 ---
 
 ## Hinweise
 
-- **NVIDIA-Treiber:** Der proprietary NVIDIA-Treiber wird **nicht** während der Installation geladen, sondern erst beim ersten Boot via `akmod-nvidia-open`. Das ist korrekt so.
-- **UEFI erforderlich:** Legacy-BIOS/MBR wird nicht unterstützt. Der Bootloader wird ohne `--location=mbr` gesetzt, damit Anaconda UEFI automatisch erkennt und eine EFI-Partition anlegt.
-- **Passwort-Hash:** Der Hash in `config/example.xml` ist ein Platzhalter — vor dem Deployment unbedingt ersetzen.
-- **HuggingFace-Token:** Für Modelle hinter einem Login-Gate wird beim ersten Download interaktiv nach dem Token gefragt.
-
----
-
----
-
-## Bug-Findings (Changelog)
-
-Folgende Fehler wurden identifiziert und behoben. Ohne diese Fixes startet die Installation nicht.
-
----
-
-### BUG-01 — `inst.text` erzwingt Text-Modus (leere Shell)
-
-**Datei:** `ventoy/ventoy_grub.cfg.tpl`  
-**Symptom:** Nach Profilauswahl im GRUB erscheint ein leeres schwarzes Fenster. Ctrl+Alt+F1–F6 reagiert nicht.  
-**Ursache:** Der Kernel-Parameter `inst.text` weist Anaconda an, im TUI-Modus zu starten. Auf einem System mit NVIDIA-GPU und aktivem Display-Manager landet die Text-UI auf einem nicht sichtbaren VT.  
-**Fix:** `inst.text` aus allen vier `linux`-Zeilen entfernt.
-
----
-
-### BUG-02 — `modules_load=nvidia` im Installer-Kernel (Boot-Fehler)
-
-**Datei:** `ventoy/ventoy_grub.cfg.tpl`  
-**Symptom:** System hängt beim Booten oder startet in eine leere Shell, weil das Modul nicht geladen werden kann.  
-**Ursache:** `modules_load=nvidia` versucht, den proprietary NVIDIA-Kernel-Modul während des ISO-Boots zu laden. Das Modul existiert **nicht** im Installer-Initrd der Live-ISO. Anaconda wird nie gestartet.  
-**Fix:** Parameter vollständig entfernt. NVIDIA wird erst nach der Installation via `akmod-nvidia-open` gebaut (First-Boot).
-
----
-
-### BUG-03 — `text` in Kickstart-Dateien (kein grafischer Installer)
-
-**Dateien:** `kickstart/fedora-full.ks`, `kickstart/fedora-theme-bash.ks`  
-**Symptom:** Anaconda startet im TUI-Modus statt im grafischen Installer.  
-**Ursache:** Die Kickstart-Direktive `text` erzwingt Text-Modus, unabhängig vom Kernel-Parameter.  
-
----
-
-### BUG-04 — `nomodeset` fehlt (schwarzer Bildschirm trotz grafischem Modus)
-
-**Datei:** `ventoy/ventoy_grub.cfg.tpl`  
-**Symptom:** Grafischer Anaconda-Installer startet, bleibt aber schwarz, weil `nouveau` oder `simpledrm` mit der NVIDIA-GPU kollidiert.  
-**Ursache:** Ohne `nomodeset` versucht der Kernel, einen Modesetting-Treiber für die NVIDIA-GPU zu aktivieren. Da weder `nouveau` noch `nvidia` im Installer-Initrd vollständig funktionieren, bleibt der Framebuffer schwarz.  
-**Fix:** `nomodeset` zu den GUI-Profil-Zeilen (`full`, `theme-bash`) hinzugefügt. Der Installer nutzt damit den VESA/Basic-Framebuffer — stabil und ausreichend für die Anaconda-Oberfläche.
-
----
-
-### BUG-05 — Hardcodierte Disk `sda` (Installation schlägt fehl auf NVMe)
-
-**Dateien:** alle `kickstart/fedora-*.ks` (außer `fedora-vm.ks`)  
-**Symptom:** Anaconda bricht mit `Disk sda not found` ab. Installation startet nie.  
-**Ursache:** `ignoredisk --only-use=sda` und `clearpart --drives=sda` setzen SATA-Disk voraus. Auf modernen Systemen mit NVMe heißt die Disk `nvme0n1`.  
-**Fix:** `%pre`-Skript erkennt die erste verfügbare Disk automatisch per `lsblk` und schreibt die Direktiven in `/tmp/disk-setup.cfg`, das dann per `%include` eingebunden wird. Funktioniert für SATA, NVMe und virtio ohne Anpassung.
-
----
-
-### BUG-06 — `bootloader --location=mbr` auf UEFI-System
-
-**Dateien:** alle `kickstart/fedora-*.ks` (außer `fedora-vm.ks`)  
-**Symptom:** Installation bricht ab oder System startet nach Installation nicht, weil kein UEFI-Bootloader angelegt wurde.  
-**Ursache:** `--location=mbr` erzwingt Legacy-BIOS-Booting. Auf UEFI-Systemen muss Anaconda eine EFI-Systempartition (`/boot/efi`) anlegen und `grub2-efi` installieren. Der `mbr`-Parameter verhindert das.  
-**Fix:** `--location=mbr` entfernt. Anaconda erkennt UEFI vs. BIOS automatisch und richtet den Bootloader korrekt ein.
+- **NVIDIA-Treiber:** Wird erst beim ersten Boot via `akmod-nvidia-open` gebaut — nicht während der Installation.
+- **UEFI erforderlich:** Legacy-BIOS/MBR nicht unterstützt.
+- **Passwort-Hash:** `openssl passwd -6 meinPasswort` — in `config/example.xml` ersetzen.
+- **HuggingFace-Token:** In `/etc/fedora-provision.env` als `FEDORA_HF_TOKEN` eintragen.
+- **Modell-Cache:** `~/.models/huggingface/` — bewusst von `~/.cache/` getrennt, überlebt Cache-Bereinigungen.
+- **common-post.inc:** Muss mit `scripts/first-boot.sh` und `scripts/first-login.sh` synchron gehalten werden.
