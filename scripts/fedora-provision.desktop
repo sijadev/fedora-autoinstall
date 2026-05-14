@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Fedora Provisioner
+GenericName=Profil-Auswahl
+Comment=Theme + Bash oder Podman + vLLM einrichten
+Exec=/usr/local/bin/fedora-welcome-dialog.sh
+Icon=preferences-system
+Terminal=false
+Categories=System;Settings;
+Keywords=fedora;provision;theme;vllm;podman;
+StartupNotify=true

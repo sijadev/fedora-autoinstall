@@ -86,6 +86,7 @@ virt-manager
 qemu-kvm
 libvirt
 pciutils
+zenity
 %end
 
 # ── %addon ────────────────────────────────────────────────────────────────────
@@ -114,6 +115,7 @@ FEDORA_WS_ICON_ARGS=""
 FEDORA_WS_WALL_ARGS=""
 FEDORA_OMB_THEME="modern"
 FEDORA_CUDA_SOURCE="fedora"
+FEDORA_KERNEL_SOURCE="bazzite"
 ENVEOF
 chmod 0644 /etc/fedora-provision.env
 

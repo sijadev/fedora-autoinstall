@@ -89,8 +89,52 @@ log "Running dnf upgrade..."
 dnf upgrade -y || die "dnf upgrade failed."
 log "dnf upgrade completed."
 
+# ── 1b. Bazzite Kernel (Blackwell-Support + Gaming Patches) ───────────────────
+# Bazzite-Kernel ist konzeptuell verwandt mit Nobara-Kernel und wird aktiv für
+# Fedora 43 + Blackwell GPUs (RTX 50/9070) gepflegt. Muss VOR akmod-nvidia-open
+# installiert werden, damit Module gegen den richtigen Kernel gebaut werden.
+step "Bazzite Kernel installieren"
+
+if [[ "${FEDORA_KERNEL_SOURCE:-bazzite}" != "fedora" ]]; then
+    if dnf copr enable -y bazzite-org/kernel-bazzite 2>/dev/null; then
+        if dnf install -y \
+            kernel-bazzite \
+            kernel-bazzite-core \
+            kernel-bazzite-modules \
+            kernel-bazzite-modules-extra \
+            kernel-bazzite-devel 2>/dev/null; then
+            log "Bazzite-Kernel installiert."
+            if command -v grubby &>/dev/null; then
+                NEW_KERNEL=$(ls /boot/vmlinuz-*bazzite* 2>/dev/null | sort -V | tail -1)
+                if [[ -n "$NEW_KERNEL" ]]; then
+                    grubby --set-default "$NEW_KERNEL" \
+                        && log "Bazzite-Kernel als Default gesetzt: $(basename "$NEW_KERNEL")" \
+                        || warn "grubby --set-default fehlgeschlagen."
+                fi
+            fi
+        else
+            warn "Bazzite-Kernel install fehlgeschlagen — Standard-Kernel bleibt aktiv."
+        fi
+    else
+        warn "COPR bazzite-org/kernel-bazzite nicht verfügbar — Standard-Kernel bleibt aktiv."
+    fi
+else
+    log "FEDORA_KERNEL_SOURCE=fedora — Bazzite-Kernel übersprungen."
+fi
+
 # ── 2. NVIDIA Open Driver ─────────────────────────────────────────────────────
 step "NVIDIA Open Driver update"
+
+# iGPU + dGPU Hinweis: Wenn beide vorhanden, lief Install vermutlich über iGPU
+# (Blackwell-Workaround). Nach erfolgreichem first-boot kann BIOS auf PEG zurück.
+if command -v lspci &>/dev/null; then
+    if lspci -nn 2>/dev/null | grep -qiE 'VGA.*(AMD|Intel)' \
+       && lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
+        warn "iGPU + NVIDIA dGPU erkannt. Falls Install über iGPU lief:"
+        warn "  → Nach Reboot BIOS umstellen: Primary Display = PEG/PCIe"
+        warn "  → Monitor wieder an NVIDIA-Karte anschließen"
+    fi
+fi
 
 check_nvidia_open_compat() {
     # Check GPU PCI IDs against architectures that support the Open Module:
@@ -155,98 +199,70 @@ if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
     fi
 
     # ── vLLM via Podman Quadlet (systemd Container Service) ───────────────────
-    TARGET_USER="${FEDORA_TARGET_USER:-sija}"
-    USER_HOME="/home/${TARGET_USER}"
+    # Multi-Model Hotswap: ein einziges parametrisiertes Quadlet-Template
+    # (vllm@.container) startet vllm-Backends on-demand. Router auf :8000
+    # dispatched OpenAI-Requests an aktive Backends (Quelle: vllm-router.py).
     TARGET_USER="${FEDORA_TARGET_USER:-sija}"
     USER_HOME="/home/${TARGET_USER}"
     AUDIO_MODEL="${FEDORA_AUDIO_MODEL:-moonshotai/Kimi-Audio-7B-Instruct}"
     AGENT_MODEL="${FEDORA_AGENT_MODEL:-Qwen/Qwen3-8B}"
-    VLLM_IMAGE="fedora-vllm:latest"
-    podman image exists "$VLLM_IMAGE" 2>/dev/null || VLLM_IMAGE="vllm/vllm-openai:latest"
     QUADLET_DIR="${USER_HOME}/.config/containers/systemd"
-    mkdir -p "$QUADLET_DIR"
+    ROUTER_DIR="${USER_HOME}/.config/vllm-router"
+    REPO_DIR="/usr/local/share/fedora-autoinstall"
+    mkdir -p "$QUADLET_DIR" "$ROUTER_DIR/instances"
 
-    # ── Kimi-Audio — Port 8000 (Audio-Analyse, ~4 GB VRAM) ───────────────────
-    cat > "${QUADLET_DIR}/vllm-audio.container" <<AUDIOEOF
-[Unit]
-Description=Kimi-Audio-7B — Musik-Analyse (Port 8000)
-After=network-online.target
+    # ── Cleanup: alte statische Quadlets entfernen (Migration) ───────────────
+    for old in vllm-audio.container vllm-agent.container; do
+        if [[ -f "${QUADLET_DIR}/${old}" ]]; then
+            systemctl --user --machine="${TARGET_USER}@" stop "${old%.container}.service" 2>/dev/null || true
+            rm -f "${QUADLET_DIR}/${old}"
+            log "Alt-Quadlet entfernt: ${old}"
+        fi
+    done
 
-[Container]
-Image=${VLLM_IMAGE}
-PublishPort=8000:8000
-# Modell-Cache
-Volume=${USER_HOME}/.models/huggingface:/root/.cache/huggingface:Z
-# Eingabe: MP3/WAV/FLAC hier ablegen
-Volume=${USER_HOME}/bitwig-input:/input:Z
-AddDevice=nvidia.com/gpu=all
-SecurityLabelDisable=true
-ShmSize=8g
-PodmanArgs=--ipc=host
-PodmanArgs=--ulimit nofile=65536:65536
-AddCapability=SYS_NICE
-Sysctl=net.core.somaxconn=1024
-Environment=HF_TOKEN=%s
-Environment=VLLM_WORKER_MULTIPROC_METHOD=spawn
-Environment=NCCL_DMABUF_ENABLE=1
-Exec=--model ${AUDIO_MODEL} --trust-remote-code --gpu-memory-utilization 0.40 --max-model-len 4096 --limit-mm-per-prompt audio=5 --served-model-name audio
+    # ── Quadlet-Template + Router-Unit installieren ───────────────────────────
+    if [[ -f "${REPO_DIR}/systemd/vllm@.container" ]]; then
+        install -m 0644 "${REPO_DIR}/systemd/vllm@.container" "${QUADLET_DIR}/vllm@.container"
+    else
+        warn "vllm@.container Template fehlt unter ${REPO_DIR}/systemd/ — Build unvollständig?"
+    fi
+    if [[ -f "${REPO_DIR}/systemd/vllm-router.service" ]]; then
+        mkdir -p "${USER_HOME}/.config/systemd/user"
+        install -m 0644 "${REPO_DIR}/systemd/vllm-router.service" \
+            "${USER_HOME}/.config/systemd/user/vllm-router.service"
+    fi
 
-[Service]
-Restart=on-failure
-RestartSec=30
-TimeoutStartSec=600
+    # ── Default-Registry seeden (falls noch keine vorhanden) ──────────────────
+    REGISTRY="${ROUTER_DIR}/models.json"
+    if [[ ! -f "$REGISTRY" ]]; then
+        cat > "$REGISTRY" <<REGEOF
+{
+  "agent": {
+    "hf_repo": "${AGENT_MODEL}",
+    "port": 8100,
+    "vram_share": 0.45,
+    "max_len": 8192,
+    "extra": "--enable-reasoning --reasoning-parser deepseek_r1"
+  },
+  "audio": {
+    "hf_repo": "${AUDIO_MODEL}",
+    "port": 8101,
+    "vram_share": 0.40,
+    "max_len": 4096,
+    "extra": "--trust-remote-code --limit-mm-per-prompt audio=5"
+  }
+}
+REGEOF
+        log "Default-Registry geseedet: $REGISTRY"
+    fi
 
-[Install]
-WantedBy=default.target
-AUDIOEOF
+    chown -R "${TARGET_USER}:${TARGET_USER}" \
+        "$QUADLET_DIR" "$ROUTER_DIR" "${USER_HOME}/.config/systemd" 2>/dev/null || true
 
-    # ── Qwen3-8B — Port 8001 (Thinking + LangGraph, ~5 GB VRAM) ─────────────
-    cat > "${QUADLET_DIR}/vllm-agent.container" <<AGENTEOF
-[Unit]
-Description=Qwen3-8B — Reasoning + LangGraph Agent (Port 8001)
-After=network-online.target
-
-[Container]
-Image=${VLLM_IMAGE}
-PublishPort=8001:8000
-# Modell-Cache
-Volume=${USER_HOME}/.models/huggingface:/root/.cache/huggingface:Z
-# Ausgabe: .bwtemplate.json Dateien landen hier
-Volume=${USER_HOME}/bitwig-output:/output:Z
-AddDevice=nvidia.com/gpu=all
-SecurityLabelDisable=true
-ShmSize=8g
-PodmanArgs=--ipc=host
-PodmanArgs=--ulimit nofile=65536:65536
-AddCapability=SYS_NICE
-Sysctl=net.core.somaxconn=1024
-Environment=HF_TOKEN=%s
-Environment=VLLM_WORKER_MULTIPROC_METHOD=spawn
-Environment=NCCL_DMABUF_ENABLE=1
-Environment=VLLM_FLASH_ATTN_VERSION=2
-Environment=OUTPUT_DIR=/output
-Exec=--model ${AGENT_MODEL} --gpu-memory-utilization 0.45 --max-model-len 8192 --enable-reasoning --reasoning-parser deepseek_r1 --served-model-name agent
-
-[Service]
-Restart=on-failure
-RestartSec=30
-TimeoutStartSec=600
-
-[Install]
-WantedBy=default.target
-AGENTEOF
-
-    HF_ENV="${FEDORA_HF_TOKEN:+Environment=HF_TOKEN=${FEDORA_HF_TOKEN}}"
-    HF_ENV="${HF_ENV:-# Environment=HF_TOKEN=<dein-token>}"
-    sed -i "s|Environment=HF_TOKEN=%s|${HF_ENV}|g" \
-        "${QUADLET_DIR}/vllm-audio.container" \
-        "${QUADLET_DIR}/vllm-agent.container"
-
-    chown -R "${TARGET_USER}:${TARGET_USER}" "$QUADLET_DIR"
-    log "Quadlets angelegt:"
-    log "  vllm-audio  → Port 8000 (${AUDIO_MODEL})"
-    log "  vllm-agent  → Port 8001 (${AGENT_MODEL})"
-    log "Aktivieren: systemctl --user enable --now vllm-audio.service vllm-agent.service"
+    log "vLLM Quadlet-Template installiert (vllm@.container)."
+    log "Router-Service-Unit installiert (vllm-router.service)."
+    log "Registry: $REGISTRY  — bearbeiten zum Modelle hinzufügen."
+    log "Aktivierung erfolgt im first-login (loginctl linger + enable)."
 fi
 
 # ── 3. CUDA installation ──────────────────────────────────────────────────────

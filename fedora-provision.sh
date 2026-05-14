@@ -67,6 +67,7 @@ FEDORA_WS_GTK_ARGS="-c Dark"
 FEDORA_WS_ICON_ARGS=""
 FEDORA_WS_WALL_ARGS=""
 FEDORA_CUDA_SOURCE="fedora"
+FEDORA_KERNEL_SOURCE="bazzite"
 ENVEOF
         ;;
     vllm-only)
@@ -76,13 +77,13 @@ ENVEOF
         cat > /etc/fedora-provision.env <<ENVEOF
 FEDORA_INSTALL_PROFILE="headless-vllm"
 FEDORA_TARGET_USER="${TARGET_USER}"
-FEDORA_VLLM_CUDA_VERSION="13.2"
-FEDORA_VLLM_ARCH_LIST="12.0"
 FEDORA_AUDIO_MODEL="moonshotai/Kimi-Audio-7B-Instruct"
 FEDORA_AGENT_MODEL="Qwen/Qwen3-8B"
-FEDORA_VLLM_PORT="8000"
+FEDORA_VLLM_ROUTER_PORT="8000"
+FEDORA_VLLM_REGISTRY="\$HOME/.config/vllm-router/models.json"
 FEDORA_OMB_THEME="modern"
 FEDORA_CUDA_SOURCE="fedora"
+FEDORA_KERNEL_SOURCE="bazzite"
 ENVEOF
         ;;
     *)

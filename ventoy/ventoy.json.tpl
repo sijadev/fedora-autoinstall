@@ -1,4 +1,11 @@
 {
+    "control": [
+        { "VTOY_DEFAULT_MENU_MODE": "0" },
+        { "VTOY_LINUX_REMOUNT": "1" }
+    ],
+    "menu_class": [
+        { "key": "Fedora", "class": "fedora" }
+    ],
     "auto_install": [
         {
             "image": "/FEDORA_ISO_FILENAME",

@@ -1,0 +1,16 @@
+[Unit]
+Description=vLLM Multi-Model Router (OpenAI-compatible)
+After=default.target network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/vllm-router
+Restart=on-failure
+RestartSec=10
+Environment=VLLM_ROUTER_PORT=8000
+Environment=VLLM_ROUTER_REGISTRY=%h/.config/vllm-router/models.json
+Environment=VLLM_ROUTER_IDLE_TIMEOUT=900
+Environment=VLLM_ROUTER_VRAM_CAP=0.95
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,28 @@
+# Quadlet template — vLLM Backend (eine Instance pro Modell)
+# Aktiviert vom vllm-router-Service on-demand.
+# Instance-spezifische Args kommen aus ~/.config/vllm-router/instances/%i.env
+# (geschrieben vom Router auf Basis von ~/.config/vllm-router/models.json).
+[Unit]
+Description=vLLM Backend (%i)
+After=network-online.target
+
+[Container]
+Image=localhost/fedora-vllm:latest
+ContainerName=vllm-%i
+PublishPort=127.0.0.1:${VLLM_PORT}:8000
+Volume=%h/.models/huggingface:/root/.cache/huggingface:Z
+AddDevice=nvidia.com/gpu=all
+SecurityLabelDisable=true
+ShmSize=8g
+PodmanArgs=--ipc=host
+PodmanArgs=--ulimit=nofile=65536:65536
+EnvironmentFile=%h/.config/vllm-router/instances/%i.env
+Exec=--model ${VLLM_MODEL} --served-model-name %i --gpu-memory-utilization ${VLLM_VRAM_SHARE} --max-model-len ${VLLM_MAX_LEN} ${VLLM_EXTRA_ARGS}
+
+[Service]
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=600
+
+[Install]
+WantedBy=default.target

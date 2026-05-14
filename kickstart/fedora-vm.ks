@@ -20,6 +20,7 @@ network --hostname=fedora-workstation
 ignoredisk --only-use=vda
 zerombr
 clearpart --all --initlabel --drives=vda
+bootloader --boot-drive=vda
 
 # Btrfs mit @ / @home Subvolumes — Timeshift-kompatibel
 # Swap entfällt: zram-generator übernimmt Swap im RAM
@@ -27,12 +28,12 @@ part /boot/efi --fstype=efi    --size=600  --ondrive=vda
 part /boot     --fstype=xfs    --size=1024 --ondrive=vda
 part btrfs.01  --fstype=btrfs  --size=1    --grow --ondrive=vda
 
-btrfs none  --data=single --metadata=single  btrfs.01
+btrfs none  --label=fedora --data=single --metadata=single  btrfs.01
 btrfs /     --subvol --name=@      LABEL=fedora
 btrfs /home --subvol --name=@home  LABEL=fedora
 
 # ── Bootloader ────────────────────────────────────────────────────────────────
-bootloader --boot-drive=vda
+# (bootloader directive oben — vor part — sonst "Kickstart nicht ausreichend")
 
 # ── Authentication ────────────────────────────────────────────────────────────
 rootpw --lock
@@ -42,7 +43,7 @@ user --groups=wheel,libvirt,video,audio --name=sija --password=$6$rounds=4096$Bg
 services --enabled=sshd
 
 # ── Packages ──────────────────────────────────────────────────────────────────
-%packages
+%packages --ignoremissing --retries=10
 @^workstation-product-environment
 git
 curl
@@ -61,6 +62,7 @@ openssh-server
 virt-manager
 qemu-kvm
 libvirt
+zenity
 %end
 
 # ── %addon kdump ──────────────────────────────────────────────────────────────
@@ -770,5 +772,75 @@ rmdir "$MOUNT_TMP"
 sed -i 's/subvol=root\b/subvol=@/g'      "${SYSIMAGE}/etc/fstab"
 sed -i 's/subvol=home\b/subvol=@home/g'  "${SYSIMAGE}/etc/fstab"
 echo "fstab aktualisiert: subvol=root → @, subvol=home → @home"
+
+%end
+
+# ── %post --nochroot: Provisioner + Scripts ins Zielsystem einbetten ──────────
+%post --nochroot --log=/root/ks-post-embed-provisioner.log
+
+set +e
+SYSROOT="${ANA_INSTALL_PATH:-/mnt/sysroot}"
+[[ ! -d "$SYSROOT" ]] && SYSROOT="/mnt/sysimage"
+[[ ! -d "$SYSROOT" ]] && { echo "Kein sysroot gefunden — Abbruch."; exit 0; }
+
+SRC=""
+for candidate in /run/install/repo /run/install/sources/mount-* /mnt/install/repo; do
+    if [[ -f "${candidate}/fedora-provision.sh" || -d "${candidate}/scripts" ]]; then
+        SRC="$candidate"; break
+    fi
+done
+if [[ -z "$SRC" ]]; then
+    VENTOY_DEV=$(blkid -L Ventoy 2>/dev/null | head -1 || true)
+    if [[ -n "$VENTOY_DEV" ]]; then
+        MNT=$(mktemp -d)
+        mount "$VENTOY_DEV" "$MNT" 2>/dev/null && SRC="$MNT"
+    fi
+fi
+[[ -z "$SRC" ]] && { echo "Keine Quelle (ISO/USB) gefunden."; exit 0; }
+echo "Quelle: $SRC"
+
+mkdir -p "$SYSROOT/usr/local/sbin" \
+         "$SYSROOT/usr/local/bin" \
+         "$SYSROOT/usr/local/share/fedora-autoinstall" \
+         "$SYSROOT/usr/share/applications"
+
+[[ -f "${SRC}/fedora-provision.sh" ]] && \
+    install -m 0750 "${SRC}/fedora-provision.sh" "$SYSROOT/usr/local/sbin/fedora-provision.sh"
+
+[[ -f "${SRC}/scripts/welcome-dialog.sh" ]] && \
+    install -m 0755 "${SRC}/scripts/welcome-dialog.sh" "$SYSROOT/usr/local/bin/fedora-welcome-dialog.sh"
+
+[[ -f "${SRC}/scripts/fedora-provision.desktop" ]] && \
+    install -m 0644 "${SRC}/scripts/fedora-provision.desktop" "$SYSROOT/usr/share/applications/fedora-provision.desktop"
+
+[[ -d "${SRC}/scripts" ]]   && cp -r "${SRC}/scripts"   "$SYSROOT/usr/local/share/fedora-autoinstall/"
+[[ -d "${SRC}/kickstart" ]] && cp -r "${SRC}/kickstart" "$SYSROOT/usr/local/share/fedora-autoinstall/"
+
+echo "Provisioner + Scripts unter /usr/local/{sbin,bin,share}/ eingebettet."
+
+%end
+
+# ── %post: Welcome-Dialog Autostart (auch in VM zum Testen) ──────────────────
+%post --log=/root/ks-post-welcome-autostart.log
+
+TARGET_USER="sija"
+USER_HOME="/home/${TARGET_USER}"
+
+if id "$TARGET_USER" &>/dev/null; then
+    AUTOSTART_DIR="${USER_HOME}/.config/autostart"
+    mkdir -p "$AUTOSTART_DIR"
+    cat > "${AUTOSTART_DIR}/fedora-welcome.desktop" <<DESKTOPEOF
+[Desktop Entry]
+Type=Application
+Name=Fedora Welcome
+Exec=/usr/local/bin/fedora-welcome-dialog.sh
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=8
+DESKTOPEOF
+    chown -R "${TARGET_USER}:${TARGET_USER}" "$AUTOSTART_DIR"
+    echo "Welcome-Dialog Autostart für ${TARGET_USER} aktiviert."
+fi
 
 %end

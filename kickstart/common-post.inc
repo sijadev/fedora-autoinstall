@@ -186,11 +186,8 @@ INSTALL_PROFILE="${FEDORA_INSTALL_PROFILE:-full}"
 log "Install profile: ${INSTALL_PROFILE}"
 
 TARGET_USER="${FEDORA_TARGET_USER:-${USER}}"
-PYTORCH_VENV="${FEDORA_PYTORCH_VENV:-${HOME}/.venvs/ai}"
-VLLM_VENV="${FEDORA_VLLM_VENV:-${HOME}/.venvs/bitwig-omni}"
-VLLM_CUDA_VERSION="${FEDORA_VLLM_CUDA_VERSION:-13.2}"
-VLLM_ARCH_LIST="${FEDORA_VLLM_ARCH_LIST:-12.0}"
-VLLM_MODEL="${FEDORA_AGENT_MODEL:-Qwen/Qwen3-14B-AWQ}"
+VLLM_ROUTER_PORT="${FEDORA_VLLM_ROUTER_PORT:-8000}"
+VLLM_REGISTRY="${FEDORA_VLLM_REGISTRY:-${HOME}/.config/vllm-router/models.json}"
 WS_GTK_ARGS="${FEDORA_WS_GTK_ARGS:-}"
 WS_ICON_ARGS="${FEDORA_WS_ICON_ARGS:-}"
 WS_WALL_ARGS="${FEDORA_WS_WALL_ARGS:-}"
@@ -309,109 +306,13 @@ if [[ "$INSTALL_PROFILE" == "theme-bash" ]]; then
     exit 0
 fi
 
-# ── 7-11. AI stack (skipped for headless-vllm — handled by Podman) ───────────
-step "Python AI venv"
-if [[ "$INSTALL_PROFILE" == "headless-vllm" ]]; then
-    log "Skipped (headless-vllm uses Podman for AI stack)."
-else
-
-VENV_AI="${PYTORCH_VENV/#\~/$HOME}"
-[[ -d "$VENV_AI" ]] || { mkdir -p "$(dirname "$VENV_AI")"; python3 -m venv "$VENV_AI"; }
-"$VENV_AI/bin/pip" install --quiet --upgrade pip
-
-step "PyTorch installation"
-detect_cuda_version() {
-    for p in /usr/local/cuda/bin/nvcc /usr/bin/nvcc; do
-        [[ -x "$p" ]] && { "$p" --version | grep -oP 'release \K[\d.]+' | head -1; return; }
-    done; echo ""
-}
-resolve_pytorch_index() {
-    local v="$1"; local maj min vi
-    maj=$(echo "$v" | cut -d. -f1); min=$(echo "$v" | cut -d. -f2); vi=$(( maj*100+min ))
-    if   (( vi >= 1302 )); then echo "https://download.pytorch.org/whl/cu128"
-    elif (( vi >= 1206 )); then echo "https://download.pytorch.org/whl/cu126"
-    elif (( vi >= 1204 )); then echo "https://download.pytorch.org/whl/cu124"
-    elif (( vi >= 1201 )); then echo "https://download.pytorch.org/whl/cu121"
-    else echo "https://download.pytorch.org/whl/cpu"; fi
-}
-CUDA_VER=$(detect_cuda_version)
-PYTORCH_INDEX=$( [[ -n "$CUDA_VER" ]] && resolve_pytorch_index "$CUDA_VER" || echo "https://download.pytorch.org/whl/cpu" )
-log "PyTorch index: $PYTORCH_INDEX"
-"$VENV_AI/bin/pip" install --quiet torch torchvision torchaudio --index-url "$PYTORCH_INDEX"
-"$VENV_AI/bin/python3" -c "import torch; print('PyTorch', torch.__version__, 'CUDA:', torch.cuda.is_available())" \
-    || warn "PyTorch verification failed (non-fatal)."
-
-step "vLLM-Omni venv"
-VENV_VLLM="${VLLM_VENV/#\~/$HOME}"
-[[ -d "$VENV_VLLM" ]] || { mkdir -p "$(dirname "$VENV_VLLM")"; python3 -m venv "$VENV_VLLM"; }
-"$VENV_VLLM/bin/pip" install --quiet --upgrade pip
-"$VENV_VLLM/bin/pip" install --quiet "huggingface_hub[cli]" autoawq \
-    || warn "HuggingFace CLI / autoawq install failed (non-fatal)."
-
-step "CUDA ${VLLM_CUDA_VERSION} toolchain"
-find_cuda_version_path() {
-    local tv="$1"
-    for p in "/usr/local/cuda-${tv}" "/usr/local/cuda"; do
-        [[ -x "${p}/bin/nvcc" ]] || continue
-        local fv; fv=$("${p}/bin/nvcc" --version | grep -oP 'release \K[\d.]+' | head -1)
-        [[ "$fv" == "$tv"* ]] && { echo "$p"; return 0; }
-    done; return 1
-}
-CUDA_132_PATH=""
-if CUDA_132_PATH=$(find_cuda_version_path "$VLLM_CUDA_VERSION"); then
-    log "CUDA ${VLLM_CUDA_VERSION} at: $CUDA_132_PATH"
-else
-    log "CUDA ${VLLM_CUDA_VERSION} not found. Installing..."
-    CUDA_MAJOR=$(echo "$VLLM_CUDA_VERSION" | cut -d. -f1)
-    CUDA_MINOR=$(echo "$VLLM_CUDA_VERSION" | cut -d. -f2)
-    have_passwordless_sudo && sudo dnf install -y "cuda-toolkit-${CUDA_MAJOR}-${CUDA_MINOR}" 2>/dev/null \
-        || die "Cannot install CUDA ${VLLM_CUDA_VERSION} — no sudo or dnf package."
-    CUDA_132_PATH=$(find_cuda_version_path "$VLLM_CUDA_VERSION") \
-        || die "CUDA ${VLLM_CUDA_VERSION} not found after install."
-fi
-cat > "${VENV_VLLM}/bin/activate.cuda" <<HOOKEOF
-export CUDA_HOME="${CUDA_132_PATH}"
-export PATH="\${CUDA_HOME}/bin\${PATH:+:\$PATH}"
-export LD_LIBRARY_PATH="\${CUDA_HOME}/lib64:\${CUDA_HOME}/targets/x86_64-linux/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
-HOOKEOF
-grep -q 'activate.cuda' "${VENV_VLLM}/bin/activate" \
-    || echo "source \"${VENV_VLLM}/bin/activate.cuda\"" >> "${VENV_VLLM}/bin/activate"
-
-step "vLLM-Omni source build"
-VLLM_OMNI_SRC="${HOME}/.local/src/vllm-omni"
-if [[ -d "${VLLM_OMNI_SRC}/.git" ]]; then
-    git -C "$VLLM_OMNI_SRC" pull --ff-only || warn "git pull failed."
-else
-    mkdir -p "$(dirname "$VLLM_OMNI_SRC")"
-    git clone --depth=1 https://github.com/vllm-project/vllm.git "$VLLM_OMNI_SRC" \
-        || die "Failed to clone vLLM."
-fi
-[[ -f "${VLLM_OMNI_SRC}/use_existing_torch.py" ]] \
-    && (cd "$VLLM_OMNI_SRC" && "$VENV_VLLM/bin/python3" use_existing_torch.py) \
-    || true
-(
-    cd "$VLLM_OMNI_SRC"
-    source "${VENV_VLLM}/bin/activate"
-    source "${VENV_VLLM}/bin/activate.cuda"
-    export TORCH_CUDA_ARCH_LIST="${VLLM_ARCH_LIST}"
-    export CUDA_HOME="${CUDA_132_PATH}"
-    export MAX_JOBS="${MAX_JOBS:-$(nproc)}"
-    pip install --quiet --no-build-isolation . || die "vLLM build failed."
-)
-log "vLLM build done."
-
-fi  # end: headless-vllm AI stack guard
+# ── 7-11. AI stack (skipped for headless-vllm — vLLM läuft via Podman-Router) ─
+# Custom-Image fedora-vllm:latest + Quadlet-Template vllm@.container + vllm-router.service
+# werden in scripts/first-boot.sh + scripts/first-login.sh aufgebaut. Hier nichts mehr zu tun.
 
 # ── 12. Model download ────────────────────────────────────────────────────────
-step "Model download: ${VLLM_MODEL}"
-if [[ "$INSTALL_PROFILE" == "headless-vllm" ]]; then
-    log "Skipped (model is downloaded inside the Podman container)."
-else
-    VENV_VLLM_PATH="${VLLM_VENV/#\~/$HOME}"
-    "${VENV_VLLM_PATH}/bin/huggingface-cli" download "${VLLM_MODEL}" \
-        --local-dir "${HOME}/.cache/huggingface/hub/${VLLM_MODEL//\//__}" \
-        || warn "Model download failed or deferred (check HF token / disk space)."
-fi
+step "Model download"
+log "Skipped: Modelle werden on-demand vom vllm-router geladen (HF-Cache: ~/.models/huggingface)."
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 step "First-login provisioning complete"
@@ -547,6 +448,81 @@ if [[ -n "$VENTOY_DEV" ]]; then
     rmdir "$MOUNT_TMP" 2>/dev/null || true
 else
     echo "Ventoy USB nicht gefunden — Logs nicht gesichert."
+fi
+
+%end
+
+# ── %post --nochroot: Provisioner + Scripts ins Zielsystem einbetten ──────────
+# Damit nach dem Install der Welcome-Dialog und fedora-provision.sh OHNE USB-Stick
+# verfügbar sind. Quelle: Custom-ISO (/run/install/repo) oder Ventoy USB.
+%post --nochroot --log=/root/ks-post-embed-provisioner.log
+
+set +e
+SYSROOT="${ANA_INSTALL_PATH:-/mnt/sysroot}"
+[[ ! -d "$SYSROOT" ]] && SYSROOT="/mnt/sysimage"
+[[ ! -d "$SYSROOT" ]] && { echo "Kein sysroot gefunden — Abbruch."; exit 0; }
+
+# Quell-Verzeichnis ermitteln: Custom-ISO oder Ventoy
+SRC=""
+for candidate in /run/install/repo /run/install/sources/mount-* /mnt/install/repo; do
+    if [[ -f "${candidate}/fedora-provision.sh" || -d "${candidate}/scripts" ]]; then
+        SRC="$candidate"; break
+    fi
+done
+if [[ -z "$SRC" ]]; then
+    VENTOY_DEV=$(blkid -L Ventoy 2>/dev/null | head -1 || true)
+    if [[ -n "$VENTOY_DEV" ]]; then
+        MNT=$(mktemp -d)
+        mount "$VENTOY_DEV" "$MNT" 2>/dev/null && SRC="$MNT"
+    fi
+fi
+[[ -z "$SRC" ]] && { echo "Keine Quelle (ISO/USB) gefunden."; exit 0; }
+echo "Quelle: $SRC"
+
+mkdir -p "$SYSROOT/usr/local/sbin" \
+         "$SYSROOT/usr/local/bin" \
+         "$SYSROOT/usr/local/share/fedora-autoinstall" \
+         "$SYSROOT/usr/share/applications"
+
+[[ -f "${SRC}/fedora-provision.sh" ]] && \
+    install -m 0750 "${SRC}/fedora-provision.sh" "$SYSROOT/usr/local/sbin/fedora-provision.sh"
+
+[[ -f "${SRC}/scripts/welcome-dialog.sh" ]] && \
+    install -m 0755 "${SRC}/scripts/welcome-dialog.sh" "$SYSROOT/usr/local/bin/fedora-welcome-dialog.sh"
+
+[[ -f "${SRC}/scripts/fedora-provision.desktop" ]] && \
+    install -m 0644 "${SRC}/scripts/fedora-provision.desktop" "$SYSROOT/usr/share/applications/fedora-provision.desktop"
+
+# Vollständige Kopie für späteren manuellen Zugriff
+[[ -d "${SRC}/scripts" ]] && cp -r "${SRC}/scripts"   "$SYSROOT/usr/local/share/fedora-autoinstall/"
+[[ -d "${SRC}/kickstart" ]] && cp -r "${SRC}/kickstart" "$SYSROOT/usr/local/share/fedora-autoinstall/"
+
+echo "Provisioner + Scripts unter /usr/local/{sbin,bin,share}/ eingebettet."
+
+%end
+
+# ── %post: Welcome-Dialog Autostart (nur full-Profil) ────────────────────────
+%post --log=/root/ks-post-welcome-autostart.log
+
+INSTALL_PROFILE="${FEDORA_INSTALL_PROFILE:-full}"
+TARGET_USER="${FEDORA_TARGET_USER:-${INSTALL_USER:-sija}}"
+USER_HOME="/home/${TARGET_USER}"
+
+if [[ "$INSTALL_PROFILE" == "full" ]] && id "$TARGET_USER" &>/dev/null; then
+    AUTOSTART_DIR="${USER_HOME}/.config/autostart"
+    mkdir -p "$AUTOSTART_DIR"
+    cat > "${AUTOSTART_DIR}/fedora-welcome.desktop" <<DESKTOPEOF
+[Desktop Entry]
+Type=Application
+Name=Fedora Welcome
+Exec=/usr/local/bin/fedora-welcome-dialog.sh
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=8
+DESKTOPEOF
+    chown -R "${TARGET_USER}:${TARGET_USER}" "$AUTOSTART_DIR"
+    echo "Welcome-Dialog Autostart für ${TARGET_USER} aktiviert."
 fi
 
 %end

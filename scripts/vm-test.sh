@@ -44,7 +44,8 @@ VENTOY_USB_PRODUCT="6545"
 export LIBVIRT_DEFAULT_URI="qemu:///system"
 
 SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o LogLevel=ERROR"
-SSH_TIMEOUT=600  # Sekunden bis VM SSH-bereit ist (Erstboot mit first-boot-service ~5-8 min)
+SSH_TIMEOUT=1800        # Hard-Cap: Gesamtdauer in Sekunden
+SSH_IDLE_TIMEOUT=600    # Idle-Cap: SSH-Abbruch wenn 10 Min ohne VM-Aktivität (Disk-I/O)
 # sshpass für Passwort-basiertes SSH (Test-VM)
 SSH="sshpass -p ${VM_PASS:-test123} ssh $SSH_OPTS"
 
@@ -102,13 +103,29 @@ get_vm_ip() {
 
 wait_for_ssh() {
     local ip="$1"
-    log "Warte auf SSH ($ip) ..."
-    local elapsed=0
+    local vm="${2:-$VM_NAME}"
+    log "Warte auf SSH ($ip) — Idle-Timeout ${SSH_IDLE_TIMEOUT}s, Hard-Cap ${SSH_TIMEOUT}s ..."
+    local elapsed=0 idle=0
+    local last_bytes=0 cur_bytes=0
     echo ""
     until $SSH "$VM_USER@$ip" true 2>/dev/null; do
-        sleep 3; elapsed=$((elapsed + 3))
-        [[ $elapsed -gt $SSH_TIMEOUT ]] && echo "" && die "SSH nicht erreichbar nach ${SSH_TIMEOUT}s"
-        progress_bar "$elapsed" "$SSH_TIMEOUT" "SSH wartet..."
+        sleep 5; elapsed=$((elapsed + 5)); idle=$((idle + 5))
+
+        # Disk-I/O messen: solange VM schreibt, Idle-Counter resetten
+        cur_bytes=$(LIBVIRT_DEFAULT_URI="qemu:///system" virsh domstats "$vm" --block 2>/dev/null \
+            | awk -F= '/block\.[0-9]+\.wr\.bytes=/{s+=$2} END{print s+0}')
+        if (( cur_bytes > last_bytes )); then
+            idle=0
+            last_bytes=$cur_bytes
+        fi
+
+        if (( idle > SSH_IDLE_TIMEOUT )); then
+            echo ""; die "SSH nicht erreichbar — VM ${SSH_IDLE_TIMEOUT}s ohne Disk-Aktivität (idle)."
+        fi
+        if (( elapsed > SSH_TIMEOUT )); then
+            echo ""; die "SSH nicht erreichbar nach ${SSH_TIMEOUT}s (Hard-Cap)."
+        fi
+        progress_bar "$idle" "$SSH_IDLE_TIMEOUT" "SSH wartet (idle ${idle}s/${SSH_IDLE_TIMEOUT}s, total ${elapsed}s)"
     done
     echo ""
     log "SSH verbunden: $ip"
@@ -233,11 +250,43 @@ cmd_create() {
 }
 
 cmd_install() {
-    step "Installations-Test: Ventoy USB → GRUB [m] → Anaconda → fedora-vm.ks"
+    step "Installations-Test: Custom-ISO → Anaconda → fedora-vm.ks"
 
     local install_vm="fedora-install-test"
     local install_disk="${VM_STORAGE_DIR}/${install_vm}.qcow2"
     local install_nvram="${VM_STORAGE_DIR}/${install_vm}-OVMF_VARS.fd"
+    local custom_iso="${PROJECT_DIR}/iso/Fedora-Auto-vm.iso"
+
+    # ── Custom-ISO bauen (immer aktuell mit fedora-vm.ks + Scripts) ───────────
+    step "Custom-ISO bauen (fedora-vm.ks eingebettet)"
+    if ! command -v mkksiso &>/dev/null; then
+        die "mkksiso fehlt. Installiere: sudo dnf install lorax xorriso cpio zstd"
+    fi
+    local src_iso
+    src_iso=$(ls -t "${PROJECT_DIR}"/iso/Fedora-Everything-netinst-*.iso 2>/dev/null | head -1)
+    [[ -z "$src_iso" ]] && die "Keine Source-ISO unter iso/ gefunden."
+
+    local stage; stage=$(mktemp -d -t vm-iso-stage-XXXXXX)
+    cp "${PROJECT_DIR}/kickstart/fedora-vm.ks" "$stage/ks.cfg"
+    mkdir -p "$stage/scripts" "$stage/kickstart"
+    cp -r "${PROJECT_DIR}/scripts/." "$stage/scripts/"
+    cp "${PROJECT_DIR}/kickstart/common-post.inc" "$stage/kickstart/"
+    cp "${PROJECT_DIR}"/kickstart/*.ks "$stage/kickstart/" 2>/dev/null || true
+    cp "${PROJECT_DIR}/fedora-provision.sh" "$stage/fedora-provision.sh"
+    chmod 0750 "$stage/fedora-provision.sh"
+
+    rm -f "$custom_iso"
+    sudo mkksiso \
+        --ks "$stage/ks.cfg" \
+        -c "inst.ks=cdrom:/ks.cfg" \
+        --add "$stage/scripts" \
+        --add "$stage/kickstart" \
+        --add "$stage/fedora-provision.sh" \
+        "$src_iso" \
+        "$custom_iso" \
+        || { rm -rf "$stage"; die "mkksiso (VM-Variante) fehlgeschlagen."; }
+    rm -rf "$stage"
+    log "Custom-ISO: $custom_iso ($(stat -c '%s' "$custom_iso" | numfmt --to=iec))"
 
     # Alte Install-Test-VM bereinigen
     if virsh dominfo "$install_vm" &>/dev/null; then
@@ -250,8 +299,7 @@ cmd_install() {
     [[ -f "$install_disk" ]] && rm -f "$install_disk"
     [[ -f "$install_nvram" ]] && rm -f "$install_nvram"
 
-    # Frische VM mit LEEREM Disk anlegen
-    # UEFI bootet automatisch vom USB wenn kein OS auf Disk
+    # Frische VM mit LEEREM Disk anlegen, ISO als CDROM (boot=cdrom)
     log "Lege neue Install-Test-VM an: ${install_vm} (${VM_DISK_GB}GB, leer)..."
     cp "$OVMF_VARS" "$install_nvram"
 
@@ -260,57 +308,23 @@ cmd_install() {
         --memory "$VM_RAM_MB" \
         --vcpus "$VM_CPUS" \
         --disk "path=${install_disk},size=${VM_DISK_GB},format=qcow2,bus=virtio" \
+        --cdrom "$custom_iso" \
         --os-variant "$VM_OS_VARIANT" \
         --boot "uefi,loader=${OVMF_CODE},loader_ro=yes,nvram=${install_nvram}" \
         --network network=default \
         --graphics spice,listen=none \
         --video virtio \
         --noautoconsole \
-        --print-xml > /tmp/${install_vm}.xml
+        --print-xml 1 > /tmp/${install_vm}.xml
 
     virsh define /tmp/${install_vm}.xml
-    log "VM '${install_vm}' definiert (leerer Disk)."
+    log "VM '${install_vm}' definiert (Custom-ISO als CDROM)."
 
-    # Ventoy USB-Passthrough hinzufügen
-    find_ventoy_usb
-    virsh attach-device "$install_vm" --persistent /dev/stdin <<XMLEOF 2>/dev/null || true
-<hostdev mode='subsystem' type='usb' managed='yes'>
-  <source>
-    <vendor id='0x${VENTOY_USB_VENDOR}'/>
-    <product id='0x${VENTOY_USB_PRODUCT}'/>
-  </source>
-</hostdev>
-XMLEOF
-    log "Ventoy USB-Passthrough hinzugefügt."
-
-    log "Starte VM — UEFI bootet vom Ventoy USB (kein OS auf Disk)..."
+    log "Starte VM — UEFI bootet vom Custom-ISO, Anaconda startet automatisch..."
     virsh start "$install_vm"
 
-    # Lokale Variable für den rest der Funktion
     local ACTIVE_VM="$install_vm"
-
-    # Warten bis GRUB geladen ist (~8s nach BIOS POST)
-    log "Warte auf Ventoy GRUB-Menü (10s)..."
-    sleep 10
-
-    # ── Fedora Netinstall via Ventoy ───────────────────────────────────────────
-    # Fedora Netinstall ISO → Anaconda mit vollem Kickstart-Support
-    # Ventoy F6 ExMenu → [m] VM-Test Profil → inst.stage2 + inst.ks korrekt
-    # ────────────────────────────────────────────────────────────────────────
-
-    # F6 ExMenu direkt vom Ventoy-HAUPTMENÜ (NICHT nach ISO-Auswahl!)
-    # Erkenntnisse: F6 funktioniert nur im Ventoy-Hauptmenü,
-    # nicht nach "Enter → Boot mode selection → normal mode → Fedora GRUB"
-    # Fedora ISO ist alphabetisch erster Eintrag (F vor N=Fedora)
-    log "Warte auf Ventoy Hauptmenü — sende F6 für ExMenu mit inst.ks Profilen..."
-    virsh send-key "$ACTIVE_VM" KEY_F6
-    sleep 4  # ExMenu lädt
-
-    # ExMenu zeigt unsere ventoy_grub.cfg Einträge:
-    # [m] VM-Test ist erster Eintrag — Enter auswählen
-    log "ExMenu offen — wähle [m] VM-Test (Enter: inst.stage2=hd:LABEL=Ventoy + inst.ks)..."
-    virsh send-key "$ACTIVE_VM" KEY_ENTER
-    log "Anaconda startet mit inst.ks=fedora-vm.ks — vollautomatische Installation..."
+    log "Anaconda läuft mit eingebettetem fedora-vm.ks — keine Keystroke-Sequenz nötig."
 
     # virt-manager öffnen für visuelle Kontrolle
     virt-manager --connect qemu:///system --show-domain-console "$ACTIVE_VM" &
@@ -627,8 +641,8 @@ open('/tmp/${VM_NAME}-nousb.xml', 'w').write(xml)
         sleep 5; boot_waited=$((boot_waited + 5))
         if $SSH "$VM_USER@$ip" "test -f /var/lib/fedora-provision/first-boot.done" 2>/dev/null; then
             boot_done=1
-        elif [[ $boot_waited -gt 600 ]]; then
-            warn "First-Boot nicht abgeschlossen nach 600s."
+        elif [[ $boot_waited -gt 1800 ]]; then
+            warn "First-Boot nicht abgeschlossen nach 1800s."
             break
         fi
     done
@@ -744,14 +758,14 @@ echo '  Installierte Komponenten:'
     && echo '  ✓ First-Boot' || echo '  ✗ First-Boot fehlt'
 command -v podman &>/dev/null \
     && echo '  ✓ Podman:' \$(podman --version) || echo '  ✗ Podman fehlt'
-[ -f \${HOME}/.config/containers/systemd/vllm-audio.container ] \
-    && echo '  ✓ Quadlet: vllm-audio.container' || echo '  ✗ vllm-audio.container fehlt'
-[ -f \${HOME}/.config/containers/systemd/vllm-agent.container ] \
-    && echo '  ✓ Quadlet: vllm-agent.container' || echo '  ✗ vllm-agent.container fehlt'
-systemctl --user is-enabled vllm-audio.service 2>/dev/null | grep -q enabled \
-    && echo '  ✓ vllm-audio.service aktiviert' || echo '  ✗ vllm-audio.service nicht aktiviert'
-systemctl --user is-enabled vllm-agent.service 2>/dev/null | grep -q enabled \
-    && echo '  ✓ vllm-agent.service aktiviert'  || echo '  ✗ vllm-agent.service nicht aktiviert'
+[ -f \${HOME}/.config/containers/systemd/vllm@.container ] \
+    && echo '  ✓ Quadlet-Template: vllm@.container' || echo '  ✗ vllm@.container fehlt'
+[ -f \${HOME}/.config/systemd/user/vllm-router.service ] \
+    && echo '  ✓ Router-Unit: vllm-router.service' || echo '  ✗ vllm-router.service fehlt'
+[ -f \${HOME}/.config/vllm-router/models.json ] \
+    && echo '  ✓ Registry: models.json' || echo '  ✗ models.json fehlt'
+systemctl --user is-enabled vllm-router.service 2>/dev/null | grep -q enabled \
+    && echo '  ✓ vllm-router.service aktiviert' || echo '  ✗ vllm-router.service nicht aktiviert'
 [ -f \${HOME}/.local/share/bitwig-agent/run_pipeline.sh ] \
     && echo '  ✓ Bitwig Agent Pipeline' || echo '  ✗ run_pipeline.sh fehlt'
 [ -d \${HOME}/bitwig-input ]  && echo '  ✓ ~/bitwig-input/'  || echo '  ✗ ~/bitwig-input/ fehlt'
@@ -832,6 +846,7 @@ cmd_destroy() {
 
 # ── Smoke-Test: USB-Stick Sync-Prüfung ────────────────────────────────────────
 # $1: Kontext ("install" oder "test") — beeinflusst Fehlermeldung
+# Delegiert die eigentliche Synchronisierung an scripts/sync-usb.sh.
 cmd_smoke() {
     local context="${1:-test}"
     step "Smoke-Test: USB-Stick vs. Repo"
@@ -851,75 +866,16 @@ cmd_smoke() {
         fi
     fi
 
-    local ventoy_mount="/run/media/$(whoami)/Ventoy"
-    local mounted=0
+    local sync_script="${PROJECT_DIR}/scripts/sync-usb.sh"
+    [[ -x "$sync_script" ]] || die "sync-usb.sh fehlt oder nicht ausführbar: ${sync_script}"
 
-    # Mounten falls nicht aktiv
-    if ! findmnt "$ventoy_mount" &>/dev/null; then
-        local dev; dev=$(lsblk -o NAME,LABEL -rn | awk '$2=="Ventoy"{print "/dev/"$1}' | head -1)
-        if [[ -z "$dev" ]]; then
-            warn "Ventoy USB nicht gefunden — Sync-Prüfung übersprungen."
-            return 0
-        fi
-        udisksctl mount -b "$dev" &>/dev/null && mounted=1
-    fi
-
-    if ! findmnt "$ventoy_mount" &>/dev/null; then
-        die "Ventoy USB nicht mountbar — USB-Stick einstecken und erneut versuchen."
-    fi
-
-    local -A FILES=(
-        ["kickstart/fedora-vm.ks"]="${ventoy_mount}/kickstart/fedora-vm.ks"
-        ["kickstart/common-post.inc"]="${ventoy_mount}/kickstart/common-post.inc"
-        ["scripts/first-boot.sh"]="${ventoy_mount}/scripts/first-boot.sh"
-        ["scripts/first-login.sh"]="${ventoy_mount}/scripts/first-login.sh"
-        ["ventoy/ventoy_grub.cfg.tpl"]="${ventoy_mount}/ventoy/ventoy_grub.cfg"
-    )
-
-    local stale=()
-    for rel in "${!FILES[@]}"; do
-        local src="${PROJECT_DIR}/${rel}"
-        local dst="${FILES[$rel]}"
-        if [[ ! -f "$dst" ]]; then
-            stale+=("$rel  ${RED}(fehlt auf USB)${RESET}")
-        elif ! diff -q "$src" "$dst" &>/dev/null; then
-            stale+=("$rel  ${YELLOW}(veraltet)${RESET}")
-        fi
-    done
-
-    if [[ ${#stale[@]} -eq 0 ]]; then
+    if "$sync_script" --check &>/dev/null; then
         log "USB-Stick ist aktuell ✓"
-    else
-        echo -e "\n  ${RED}${BOLD}USB-Stick nicht aktuell:${RESET}"
-        for f in "${stale[@]}"; do echo -e "    ✗ $f"; done
-        echo ""
-        read -r -t 15 -p "  Jetzt synchronisieren? [J/n] " ans 2>/dev/tty || ans="J"
-        if [[ "${ans,,}" != "n" ]]; then
-            # ISO-Dateinamen auf dem Stick für Template-Substitution ermitteln
-            local iso_name
-            iso_name=$(ls "${ventoy_mount}/"*.iso 2>/dev/null | head -1 | xargs -r basename || true)
-
-            for rel in "${!FILES[@]}"; do
-                local src="${PROJECT_DIR}/${rel}"
-                local dst="${FILES[$rel]}"
-                if ! diff -q "$src" "$dst" &>/dev/null 2>&1; then
-                    # ventoy_grub.cfg: FEDORA_ISO_FILENAME Platzhalter ersetzen
-                    if [[ "$rel" == "ventoy/ventoy_grub.cfg.tpl" ]] && [[ -n "$iso_name" ]]; then
-                        sed "s/FEDORA_ISO_FILENAME/${iso_name}/g" "$src" > "$dst"
-                        log "Kopiert (ISO=${iso_name}): $rel"
-                    else
-                        cp "$src" "$dst" && log "Kopiert: $rel"
-                    fi
-                fi
-            done
-            sync
-            log "USB-Stick synchronisiert ✓"
-        else
-            die "USB-Stick veraltet — Test abgebrochen."
-        fi
+        return 0
     fi
 
-    [[ $mounted -eq 1 ]] && udisksctl unmount -b "$(findmnt -n -o SOURCE "$ventoy_mount")" &>/dev/null || true
+    # Drift erkannt — interaktive Sync starten (sync-usb.sh fragt selbst)
+    "$sync_script" || die "USB-Stick veraltet — Test abgebrochen."
 }
 
 # ── Dispatch ───────────────────────────────────────────────────────────────────
@@ -928,7 +884,7 @@ shift || true
 
 case "$COMMAND" in
     create)   cmd_create   ;;
-    install)  cmd_smoke install; cmd_install  ;;
+    install)  cmd_install  ;;
     base)     cmd_base     ;;
     snapshot) cmd_snapshot ;;
     test)     cmd_smoke test; cmd_test "$@" ;;

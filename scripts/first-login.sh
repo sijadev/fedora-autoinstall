@@ -343,298 +343,67 @@ if [[ "$INSTALL_PROFILE" == "theme-bash" ]]; then
     exit 0
 fi
 
-# ── Profile: headless-vllm / vllm-only — Podman vLLM Service aktivieren ──────
+# ── Profile: headless-vllm / vllm-only — Multi-Model Router aktivieren ───────
 if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
-    step "Podman vLLM Service"
+    step "vLLM Multi-Model Router"
 
-    QUADLET_FILE="${HOME}/.config/containers/systemd/vllm.container"
-    if [[ -f "$QUADLET_FILE" ]]; then
-        systemctl --user daemon-reload 2>/dev/null || true
+    QUADLET_TPL="${HOME}/.config/containers/systemd/vllm@.container"
+    ROUTER_UNIT="${HOME}/.config/systemd/user/vllm-router.service"
+    REPO_DIR="/usr/local/share/fedora-autoinstall"
 
-        # Image vorab pullen
-        VLLM_IMAGE="fedora-vllm:latest"
-        podman image exists "$VLLM_IMAGE" 2>/dev/null || VLLM_IMAGE="vllm/vllm-openai:latest"
-        log "Pulling ${VLLM_IMAGE}..."
-        podman pull "$VLLM_IMAGE" 2>&1 | while read -r l; do
-            [[ "$l" == *"Copying"* || "$l" == *"Writing"* || "$l" == *"manifest"* ]] && log "  $l" || true
-        done || warn "Image pull fehlgeschlagen — Service startet beim ersten Aufruf."
-
-        for svc in vllm-audio.service vllm-agent.service; do
-            systemctl --user enable "$svc" 2>/dev/null \
-                && log "${svc} aktiviert." \
-                || warn "${svc} enable fehlgeschlagen (non-fatal)."
-        done
-
-        log "Kimi-Audio  API: http://localhost:8000/v1  (Musik-Analyse)"
-        log "Qwen3 Agent API: http://localhost:8001/v1  (Reasoning + LangGraph)"
-        log "Starten: systemctl --user start vllm-audio.service vllm-agent.service"
+    if [[ ! -f "$QUADLET_TPL" || ! -f "$ROUTER_UNIT" ]]; then
+        warn "Quadlet-Template oder Router-Unit fehlt — first-boot.sh lief ggf. noch nicht."
     else
-        warn "Kein Quadlet-File gefunden — first-boot.sh lief ggf. noch nicht."
-    fi
-fi
-
-# ── 7. Python venv ~/.venvs/ai ────────────────────────────────────────────────
-step "Python AI venv"
-if [[ "$INSTALL_PROFILE" == "headless-vllm" ]]; then
-    log "Skipped (headless-vllm uses Podman container for AI)."
-else
-
-VENV_AI="${PYTORCH_VENV/#\~/$HOME}"
-if [[ -d "$VENV_AI" ]]; then
-    log "venv already exists: $VENV_AI"
-else
-    log "Creating venv: $VENV_AI"
-    mkdir -p "$(dirname "$VENV_AI")"
-    python3 -m venv "$VENV_AI"
-fi
-
-# Upgrade pip in venv
-"$VENV_AI/bin/pip" install --quiet --upgrade pip
-
-# ── 8. CUDA compatibility → PyTorch ───────────────────────────────────────────
-step "PyTorch installation"
-
-detect_cuda_version() {
-    local nvcc_path
-    for p in /usr/local/cuda/bin/nvcc /usr/bin/nvcc; do
-        [[ -x "$p" ]] && { "$p" --version | grep -oP 'release \K[\d.]+' | head -1; return; }
-    done
-    echo ""
-}
-
-resolve_pytorch_index() {
-    local cuda_ver="$1"
-    local major minor
-    major=$(echo "$cuda_ver" | cut -d. -f1)
-    minor=$(echo "$cuda_ver" | cut -d. -f2)
-    local ver_int=$(( major * 100 + minor ))
-
-    # Map CUDA version → PyTorch wheel index
-    # Prefer the highest known cu-tag that is <= installed CUDA
-    if   (( ver_int >= 1302 )); then echo "https://download.pytorch.org/whl/cu128"  # cu128 = CUDA 12.8+; best available for 13.x
-    elif (( ver_int >= 1206 )); then echo "https://download.pytorch.org/whl/cu126"
-    elif (( ver_int >= 1204 )); then echo "https://download.pytorch.org/whl/cu124"
-    elif (( ver_int >= 1201 )); then echo "https://download.pytorch.org/whl/cu121"
-    elif (( ver_int >= 1200 )); then echo "https://download.pytorch.org/whl/cu118"
-    else  echo "https://download.pytorch.org/whl/cpu"
-    fi
-}
-
-CUDA_VER=$(detect_cuda_version)
-if [[ -z "$CUDA_VER" ]]; then
-    warn "CUDA not detected; installing CPU-only PyTorch."
-    PYTORCH_INDEX="https://download.pytorch.org/whl/cpu"
-else
-    log "Detected CUDA $CUDA_VER"
-    PYTORCH_INDEX=$(resolve_pytorch_index "$CUDA_VER")
-fi
-log "PyTorch index: $PYTORCH_INDEX"
-
-"$VENV_AI/bin/pip" install --quiet \
-    torch torchvision torchaudio \
-    --index-url "$PYTORCH_INDEX"
-
-log "Verifying PyTorch..."
-"$VENV_AI/bin/python3" -c "
-import torch
-print(f'  PyTorch {torch.__version__}')
-print(f'  CUDA available: {torch.cuda.is_available()}')
-if torch.cuda.is_available():
-    print(f'  CUDA version: {torch.version.cuda}')
-    print(f'  GPU: {torch.cuda.get_device_name(0)}')
-" || warn "PyTorch verification script failed (non-fatal)."
-
-# ── 9. vLLM-Omni venv + HuggingFace CLI ──────────────────────────────────────
-step "vLLM-Omni venv"
-
-VENV_VLLM="${VLLM_VENV/#\~/$HOME}"
-if [[ -d "$VENV_VLLM" ]]; then
-    log "vLLM-Omni venv already exists: $VENV_VLLM"
-else
-    log "Creating vLLM-Omni venv: $VENV_VLLM"
-    mkdir -p "$(dirname "$VENV_VLLM")"
-    python3 -m venv "$VENV_VLLM"
-fi
-
-"$VENV_VLLM/bin/pip" install --quiet --upgrade pip
-
-if lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
-    log "Installing HuggingFace CLI + autoawq (GPU detected)..."
-    "$VENV_VLLM/bin/pip" install --quiet "huggingface_hub" autoawq \
-        || warn "HuggingFace CLI / autoawq install failed (non-fatal)."
-
-    log "Installing vLLM (GPU, CUDA)..."
-    "$VENV_VLLM/bin/pip" install --quiet vllm \
-        || warn "vLLM GPU install failed (non-fatal)."
-else
-    log "Installing HuggingFace CLI + vLLM CPU-Backend (no GPU)..."
-    "$VENV_VLLM/bin/pip" install --quiet "huggingface_hub" \
-        || warn "HuggingFace CLI install failed (non-fatal)."
-
-    # vLLM CPU-Backend — TMPDIR auf /home wegen tmpfs /tmp (begrenzt auf 50% RAM)
-    mkdir -p "${HOME}/.cache/pip-tmp"
-    TMPDIR="${HOME}/.cache/pip-tmp" VLLM_TARGET_DEVICE=cpu \
-        "$VENV_VLLM/bin/pip" install --quiet --no-cache-dir vllm \
-        || warn "vLLM CPU install failed (non-fatal)."
-
-    # Kleines Testmodell für VM-Tests vorausholen (250MB)
-    if "$VENV_VLLM/bin/python" -c "import vllm" 2>/dev/null; then
-        log "vLLM CPU-Backend installiert. Lade Test-Modell facebook/opt-125m..."
-        TMPDIR="${HOME}/.cache/pip-tmp" \
-            "$VENV_VLLM/bin/python" -c "
-from huggingface_hub import snapshot_download
-snapshot_download('facebook/opt-125m', local_dir='${HOME}/.models/huggingface/hub/facebook--opt-125m')
-print('Modell bereit: facebook/opt-125m')
-" 2>/dev/null \
-            && log "Test-Modell bereit: facebook/opt-125m" \
-            || warn "Modell-Download fehlgeschlagen (non-fatal)."
-    fi
-fi
-
-log "HuggingFace CLI + vLLM installiert."
-
-# ── 10. CUDA 13.2 toolchain for vLLM-Omni ────────────────────────────────────
-step "CUDA ${VLLM_CUDA_VERSION} toolchain"
-if ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
-    warn "No NVIDIA GPU — skipping CUDA ${VLLM_CUDA_VERSION} toolchain (VM or non-NVIDIA system)."
-else
-
-find_cuda_version_path() {
-    local target_ver="$1"
-    # Check /usr/local/cuda-X.Y symlink/dir
-    for p in "/usr/local/cuda-${target_ver}" "/usr/local/cuda"; do
-        if [[ -x "${p}/bin/nvcc" ]]; then
-            local found_ver
-            found_ver=$("${p}/bin/nvcc" --version | grep -oP 'release \K[\d.]+' | head -1)
-            if [[ "$found_ver" == "$target_ver"* ]]; then
-                echo "$p"
-                return 0
-            fi
+        # Image vorab pullen (Custom-Build bevorzugt, sonst Upstream)
+        VLLM_IMAGE="localhost/fedora-vllm:latest"
+        if ! podman image exists "$VLLM_IMAGE" 2>/dev/null; then
+            warn "Custom-Image '${VLLM_IMAGE}' fehlt — bauen mit:"
+            warn "  ./scripts/podman-pipeline.sh --build-vllm"
         fi
-    done
-    return 1
-}
 
-CUDA_132_PATH=""
-if CUDA_132_PATH=$(find_cuda_version_path "$VLLM_CUDA_VERSION"); then
-    log "CUDA ${VLLM_CUDA_VERSION} found at: $CUDA_132_PATH"
-else
-    log "CUDA ${VLLM_CUDA_VERSION} not found. Attempting installation..."
-
-    # Try dnf first (Fedora/Fedora may have it)
-    CUDA_MAJOR=$(echo "$VLLM_CUDA_VERSION" | cut -d. -f1)
-    CUDA_MINOR=$(echo "$VLLM_CUDA_VERSION" | cut -d. -f2)
-    CUDA_PKG="cuda-toolkit-${CUDA_MAJOR}-${CUDA_MINOR}"
-
-    if have_passwordless_sudo && sudo dnf install -y "$CUDA_PKG" 2>/dev/null; then
-        log "Installed $CUDA_PKG via dnf."
-    else
-        if ! have_passwordless_sudo; then
-            die "CUDA ${VLLM_CUDA_VERSION} is missing and passwordless sudo is not available in first-login context. Install CUDA ${VLLM_CUDA_VERSION} manually or via first-boot, then re-run."
+        # Router-venv + Wrapper
+        ROUTER_VENV="${HOME}/.venvs/vllm-router"
+        if [[ ! -d "$ROUTER_VENV" ]]; then
+            log "Erstelle Router-venv: $ROUTER_VENV"
+            python3 -m venv "$ROUTER_VENV"
+            "$ROUTER_VENV/bin/pip" install --quiet --upgrade pip
+            "$ROUTER_VENV/bin/pip" install --quiet fastapi uvicorn httpx \
+                || warn "Router-venv Pip-Install fehlgeschlagen."
         fi
-        # Fall back to NVIDIA runfile installer (side-by-side, no system CUDA overwrite)
-        log "dnf package not available. Downloading NVIDIA CUDA ${VLLM_CUDA_VERSION} runfile..."
-        RUNFILE_URL="https://developer.download.nvidia.com/compute/cuda/${VLLM_CUDA_VERSION}/local_installers/cuda_${VLLM_CUDA_VERSION}_linux.run"
-        RUNFILE="/tmp/cuda-${VLLM_CUDA_VERSION}-installer.run"
 
-        curl -L --retry 5 --progress-bar -o "$RUNFILE" "$RUNFILE_URL" \
-            || die "Failed to download CUDA ${VLLM_CUDA_VERSION} runfile from NVIDIA."
+        # Router-Script + Wrapper installieren
+        mkdir -p "${HOME}/.local/bin" "${HOME}/.local/share/vllm-router"
+        if [[ -f "${REPO_DIR}/scripts/vllm-router.py" ]]; then
+            install -m 0644 "${REPO_DIR}/scripts/vllm-router.py" \
+                "${HOME}/.local/share/vllm-router/vllm-router.py"
+        fi
+        cat > "${HOME}/.local/bin/vllm-router" <<WRAPEOF
+#!/usr/bin/env bash
+exec "${ROUTER_VENV}/bin/python" "${HOME}/.local/share/vllm-router/vllm-router.py"
+WRAPEOF
+        chmod 0755 "${HOME}/.local/bin/vllm-router"
 
-        chmod +x "$RUNFILE"
-        sudo "$RUNFILE" \
-            --silent \
-            --toolkit \
-            --toolkitpath="/usr/local/cuda-${VLLM_CUDA_VERSION}" \
-            --no-opengl-libs \
-            --override \
-            || die "CUDA ${VLLM_CUDA_VERSION} runfile installation failed."
+        # Linger aktivieren, damit User-Services ohne aktive Session laufen
+        if have_passwordless_sudo; then
+            sudo loginctl enable-linger "$USER" 2>/dev/null \
+                && log "Linger aktiviert (Services laufen ohne aktive Session)." \
+                || warn "loginctl enable-linger fehlgeschlagen."
+        fi
 
-        rm -f "$RUNFILE"
-        log "CUDA ${VLLM_CUDA_VERSION} installed to /usr/local/cuda-${VLLM_CUDA_VERSION}"
+        systemctl --user daemon-reload
+        systemctl --user enable --now vllm-router.service 2>/dev/null \
+            && log "vllm-router.service aktiviert (Port 8000)." \
+            || warn "vllm-router.service enable fehlgeschlagen."
+
+        log "OpenAI-API: http://localhost:8000/v1"
+        log "Registry:   ${HOME}/.config/vllm-router/models.json"
+        log "Modelle:    curl http://localhost:8000/v1/models"
     fi
-
-    CUDA_132_PATH=$(find_cuda_version_path "$VLLM_CUDA_VERSION") \
-        || die "CUDA ${VLLM_CUDA_VERSION} still not found after installation."
 fi
 
-# Write venv activation hook to set CUDA 13.2 env for this venv
-VENV_ACTIVATE_HOOK="${VENV_VLLM}/bin/activate.d"
-mkdir -p "$VENV_ACTIVATE_HOOK"
-cat > "${VENV_VLLM}/bin/activate.cuda" <<HOOKEOF
-# Auto-sourced for vLLM-Omni venv — sets CUDA ${VLLM_CUDA_VERSION} paths
-export CUDA_HOME="${CUDA_132_PATH}"
-export PATH="\${CUDA_HOME}/bin\${PATH:+:\$PATH}"
-export LD_LIBRARY_PATH="\${CUDA_HOME}/lib64\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
-HOOKEOF
-
-# Inject into venv's activate script
-if ! grep -q 'activate.cuda' "${VENV_VLLM}/bin/activate"; then
-    echo '' >> "${VENV_VLLM}/bin/activate"
-    echo '# Fedora: CUDA toolchain for vLLM-Omni' >> "${VENV_VLLM}/bin/activate"
-    echo "source \"${VENV_VLLM}/bin/activate.cuda\"" >> "${VENV_VLLM}/bin/activate"
-fi
-log "CUDA ${VLLM_CUDA_VERSION} environment configured for venv: $VENV_VLLM"
-fi  # end: NVIDIA GPU check for CUDA toolchain
-
-# ── 11. vLLM-Omni source build ────────────────────────────────────────────────
-step "vLLM-Omni source build (CUDA ${VLLM_CUDA_VERSION}, sm${VLLM_ARCH_LIST//./})"
-if ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
-    warn "No NVIDIA GPU — skipping vLLM build (VM or non-NVIDIA system)."
-else
-
-VLLM_OMNI_SRC="${HOME}/.local/src/vllm-omni"
-
-if [[ -d "${VLLM_OMNI_SRC}/.git" ]]; then
-    log "vLLM-Omni source already cloned. Pulling latest..."
-    git -C "$VLLM_OMNI_SRC" pull --ff-only || warn "git pull failed; using existing source."
-else
-    log "Cloning vLLM-Omni..."
-    mkdir -p "$(dirname "$VLLM_OMNI_SRC")"
-    git clone --depth=1 https://github.com/vllm-project/vllm.git "$VLLM_OMNI_SRC" \
-        || die "Failed to clone vLLM-Omni."
-fi
-
-# Apply use_existing_torch.py to prevent overwriting the system PyTorch
-if [[ -f "${VLLM_OMNI_SRC}/use_existing_torch.py" ]]; then
-    log "Running use_existing_torch.py (protects external PyTorch installations)..."
-    (cd "$VLLM_OMNI_SRC" && "$VENV_VLLM/bin/python3" use_existing_torch.py) \
-        || warn "use_existing_torch.py failed (non-fatal, continuing build)."
-fi
-
-log "Building vLLM-Omni against CUDA ${VLLM_CUDA_VERSION} + sm${VLLM_ARCH_LIST//./}..."
-(
-    cd "$VLLM_OMNI_SRC"
-    # Activate venv environment for build
-    source "${VENV_VLLM}/bin/activate"
-    source "${VENV_VLLM}/bin/activate.cuda"
-
-    export TORCH_CUDA_ARCH_LIST="${VLLM_ARCH_LIST}"
-    export CUDA_HOME="${CUDA_132_PATH}"
-    export MAX_JOBS="${MAX_JOBS:-$(nproc)}"
-
-    pip install --quiet --no-build-isolation . \
-        || die "vLLM-Omni build failed."
-)
-log "vLLM-Omni build completed."
-fi  # end: NVIDIA GPU check for vLLM build
-fi  # end: headless-vllm guard for steps 7-11
-# ── 12. Download model ────────────────────────────────────────────────────────
-step "Model download: ${VLLM_MODEL}"
-
-if [[ "$INSTALL_PROFILE" == "headless-vllm" ]]; then
-    log "Skipped (headless-vllm: model is downloaded inside the Podman container)."
-elif ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
-    log "Skipped: kein NVIDIA GPU — großes Modell (${VLLM_MODEL}) nur auf echter Hardware laden."
-    log "Testmodell bereits bereit: facebook/opt-125m"
-else
-    log "Checking HuggingFace login..."
-    log "Downloading model: ${VLLM_MODEL} ..."
-    "$VENV_VLLM/bin/python" -c "
-from huggingface_hub import snapshot_download
-snapshot_download('${VLLM_MODEL}', local_dir='${HOME}/.models/huggingface/hub/${VLLM_MODEL//\//__}')
-" \
-        || warn "Model download failed or deferred (check HF token / disk space)."
-fi
+# Entfernt: alte venv-basierte vLLM-Source-Builds (PyTorch, CUDA 13.2 toolchain,
+# vLLM-Omni source build, Model-Download). vLLM läuft im Podman-Container
+# (Containerfile.vllm), aktiviert via vllm-router.service + vllm@.container Template.
 
 # ── Final report ──────────────────────────────────────────────────────────────
 step "First-login provisioning complete"

@@ -73,6 +73,60 @@ fedora-autoinstall/
 sudo ./fedora-install.sh --config config/mein-system.xml
 ```
 
+### Alternative: Custom-ISO bauen (ohne Ventoy)
+
+Statt Ventoy kann eine **eigene bootbare Fedora-ISO** gebaut werden, in die Kickstart + Scripts direkt eingebettet sind. Vorteil: self-contained (`dd` reicht), und optional kann der **Bazzite-Kernel direkt ins ISO** injiziert werden — dann bootet auch **Blackwell ohne iGPU-Workaround**.
+
+```bash
+# Voraussetzungen
+sudo dnf install lorax xorriso cpio zstd
+
+# Standard-ISO mit Kickstart (full-Profil)
+sudo ./fedora-iso-build.sh --profile full
+
+# Mit Kernel-Swap für Blackwell (RTX 50/9070)
+sudo ./fedora-iso-build.sh --profile full --swap-kernel
+
+# Direkt auf USB-Stick schreiben
+sudo ./fedora-iso-build.sh --profile full --swap-kernel --write /dev/sdX
+```
+
+Ergebnis: `iso/Fedora-Auto-full.iso` — booten startet Anaconda automatisch mit eingebettetem Kickstart.
+
+### NVIDIA Blackwell (RTX 50 / 9070) — Pflicht vor Install
+
+Anaconda hängt auf Blackwell-GPUs mit schwarzem Bildschirm. Workaround:
+
+1. **BIOS** vor USB-Boot:
+   - `Primary Display` / `Init Display First` → **IGD** / **iGPU**
+   - `IGPU Multi-Monitor` → **Enabled**
+   - **Secure Boot** → **Disabled**
+2. **Monitor** an Mainboard-HDMI/DP anschließen (nicht an die NVIDIA-Karte)
+3. **Ventoy-Hauptmenü**: vor ISO-Auswahl **Ctrl+R** drücken → GRUB2 Mode
+4. Installation läuft jetzt über die iGPU des Ryzen
+5. **Nach erfolgreichem first-boot** (Bazzite-Kernel + NVIDIA-Treiber installiert):
+   - BIOS: `Primary Display` → **PEG/PCIe**
+   - Monitor zurück an NVIDIA-Karte
+
+Der erste Boot installiert automatisch den **Bazzite-Kernel** (`FEDORA_KERNEL_SOURCE=bazzite`, Default) mit aktuellem Blackwell-Support. Opt-out: `FEDORA_KERNEL_SOURCE=fedora` in `/etc/fedora-provision.env`.
+
+### Diagnose: Schwarzer Bildschirm beim Install
+
+Wenn nach Auswahl `[f]` oder `[d]` nur ein kurzer Terminal-Flash erscheint und dann der Bildschirm schwarz bleibt: **mindestens 90 Sekunden warten** — Anaconda lädt stage2 über Netzwerk nach (netinstall).
+
+Falls weiterhin schwarz, **TTY-Switch** versuchen (mehrere durchprobieren):
+
+| Tastenkombi | Inhalt |
+|---|---|
+| `Ctrl+Alt+F1` | Anaconda-UI (Hauptkonsole) |
+| `Ctrl+Alt+F2` | Root-Shell — `dmesg`, `journalctl -xb` |
+| `Ctrl+Alt+F3` | `anaconda.log` |
+| `Ctrl+Alt+F4` | Storage-Log |
+| `Ctrl+Alt+F5` | Programm-Log |
+
+- **TTY-Switch funktioniert** → reines Display-Problem, iGPU-Switch im BIOS löst es
+- **TTYs auch tot** → Kernel-Hang, anderes ISO probieren (Fedora Workstation Live oder Bazzite Installer-ISO)
+
 ### 2. Profil wählen
 
 USB einstecken → Im Ventoy-Hauptmenü **F6** drücken → Hotkey wählen:
@@ -202,14 +256,61 @@ Qwen3-8B + Thinking — Port 8001 (~5 GB VRAM)
 ### Pipeline starten
 
 ```bash
-# Services starten
-systemctl --user start vllm-audio.service vllm-agent.service
+# Router starten (lädt Backends on-demand)
+systemctl --user start vllm-router.service
 
 # Einzelne Datei
 ~/.local/share/bitwig-agent/run_pipeline.sh ~/bitwig-input/track.mp3
 
 # Alle Dateien in ~/bitwig-input/
 ~/.local/share/bitwig-agent/run_pipeline.sh
+```
+
+### LangGraph / OpenAI-Clients via vLLM-Router
+
+Eine OpenAI-kompatible API auf `:8000` mit Multi-Model Hotswap. Jedes LangGraph-Projekt
+setzt `OPENAI_BASE_URL=http://localhost:8000/v1` und wählt das Modell per Request-Body —
+der Router startet/stoppt vLLM-Backend-Container (Quadlet `vllm@<name>.service`) on-demand.
+
+```bash
+# Verfügbare Modelle anzeigen (active=true → läuft bereits)
+curl http://localhost:8000/v1/models
+
+# Chat — Backend wird beim ersten Request automatisch gestartet (30-180s Cold-Start)
+curl http://localhost:8000/v1/chat/completions -d '{
+  "model": "agent",
+  "messages": [{"role":"user","content":"hi"}]
+}'
+
+# Preload, ohne Anfrage zu senden
+curl -X POST 'http://localhost:8000/admin/preload?model=agent'
+
+# Status aller Modelle (laufend / idle / VRAM-Anteil)
+curl http://localhost:8000/admin/status
+```
+
+**Neues Modell hinzufügen** — `~/.config/vllm-router/models.json`:
+
+```json
+{
+  "qwen3-14b": {
+    "hf_repo": "Qwen/Qwen3-14B-AWQ",
+    "port": 8102,
+    "vram_share": 0.55,
+    "max_len": 8192,
+    "extra": "--enable-reasoning --reasoning-parser deepseek_r1"
+  }
+}
+```
+
+Der Router schreibt automatisch das Quadlet-Env (`~/.config/vllm-router/instances/<name>.env`)
+und ruft `systemctl --user start vllm@<name>.service`. Idle-Backends werden nach
+`VLLM_ROUTER_IDLE_TIMEOUT` (Default 15 Min) gestoppt, um VRAM freizugeben.
+
+```python
+# LangGraph-Beispiel
+from langchain_openai import ChatOpenAI
+llm = ChatOpenAI(base_url="http://localhost:8000/v1", model="agent", api_key="sk-anything")
 ```
 
 ### Custom vLLM Image (Blackwell-optimiert)

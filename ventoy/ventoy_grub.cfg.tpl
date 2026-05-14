@@ -19,6 +19,18 @@
 #   inst.disk=sdb          (z.B. zweite SATA-Disk)
 # Ohne Override: größte interne Disk wird automatisch gewählt.
 #
+# ┌──────────────────────────────────────────────────────────────────────────────┐
+# │  NVIDIA BLACKWELL (RTX 50/9070) — Black Screen Workaround                   │
+# │                                                                              │
+# │  Wenn Anaconda mit schwarzem Bildschirm hängt:                              │
+# │  1. BIOS: "Primary Display" / "Init Display First" → IGD/iGPU               │
+# │  2. BIOS: "IGPU Multi-Monitor" → Enabled                                    │
+# │  3. BIOS: Secure Boot → Disabled                                            │
+# │  4. Monitor an Mainboard-HDMI/DP (NICHT an die NVIDIA-Karte)                │
+# │  5. Im Ventoy-Hauptmenü vor ISO-Auswahl: Ctrl+R drücken → GRUB2 Mode        │
+# │  Nach erfolgreichem first-boot: BIOS zurück auf PEG, Monitor an GPU.        │
+# └──────────────────────────────────────────────────────────────────────────────┘
+#
 # Fedora Netinstall via Ventoy:
 #   inst.stage2=hd:LABEL=Ventoy:${isofile}  →  Anaconda findet stage2 im ISO
 #   inst.ks=hd:LABEL=Ventoy:/kickstart/...  →  Kickstart-Datei vom USB
@@ -39,18 +51,26 @@ menuentry "Fedora -- [f] Vollinstallation  (Anaconda → fedora-full.ks)" --hotk
     search --no-floppy --label --set=root Ventoy
     set isofile="/FEDORA_ISO_FILENAME"
     loopback loop $isofile
-    linux  (loop)/images/pxeboot/vmlinuz inst.stage2=hd:LABEL=Ventoy:${isofile} inst.ks=hd:LABEL=Ventoy:/kickstart/fedora-full.ks nomodeset rd.driver.blacklist=nouveau modprobe.blacklist=nouveau nvidia-drm.modeset=0 quiet
+    linux  (loop)/images/pxeboot/vmlinuz inst.stage2=hd:LABEL=Ventoy:${isofile} inst.ks=hd:LABEL=Ventoy:/kickstart/fedora-full.ks nomodeset rd.driver.blacklist=nouveau modprobe.blacklist=nouveau nvidia-drm.modeset=0 video=efifb:off video=simpledrm:off quiet
     initrd (loop)/images/pxeboot/initrd.img
 }
 
 # ── [d] Debug-Install — Text-Modus + vollständiges Logging auf USB-Stick ──────
 # Nutzen wenn [f] hängt oder keine Bildschirmausgabe zeigt.
 # Logs landen auf dem USB-Stick unter: /logs/anaconda-<datum>.log
+#
+# TTY-Switch zur Diagnose (wenn Bildschirm schwarz bleibt):
+#   Ctrl+Alt+F1  → Hauptkonsole / Anaconda-UI
+#   Ctrl+Alt+F2  → Root-Shell (Diagnose, dmesg, journalctl)
+#   Ctrl+Alt+F3  → Installations-Log (anaconda.log)
+#   Ctrl+Alt+F4  → Storage-Log
+#   Ctrl+Alt+F5  → Programm-Log
+# Mindestens 90 Sekunden warten bevor TTY-Switch — stage2 lädt netinst nach.
 menuentry "Fedora -- [d] Debug-Install    (Text-Modus + Log auf USB-Stick)" --hotkey=d {
     search --no-floppy --label --set=root Ventoy
     set isofile="/FEDORA_ISO_FILENAME"
     loopback loop $isofile
-    linux  (loop)/images/pxeboot/vmlinuz inst.stage2=hd:LABEL=Ventoy:${isofile} inst.ks=hd:LABEL=Ventoy:/kickstart/fedora-full.ks inst.text inst.loglevel=debug rd.driver.blacklist=nouveau modprobe.blacklist=nouveau console=tty0 console=ttyS0,115200
+    linux  (loop)/images/pxeboot/vmlinuz inst.stage2=hd:LABEL=Ventoy:${isofile} inst.ks=hd:LABEL=Ventoy:/kickstart/fedora-full.ks inst.text inst.loglevel=debug inst.nokill rd.driver.blacklist=nouveau modprobe.blacklist=nouveau video=efifb:off video=simpledrm:off console=tty0 console=ttyS0,115200 systemd.log_level=debug systemd.log_target=kmsg
     initrd (loop)/images/pxeboot/initrd.img
 }
 
