@@ -35,12 +35,22 @@ menuentry "Fedora -- [m] VM-Test           (Anaconda → fedora-vm.ks)" --hotkey
 
 # ── [f] Vollinstallation — Anaconda + fedora-full.ks ─────────────────────────
 # NVIDIA Blackwell/Turing: nomodeset + nouveau blacklist + simpledrm/efifb deaktiviert
-# Verhindert Hang beim Start des grafischen Anaconda-Installers auf echter NVIDIA-Hardware
 menuentry "Fedora -- [f] Vollinstallation  (Anaconda → fedora-full.ks)" --hotkey=f {
     search --no-floppy --label --set=root Ventoy
     set isofile="/FEDORA_ISO_FILENAME"
     loopback loop $isofile
     linux  (loop)/images/pxeboot/vmlinuz inst.stage2=hd:LABEL=Ventoy:${isofile} inst.ks=hd:LABEL=Ventoy:/kickstart/fedora-full.ks nomodeset rd.driver.blacklist=nouveau modprobe.blacklist=nouveau nvidia-drm.modeset=0 quiet
+    initrd (loop)/images/pxeboot/initrd.img
+}
+
+# ── [d] Debug-Install — Text-Modus + vollständiges Logging auf USB-Stick ──────
+# Nutzen wenn [f] hängt oder keine Bildschirmausgabe zeigt.
+# Logs landen auf dem USB-Stick unter: /logs/anaconda-<datum>.log
+menuentry "Fedora -- [d] Debug-Install    (Text-Modus + Log auf USB-Stick)" --hotkey=d {
+    search --no-floppy --label --set=root Ventoy
+    set isofile="/FEDORA_ISO_FILENAME"
+    loopback loop $isofile
+    linux  (loop)/images/pxeboot/vmlinuz inst.stage2=hd:LABEL=Ventoy:${isofile} inst.ks=hd:LABEL=Ventoy:/kickstart/fedora-full.ks inst.text inst.loglevel=debug rd.driver.blacklist=nouveau modprobe.blacklist=nouveau console=tty0 console=ttyS0,115200
     initrd (loop)/images/pxeboot/initrd.img
 }
 

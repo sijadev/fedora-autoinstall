@@ -501,6 +501,56 @@ echo "[common-post] Done. Profile: ${INSTALL_PROFILE}"
 
 %end
 
+# ── %post --nochroot: Anaconda-Logs auf USB-Stick sichern ─────────────────────
+%post --nochroot --log=/root/ks-post-savelogs.log
+
+TIMESTAMP=$(date '+%Y%m%d-%H%M%S')
+VENTOY_DEV=$(blkid -L Ventoy 2>/dev/null | head -1 || true)
+LOG_DIR=""
+
+if [[ -n "$VENTOY_DEV" ]]; then
+    MOUNT_TMP=$(mktemp -d)
+    mount "$VENTOY_DEV" "$MOUNT_TMP" 2>/dev/null && {
+        LOG_DIR="${MOUNT_TMP}/logs"
+        mkdir -p "$LOG_DIR"
+
+        # Anaconda-Logs kopieren
+        for logfile in \
+            /tmp/anaconda.log \
+            /tmp/syslog \
+            /tmp/packaging.log \
+            /tmp/storage.log \
+            /tmp/program.log \
+            /tmp/dnf.log \
+            /root/ks-post.log \
+            /root/ks-common-post.log \
+            /root/ks-post-btrfs-rename.log \
+            /root/ks-post-savelogs.log
+        do
+            [[ -f "$logfile" ]] && \
+                cp "$logfile" "${LOG_DIR}/$(basename $logfile)-${TIMESTAMP}" 2>/dev/null || true
+        done
+
+        # Kernel-Meldungen
+        dmesg > "${LOG_DIR}/dmesg-${TIMESTAMP}.log" 2>/dev/null || true
+
+        # Kurzer Status
+        echo "=== Anaconda Install Log ${TIMESTAMP} ===" > "${LOG_DIR}/install-summary-${TIMESTAMP}.txt"
+        echo "Profile: ${FEDORA_INSTALL_PROFILE:-unknown}"   >> "${LOG_DIR}/install-summary-${TIMESTAMP}.txt"
+        echo "Kernel: $(uname -r)"                            >> "${LOG_DIR}/install-summary-${TIMESTAMP}.txt"
+        lspci | grep -iE 'nvidia|vga|display'                 >> "${LOG_DIR}/install-summary-${TIMESTAMP}.txt" 2>/dev/null || true
+
+        sync
+        umount "$MOUNT_TMP" 2>/dev/null || true
+        echo "Logs gesichert nach: USB-Stick/logs/ (${TIMESTAMP})"
+    }
+    rmdir "$MOUNT_TMP" 2>/dev/null || true
+else
+    echo "Ventoy USB nicht gefunden — Logs nicht gesichert."
+fi
+
+%end
+
 # ── %post --nochroot: Btrfs Subvolumes → @/@home umbenennen (Timeshift-kompatibel) ──
 %post --nochroot --log=/root/ks-post-btrfs-rename.log
 
