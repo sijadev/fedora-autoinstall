@@ -1,4 +1,4 @@
-# fedora-autoinstall
+# fedora-autoinstall - beta
 
 Vollautomatisches Unattended-Install-Framework für **Fedora Linux** — eigener GRUB2-Bootloader + Bazzite-Kernel auf USB-Stick, kein Ventoy.
 
