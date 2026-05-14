@@ -273,18 +273,11 @@ dnf -y install --quiet \
     dnf-plugins-core \
     procps-ng which findutils
 
-echo "==> Adding Fedora COPR repos..."
-# Fedora 43 COPR — provides fedora-sync and Fedora package groups
-dnf -y copr enable --quiet \
-    gloriouseggroll/fedora 2>/dev/null || \
-    dnf -y install --quiet \
+echo "==> Adding RPM Fusion repos..."
+dnf -y install --quiet \
     "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm" \
     "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm" \
     2>/dev/null || true
-
-echo "==> Installing fedora-sync if available..."
-dnf -y install --quiet fedora-sync 2>/dev/null || \
-    echo "fedora-sync not available in this environment (expected in CI)"
 
 echo "==> Adding target user ${TARGET_USER}..."
 useradd -m -G wheel,video,audio -s /bin/bash "${TARGET_USER}" 2>/dev/null || true

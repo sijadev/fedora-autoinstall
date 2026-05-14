@@ -54,13 +54,9 @@ mkdir -p "$MARKER_DIR"
 INSTALL_PROFILE="${FEDORA_INSTALL_PROFILE:-full}"
 log "Install profile: ${INSTALL_PROFILE}"
 
-# ── 1. fedora-sync ────────────────────────────────────────────────────────────
-step "fedora-sync"
-if command -v fedora-sync &>/dev/null; then
-    fedora-sync install-updates || die "fedora-sync failed."
-else
-    warn "fedora-sync not found; skipping."
-fi
+# ── 1. System-Update ──────────────────────────────────────────────────────────
+step "System-Update"
+dnf upgrade -y || die "dnf upgrade failed."
 
 # ── 2. NVIDIA Open Driver ─────────────────────────────────────────────────────
 step "NVIDIA Open Driver update"

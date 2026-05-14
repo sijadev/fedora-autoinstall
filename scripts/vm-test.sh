@@ -485,11 +485,12 @@ cmd_snapshot() {
 
 cmd_test() {
     local profile="${1:-}"
-    [[ -z "$profile" ]] && die "Profil fehlt. Erlaubt: theme-bash"
+    [[ -z "$profile" ]] && die "Profil fehlt. Erlaubt: theme-bash | headless-vllm"
 
     case "$profile" in
-        theme-bash) ;;
-        *) die "Unbekanntes Profil: '$profile'. Erlaubt: theme-bash" ;;
+        theme-bash)    ;;
+        headless-vllm) ;;
+        *) die "Unbekanntes Profil: '$profile'. Erlaubt: theme-bash | headless-vllm" ;;
     esac
 
     # Log-Datei — ZUERST öffnen damit alle Ausgaben erfasst werden
@@ -521,10 +522,14 @@ cmd_test() {
     virsh snapshot-revert "$VM_NAME" "$VM_SNAPSHOT"
     log "Snapshot zurückgesetzt."
 
-    # USB-Passthrough nach Revert sicherstellen (Snapshot-XML enthält ihn nicht)
-    if ! virsh dumpxml "$VM_NAME" | grep -q "hostdev"; then
-        find_ventoy_usb
-        virsh attach-device "$VM_NAME" --persistent /dev/stdin <<XMLEOF 2>/dev/null || true
+    # USB-Passthrough: nur hinzufügen/behalten wenn Stick am Host verfügbar
+    find_ventoy_usb
+    local usb_on_host=0
+    lsusb | grep -q "${VENTOY_USB_VENDOR}:${VENTOY_USB_PRODUCT}" && usb_on_host=1
+
+    if [[ $usb_on_host -eq 1 ]]; then
+        if ! virsh dumpxml "$VM_NAME" | grep -q "hostdev"; then
+            virsh attach-device "$VM_NAME" --persistent /dev/stdin <<XMLEOF 2>/dev/null || true
 <hostdev mode='subsystem' type='usb' managed='yes'>
   <source>
     <vendor id='0x${VENTOY_USB_VENDOR}'/>
@@ -532,7 +537,23 @@ cmd_test() {
   </source>
 </hostdev>
 XMLEOF
-        log "Ventoy USB-Passthrough wiederhergestellt."
+            log "Ventoy USB-Passthrough wiederhergestellt."
+        fi
+    else
+        # Stick nicht am Host — Passthrough aus VM-XML entfernen damit VM starten kann
+        if virsh dumpxml "$VM_NAME" | grep -q "hostdev"; then
+            warn "Ventoy USB nicht am Host — entferne Passthrough aus VM-XML."
+            virsh dumpxml "$VM_NAME" > /tmp/${VM_NAME}-nousb.xml
+            python3 -c "
+import sys, re
+xml = open('/tmp/${VM_NAME}-nousb.xml').read()
+xml = re.sub(r'<hostdev[^>]*usb[^>]*>.*?</hostdev>', '', xml, flags=re.DOTALL)
+open('/tmp/${VM_NAME}-nousb.xml', 'w').write(xml)
+"
+            virsh define /tmp/${VM_NAME}-nousb.xml &>/dev/null || true
+            rm -f /tmp/${VM_NAME}-nousb.xml
+            log "USB-Passthrough entfernt — VM kann ohne Stick starten."
+        fi
     fi
 
     # VM in laufenden Zustand bringen (Snapshot kann running/paused/shut-off sein)
@@ -712,6 +733,32 @@ wp=\$(dconf read /org/gnome/desktop/background/picture-uri 2>/dev/null)
         else
             echo "  ✓ dash-to-panel aus dconf entfernt"
         fi
+        test_passed=1
+    fi
+
+    if [[ "$profile" == "headless-vllm" ]]; then
+        step "Validierung: headless-vllm"
+        $SSH "$VM_USER@$ip" "
+echo '  Installierte Komponenten:'
+[ -f /var/lib/fedora-provision/first-boot.done ] \
+    && echo '  ✓ First-Boot' || echo '  ✗ First-Boot fehlt'
+command -v podman &>/dev/null \
+    && echo '  ✓ Podman:' \$(podman --version) || echo '  ✗ Podman fehlt'
+[ -f \${HOME}/.config/containers/systemd/vllm-audio.container ] \
+    && echo '  ✓ Quadlet: vllm-audio.container' || echo '  ✗ vllm-audio.container fehlt'
+[ -f \${HOME}/.config/containers/systemd/vllm-agent.container ] \
+    && echo '  ✓ Quadlet: vllm-agent.container' || echo '  ✗ vllm-agent.container fehlt'
+systemctl --user is-enabled vllm-audio.service 2>/dev/null | grep -q enabled \
+    && echo '  ✓ vllm-audio.service aktiviert' || echo '  ✗ vllm-audio.service nicht aktiviert'
+systemctl --user is-enabled vllm-agent.service 2>/dev/null | grep -q enabled \
+    && echo '  ✓ vllm-agent.service aktiviert'  || echo '  ✗ vllm-agent.service nicht aktiviert'
+[ -f \${HOME}/.local/share/bitwig-agent/run_pipeline.sh ] \
+    && echo '  ✓ Bitwig Agent Pipeline' || echo '  ✗ run_pipeline.sh fehlt'
+[ -d \${HOME}/bitwig-input ]  && echo '  ✓ ~/bitwig-input/'  || echo '  ✗ ~/bitwig-input/ fehlt'
+[ -d \${HOME}/bitwig-output ] && echo '  ✓ ~/bitwig-output/' || echo '  ✗ ~/bitwig-output/ fehlt'
+rpm -q nvidia-container-toolkit &>/dev/null \
+    && echo '  ✓ NVIDIA Container Toolkit' || echo '  ✗ nvidia-container-toolkit fehlt'
+" 2>/dev/null || true
         test_passed=1
     fi
 

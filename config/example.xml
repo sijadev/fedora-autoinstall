@@ -58,8 +58,8 @@
 
   <!-- ── First-boot provisioning (runs as root, exactly once) ───────────── -->
   <first-boot>
-    <!-- Run fedora-sync to update all Fedora-specific packages -->
-    <fedora-sync enabled="true"/>
+    <!-- System-Update via dnf upgrade -->
+    <dnf-upgrade enabled="true"/>
 
     <!-- Install/update NVIDIA Open Kernel Module driver -->
     <!-- Supported: Turing (RTX 20xx), Ampere (RTX 30xx), Ada (RTX 40xx), Blackwell (RTX 50xx) -->

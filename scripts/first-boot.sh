@@ -5,7 +5,7 @@
 # Marker: /var/lib/fedora-provision/first-boot.done
 #
 # Tasks:
-#   1. fedora-sync
+#   1. System-Update (dnf upgrade)
 #   2. NVIDIA Open Driver update
 #   3. CUDA installation (Fedora/Fedora or NVIDIA repo)
 #   4. Set system-wide CUDA environment variables
@@ -85,15 +85,9 @@ fi
 
 # ── 1. System-Update ──────────────────────────────────────────────────────────
 step "System-Update"
-if command -v fedora-sync &>/dev/null; then
-    log "Running fedora-sync..."
-    fedora-sync install-updates || die "fedora-sync failed."
-    log "fedora-sync completed."
-else
-    log "Running dnf upgrade..."
-    dnf upgrade -y || die "dnf upgrade failed."
-    log "dnf upgrade completed."
-fi
+log "Running dnf upgrade..."
+dnf upgrade -y || die "dnf upgrade failed."
+log "dnf upgrade completed."
 
 # ── 2. NVIDIA Open Driver ─────────────────────────────────────────────────────
 step "NVIDIA Open Driver update"

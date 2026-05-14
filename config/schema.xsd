@@ -93,7 +93,7 @@
   ═══════════════════════════════════════════════════════════════════════════ -->
   <xs:complexType name="FirstBootType">
     <xs:all>
-      <xs:element name="fedora-sync"  type="EnabledType"  minOccurs="0"/>
+      <xs:element name="dnf-upgrade"  type="EnabledType"  minOccurs="0"/>
       <xs:element name="nvidia-open"  type="EnabledType"  minOccurs="0"/>
       <xs:element name="cuda"         type="CudaType"     minOccurs="0"/>
     </xs:all>
