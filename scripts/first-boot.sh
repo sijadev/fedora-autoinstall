@@ -112,20 +112,24 @@ check_nvidia_open_compat() {
 }
 
 if check_nvidia_open_compat; then
-    log "Installing/updating NVIDIA Open Kernel Module driver..."
-    dnf install -y \
-        kernel-devel \
-        kernel-headers \
-        akmod-nvidia-open \
-        xorg-x11-drv-nvidia-cuda \
-        || die "NVIDIA Open Driver installation failed. No proprietary fallback."
+    # Prüfen ob NVIDIA-Treiber bereits funktionsfähig installiert ist
+    if nvidia-smi &>/dev/null; then
+        log "NVIDIA-Treiber bereits aktiv ($(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null)) — Installation übersprungen."
+    else
+        log "Installing/updating NVIDIA Open Kernel Module driver..."
+        dnf install -y \
+            kernel-devel \
+            kernel-headers \
+            akmod-nvidia-open \
+            xorg-x11-drv-nvidia-cuda \
+            || warn "NVIDIA Open Driver installation fehlgeschlagen (non-fatal — ggf. bereits via DKMS/Nobara installiert)."
 
-    # Wait for the kmod to be built (akmods)
-    if command -v akmods &>/dev/null; then
-        log "Building kernel modules (akmods)..."
-        akmods --force || die "akmods failed for NVIDIA Open Driver."
+        if command -v akmods &>/dev/null; then
+            log "Building kernel modules (akmods)..."
+            akmods --force || warn "akmods fehlgeschlagen (non-fatal)."
+        fi
+        log "NVIDIA Open Driver installed/updated."
     fi
-    log "NVIDIA Open Driver installed/updated."
 fi  # end: check_nvidia_open_compat
 
 # ── 2b. Podman + NVIDIA Container Toolkit (headless-vllm / vllm-only) ─────────
@@ -292,7 +296,9 @@ esac
 
 # Discover installed CUDA path
 CUDA_HOME_DETECTED=""
-for candidate in /usr/local/cuda /usr/local/cuda-*; do
+# Fedora-Repo CUDA: nvcc unter /usr/bin, Libs unter /usr/lib64
+# NVIDIA-Repo CUDA: unter /usr/local/cuda*
+for candidate in /usr/local/cuda /usr/local/cuda-* /usr; do
     if [[ -x "${candidate}/bin/nvcc" ]]; then
         CUDA_HOME_DETECTED="$candidate"
         break
@@ -560,7 +566,7 @@ else
     log "Root ist kein btrfs — Timeshift/grub-btrfs übersprungen."
 fi
 
-# ── 9. zram-generator (Swap im RAM — Pflicht ohne Swap-Partition) ────────────
+# ── 10. zram-generator (Swap im RAM — Pflicht ohne Swap-Partition) ───────────
 step "zram-generator"
 if ! rpm -q zram-generator &>/dev/null; then
     dnf install -y zram-generator \
@@ -576,7 +582,7 @@ ZRAMEOF
 chmod 0644 /etc/systemd/zram-generator.conf
 log "zram-generator: 50% RAM (max 8 GB), zstd."
 
-# ── 10. irqbalance (IRQ-Verteilung auf alle CPU-Kerne) ────────────────────────
+# ── 11. irqbalance (IRQ-Verteilung auf alle CPU-Kerne) ───────────────────────
 step "irqbalance"
 if ! rpm -q irqbalance &>/dev/null; then
     dnf install -y irqbalance \
@@ -587,7 +593,7 @@ systemctl enable --now irqbalance 2>/dev/null \
     && log "irqbalance aktiviert." \
     || warn "irqbalance enable fehlgeschlagen (non-fatal)."
 
-# ── 11. ananicy-cpp (Prozess-Priorisierung) ───────────────────────────────────
+# ── 12. ananicy-cpp (Prozess-Priorisierung) ──────────────────────────────────
 step "ananicy-cpp"
 if ! rpm -q ananicy-cpp &>/dev/null; then
     # COPR aktivieren und installieren
@@ -605,7 +611,7 @@ if command -v ananicy-cpp &>/dev/null; then
         || warn "ananicy-cpp enable fehlgeschlagen (non-fatal)."
 fi
 
-# ── 12. AMD Ryzen Optimierungen ───────────────────────────────────────────────
+# ── 13. AMD Ryzen Optimierungen ──────────────────────────────────────────────
 if grep -qi 'amd\|ryzen\|epyc' /proc/cpuinfo 2>/dev/null; then
     step "AMD Ryzen optimizations"
 
