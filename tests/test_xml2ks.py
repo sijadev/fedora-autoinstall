@@ -123,30 +123,100 @@ class ValidateTests(unittest.TestCase):
 
     # ── Disk ──────────────────────────────────────────────────────────────────
 
+    # SATA / SCSI HDDs und SSDs
     def test_accepts_sda_disk(self):
         self.assertEqual(xml2ks.validate(minimal_root(), Path("x.xml")), [])
 
-    def test_accepts_nvme_disk(self):
+    def test_accepts_sdb_disk(self):
+        root = minimal_root(**{"disk": "/dev/sdb"})
+        self.assertEqual(xml2ks.validate(root, Path("x.xml")), [])
+
+    def test_accepts_sdc_disk(self):
+        root = minimal_root(**{"disk": "/dev/sdc"})
+        self.assertEqual(xml2ks.validate(root, Path("x.xml")), [])
+
+    def test_accepts_sdz_disk(self):
+        root = minimal_root(**{"disk": "/dev/sdz"})
+        self.assertEqual(xml2ks.validate(root, Path("x.xml")), [])
+
+    # NVMe SSDs
+    def test_accepts_nvme0n1_disk(self):
         root = minimal_root(**{"disk": "/dev/nvme0n1"})
         self.assertEqual(xml2ks.validate(root, Path("x.xml")), [])
 
+    def test_accepts_nvme1n1_disk(self):
+        root = minimal_root(**{"disk": "/dev/nvme1n1"})
+        self.assertEqual(xml2ks.validate(root, Path("x.xml")), [])
+
+    def test_accepts_nvme0n2_disk(self):
+        root = minimal_root(**{"disk": "/dev/nvme0n2"})
+        self.assertEqual(xml2ks.validate(root, Path("x.xml")), [])
+
+    def test_accepts_nvme10n1_disk(self):
+        root = minimal_root(**{"disk": "/dev/nvme10n1"})
+        self.assertEqual(xml2ks.validate(root, Path("x.xml")), [])
+
+    # virtuelle Disks (KVM/QEMU, Xen)
     def test_accepts_vda_disk(self):
         root = minimal_root(**{"disk": "/dev/vda"})
+        self.assertEqual(xml2ks.validate(root, Path("x.xml")), [])
+
+    def test_accepts_vdb_disk(self):
+        root = minimal_root(**{"disk": "/dev/vdb"})
         self.assertEqual(xml2ks.validate(root, Path("x.xml")), [])
 
     def test_accepts_xvda_disk(self):
         root = minimal_root(**{"disk": "/dev/xvda"})
         self.assertEqual(xml2ks.validate(root, Path("x.xml")), [])
 
+    # eMMC (Tablets, SBCs)
     def test_accepts_mmcblk_disk(self):
         root = minimal_root(**{"disk": "/dev/mmcblk0"})
         self.assertEqual(xml2ks.validate(root, Path("x.xml")), [])
 
+    def test_accepts_mmcblk1_disk(self):
+        root = minimal_root(**{"disk": "/dev/mmcblk1"})
+        self.assertEqual(xml2ks.validate(root, Path("x.xml")), [])
+
+    # Partitionen → abgelehnt
     def test_rejects_partition_not_whole_disk(self):
         root = minimal_root(**{"disk": "/dev/sda1"})
         errors = xml2ks.validate(root, Path("x.xml"))
         self.assertTrue(any("must be one of" in e for e in errors))
 
+    def test_rejects_sda_multidigit_partition(self):
+        root = minimal_root(**{"disk": "/dev/sda10"})
+        errors = xml2ks.validate(root, Path("x.xml"))
+        self.assertTrue(len(errors) > 0)
+
+    def test_rejects_nvme_partition(self):
+        root = minimal_root(**{"disk": "/dev/nvme0n1p1"})
+        errors = xml2ks.validate(root, Path("x.xml"))
+        self.assertTrue(len(errors) > 0)
+
+    def test_rejects_nvme_partition_multidigit(self):
+        root = minimal_root(**{"disk": "/dev/nvme0n1p12"})
+        errors = xml2ks.validate(root, Path("x.xml"))
+        self.assertTrue(len(errors) > 0)
+
+    def test_rejects_mmcblk_partition(self):
+        root = minimal_root(**{"disk": "/dev/mmcblk0p1"})
+        errors = xml2ks.validate(root, Path("x.xml"))
+        self.assertTrue(len(errors) > 0)
+
+    # IDE (veraltet) → abgelehnt
+    def test_rejects_hda_ide_disk(self):
+        root = minimal_root(**{"disk": "/dev/hda"})
+        errors = xml2ks.validate(root, Path("x.xml"))
+        self.assertTrue(len(errors) > 0)
+
+    # Loop / loop-device → abgelehnt
+    def test_rejects_loop_device(self):
+        root = minimal_root(**{"disk": "/dev/loop0"})
+        errors = xml2ks.validate(root, Path("x.xml"))
+        self.assertTrue(len(errors) > 0)
+
+    # CD/DVD → abgelehnt
     def test_rejects_cdrom_device(self):
         root = minimal_root(**{"disk": "/dev/sr0"})
         errors = xml2ks.validate(root, Path("x.xml"))
@@ -298,9 +368,9 @@ class ValidateTests(unittest.TestCase):
         errors = xml2ks.validate(root, Path("x.xml"))
         self.assertTrue(any("scheme" in e for e in errors))
 
-    # ── vLLM CUDA version ─────────────────────────────────────────────────────
+    # ── vLLM Router port validation ───────────────────────────────────────────
 
-    def test_rejects_invalid_cuda_version_format(self):
+    def test_rejects_invalid_router_port_format(self):
         root = parse_xml("""
             <fedora-install>
               <iso><url>https://example.com/fedora.iso</url></iso>
@@ -314,14 +384,14 @@ class ValidateTests(unittest.TestCase):
                 <password_hash>$6$salt$hashvalue</password_hash>
               </user>
               <first-login>
-                <vllm-omni><cuda-version>13</cuda-version></vllm-omni>
+                <vllm-router port="not-a-port"/>
               </first-login>
             </fedora-install>
         """)
         errors = xml2ks.validate(root, Path("x.xml"))
-        self.assertTrue(any("cuda-version" in e.lower() for e in errors))
+        self.assertTrue(any("port" in e.lower() for e in errors))
 
-    def test_accepts_valid_cuda_version(self):
+    def test_accepts_valid_router_port(self):
         root = parse_xml("""
             <fedora-install>
               <iso><url>https://example.com/fedora.iso</url></iso>
@@ -335,7 +405,7 @@ class ValidateTests(unittest.TestCase):
                 <password_hash>$6$salt$hashvalue</password_hash>
               </user>
               <first-login>
-                <vllm-omni><cuda-version>13.2</cuda-version></vllm-omni>
+                <vllm-router port="8000"/>
               </first-login>
             </fedora-install>
         """)
@@ -460,6 +530,24 @@ class GenerateKickstartTests(unittest.TestCase):
         ks = xml2ks.generate_kickstart(root)
         self.assertIn("--boot-drive=nvme0n1", ks)
 
+    def test_nvme1n1_disk_short_name_in_bootloader(self):
+        root = minimal_root(**{"disk": "/dev/nvme1n1"})
+        ks = xml2ks.generate_kickstart(root)
+        self.assertIn("--boot-drive=nvme1n1", ks)
+        self.assertIn("ignoredisk --only-use=nvme1n1", ks)
+
+    def test_sdb_short_name_in_bootloader(self):
+        root = minimal_root(**{"disk": "/dev/sdb"})
+        ks = xml2ks.generate_kickstart(root)
+        self.assertIn("--boot-drive=sdb", ks)
+        self.assertIn("ignoredisk --only-use=sdb", ks)
+
+    def test_mmcblk0_short_name_in_bootloader(self):
+        root = minimal_root(**{"disk": "/dev/mmcblk0"})
+        ks = xml2ks.generate_kickstart(root)
+        self.assertIn("--boot-drive=mmcblk0", ks)
+        self.assertIn("ignoredisk --only-use=mmcblk0", ks)
+
     def test_custom_partition_is_emitted_verbatim(self):
         root = parse_xml("""
             <fedora-install>
@@ -548,14 +636,19 @@ class GenerateKickstartTests(unittest.TestCase):
     def test_target_user_in_env_block(self):
         self.assertIn('FEDORA_TARGET_USER="sija"', self._ks())
 
-    def test_vllm_defaults_in_env_block(self):
+    def test_vllm_router_defaults_in_env_block(self):
         ks = self._ks()
-        self.assertIn('FEDORA_VLLM_CUDA_VERSION="13.2"', ks)
-        self.assertIn('FEDORA_VLLM_ARCH_LIST="12.0"', ks)
-        self.assertIn('FEDORA_VLLM_MODEL="Qwen/Qwen3-14B-AWQ"', ks)
+        self.assertIn('FEDORA_VLLM_ROUTER_PORT="8000"', ks)
+        self.assertIn('FEDORA_VLLM_REGISTRY="~/.config/vllm-router/models.json"', ks)
+        self.assertIn('FEDORA_AGENT_MODEL="Qwen/Qwen3-14B-AWQ"', ks)
+        self.assertIn('FEDORA_AUDIO_MODEL="moonshotai/Kimi-Audio-7B-Instruct"', ks)
 
-    def test_pytorch_venv_default(self):
-        self.assertIn('FEDORA_PYTORCH_VENV="~/.venvs/ai"', self._ks())
+    def test_old_vllm_venv_vars_absent(self):
+        ks = self._ks()
+        self.assertNotIn("FEDORA_VLLM_VENV", ks)
+        self.assertNotIn("FEDORA_VLLM_CUDA_VERSION", ks)
+        self.assertNotIn("FEDORA_VLLM_ARCH_LIST", ks)
+        self.assertNotIn("FEDORA_PYTORCH_VENV", ks)
 
     def test_omb_theme_default(self):
         self.assertIn('FEDORA_OMB_THEME="modern"', self._ks())
@@ -587,7 +680,7 @@ class GenerateKickstartTests(unittest.TestCase):
         self.assertIn('FEDORA_WS_ICON_ARGS="-dark"', ks)
         self.assertIn('FEDORA_WS_WALL_ARGS="-t Mojave"', ks)
 
-    def test_vllm_config_from_xml(self):
+    def test_vllm_router_config_from_xml(self):
         root = parse_xml("""
             <fedora-install>
               <iso><url>https://example.com/fedora.iso</url></iso>
@@ -601,18 +694,18 @@ class GenerateKickstartTests(unittest.TestCase):
                 <password_hash>$6$x$y</password_hash>
               </user>
               <first-login>
-                <vllm-omni venv="~/.venvs/bitwig-omni">
-                  <cuda-version>13.0</cuda-version>
-                  <arch-list>12.0</arch-list>
-                  <model>Qwen/Qwen3-14B-AWQ</model>
-                </vllm-omni>
-                <ohmybash theme="modern"/>
+                <vllm-router port="8080">
+                  <registry>~/.config/vllm-router/custom.json</registry>
+                  <agent-model>Qwen/Qwen3-8B</agent-model>
+                  <audio-model>moonshotai/Kimi-Audio-7B-Instruct</audio-model>
+                </vllm-router>
               </first-login>
             </fedora-install>
         """)
         ks = xml2ks.generate_kickstart(root)
-        self.assertIn('FEDORA_VLLM_CUDA_VERSION="13.0"', ks)
-        self.assertIn('FEDORA_VLLM_ARCH_LIST="12.0"', ks)
+        self.assertIn('FEDORA_VLLM_ROUTER_PORT="8080"', ks)
+        self.assertIn('FEDORA_VLLM_REGISTRY="~/.config/vllm-router/custom.json"', ks)
+        self.assertIn('FEDORA_AGENT_MODEL="Qwen/Qwen3-8B"', ks)
 
     def test_defaults_for_optional_first_login_fields(self):
         root = parse_xml("""
@@ -631,10 +724,9 @@ class GenerateKickstartTests(unittest.TestCase):
             </fedora-install>
         """)
         ks = xml2ks.generate_kickstart(root)
-        # Defaults from generate_kickstart (not 13.0)
-        self.assertIn('FEDORA_VLLM_CUDA_VERSION="13.2"', ks)
-        self.assertIn('FEDORA_VLLM_ARCH_LIST="12.0"', ks)
-        self.assertIn('FEDORA_VLLM_MODEL="Qwen/Qwen3-14B-AWQ"', ks)
+        self.assertIn('FEDORA_VLLM_ROUTER_PORT="8000"', ks)
+        self.assertIn('FEDORA_VLLM_REGISTRY="~/.config/vllm-router/models.json"', ks)
+        self.assertIn('FEDORA_AGENT_MODEL="Qwen/Qwen3-14B-AWQ"', ks)
 
     # ── Embedded scripts ──────────────────────────────────────────────────────
 
@@ -705,11 +797,9 @@ class GenerateKickstartTests(unittest.TestCase):
                 <group>development-tools</group>
               </packages>
               <first-login>
-                <vllm-omni venv="~/.venvs/bitwig-omni">
-                  <cuda-version>13.2</cuda-version>
-                  <arch-list>12.0</arch-list>
-                  <model>Qwen/Qwen3-14B-AWQ</model>
-                </vllm-omni>
+                <vllm-router port="8000">
+                  <agent-model>Qwen/Qwen3-14B-AWQ</agent-model>
+                </vllm-router>
                 <ohmybash theme="agnoster"/>
                 <whitesur>
                   <gtk-args>-l -c Dark</gtk-args>
@@ -733,7 +823,7 @@ class GenerateKickstartTests(unittest.TestCase):
         self.assertIn("@development-tools", ks)
 
         # Env
-        self.assertIn('FEDORA_VLLM_CUDA_VERSION="13.2"', ks)
+        self.assertIn('FEDORA_VLLM_ROUTER_PORT="8000"', ks)
         self.assertIn('FEDORA_OMB_THEME="agnoster"', ks)
         self.assertIn('FEDORA_WS_GTK_ARGS="-l -c Dark"', ks)
 

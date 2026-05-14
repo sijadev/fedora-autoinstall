@@ -2,8 +2,8 @@
 # scripts/vm-test.sh — VM-Test-Workflow für das Fedora Install Framework
 #
 # Befehle:
-#   vm-test.sh create          VM anlegen (80 GB, UEFI, VirtIO, Ventoy USB-Passthrough)
-#   vm-test.sh install         Frische Installation: VM vom Ventoy USB booten,
+#   vm-test.sh create          VM anlegen (80 GB, UEFI, VirtIO, FEDORA-USB-Passthrough)
+#   vm-test.sh install         Frische Installation: VM vom FEDORA-USB booten,
 #                              [m] VM-Test Profil per Hotkey auswählen, Anaconda läuft durch
 #   vm-test.sh snapshot        Snapshot "base-fedora" nach erfolgreicher Installation anlegen
 #   vm-test.sh test <profil>   Snapshot zurücksetzen + Provisioner ausführen
@@ -14,8 +14,8 @@
 #
 # Voraussetzungen:
 #   - virt-manager + libvirt installiert und libvirtd aktiv
-#   - Ventoy USB-Stick eingesteckt (/dev/sda, LABEL=Ventoy)
-#   - fedora-vm.ks auf dem Ventoy-Stick
+#   - FEDORA-USB-Stick eingesteckt (/dev/sda, LABEL=FEDORA-USB)
+#   - fedora-vm.ks auf dem FEDORA-USB-Stick (via scripts/sync-usb.sh)
 
 set -euo pipefail
 
@@ -35,10 +35,10 @@ OVMF_CODE="/usr/share/edk2/ovmf/OVMF_CODE.fd"
 OVMF_VARS="/usr/share/edk2/ovmf/OVMF_VARS.fd"
 OVMF_VARS_VM="${VM_STORAGE_DIR}/${VM_NAME}-OVMF_VARS.fd"
 
-# Ventoy USB: Kingston DataTraveler (lsusb: 0930:6545)
+# FEDORA-USB: Kingston DataTraveler (lsusb: 0930:6545)
 # Wird zur Laufzeit neu ermittelt — nur Fallback hartcodiert
-VENTOY_USB_VENDOR="0930"
-VENTOY_USB_PRODUCT="6545"
+USB_VENDOR="0930"
+USB_PRODUCT="6545"
 
 # libvirt system URI — verhindert Verwechslung mit qemu:///session
 export LIBVIRT_DEFAULT_URI="qemu:///system"
@@ -167,33 +167,33 @@ open_terminal_in_vm() {
     sleep 3  # Fenster aufbauen lassen
 }
 
-find_ventoy_usb() {
-    # Ventoy-Stick per lsusb dynamisch ermitteln (Fallback auf gespeicherte IDs)
+find_usb_stick() {
+    # FEDORA-USB per lsusb dynamisch ermitteln (Fallback auf gespeicherte IDs)
     local found
-    found=$(lsusb | grep -i "kingston\|ventoy\|datatraveler" \
+    found=$(lsusb | grep -i "kingston\|datatraveler" \
         | grep -oP 'ID \K[0-9a-f]{4}:[0-9a-f]{4}' | head -1 || true)
 
     if [[ -n "$found" ]]; then
-        VENTOY_USB_VENDOR="${found%:*}"
-        VENTOY_USB_PRODUCT="${found#*:}"
-        log "Ventoy USB gefunden: ${VENTOY_USB_VENDOR}:${VENTOY_USB_PRODUCT}"
+        USB_VENDOR="${found%:*}"
+        USB_PRODUCT="${found#*:}"
+        log "FEDORA-USB gefunden: ${USB_VENDOR}:${USB_PRODUCT}"
     else
-        log "Verwende gespeicherte USB-IDs: ${VENTOY_USB_VENDOR}:${VENTOY_USB_PRODUCT}"
+        log "Verwende gespeicherte USB-IDs: ${USB_VENDOR}:${USB_PRODUCT}"
     fi
 }
 
 add_usb_passthrough() {
-    find_ventoy_usb
-    log "USB-Passthrough für Ventoy wird hinzugefügt ..."
+    find_usb_stick
+    log "USB-Passthrough für FEDORA-USB wird hinzugefügt ..."
     virsh attach-device "$VM_NAME" --persistent /dev/stdin <<XMLEOF
 <hostdev mode='subsystem' type='usb' managed='yes'>
   <source>
-    <vendor id='0x${VENTOY_USB_VENDOR}'/>
-    <product id='0x${VENTOY_USB_PRODUCT}'/>
+    <vendor id='0x${USB_VENDOR}'/>
+    <product id='0x${USB_PRODUCT}'/>
   </source>
 </hostdev>
 XMLEOF
-    log "USB-Passthrough aktiv: Ventoy-Stick sichtbar in VM"
+    log "USB-Passthrough aktiv: FEDORA-USB sichtbar in VM"
 }
 
 # ── Befehle ────────────────────────────────────────────────────────────────────
@@ -235,7 +235,7 @@ cmd_create() {
     virsh define /tmp/${VM_NAME}.xml
     log "VM definiert: ${VM_NAME}"
 
-    # Ventoy USB-Passthrough hinzufügen
+    # FEDORA-USB USB-Passthrough hinzufügen
     add_usb_passthrough
 
     echo ""
@@ -243,8 +243,7 @@ cmd_create() {
     echo ""
     echo -e "  ${BOLD}Nächste Schritte:${RESET}"
     echo -e "  1. virt-manager öffnen → VM '${VM_NAME}' starten"
-    echo -e "  2. Im GRUB-Menü ${BOLD}e${RESET} drücken, an die linux-Zeile anhängen:"
-    echo -e "     ${CYAN}inst.ks=hd:LABEL=Ventoy:/kickstart/fedora-vm.ks${RESET}"
+    echo -e "  2. GRUB2-Menü erscheint → [m] VM-Test drücken"
     echo -e "  3. Installation abwarten, VM startet neu"
     echo -e "  4. Dann: ${BOLD}./scripts/vm-test.sh snapshot${RESET}"
 }
@@ -537,26 +536,26 @@ cmd_test() {
     log "Snapshot zurückgesetzt."
 
     # USB-Passthrough: nur hinzufügen/behalten wenn Stick am Host verfügbar
-    find_ventoy_usb
+    find_usb_stick
     local usb_on_host=0
-    lsusb | grep -q "${VENTOY_USB_VENDOR}:${VENTOY_USB_PRODUCT}" && usb_on_host=1
+    lsusb | grep -q "${USB_VENDOR}:${USB_PRODUCT}" && usb_on_host=1
 
     if [[ $usb_on_host -eq 1 ]]; then
         if ! virsh dumpxml "$VM_NAME" | grep -q "hostdev"; then
             virsh attach-device "$VM_NAME" --persistent /dev/stdin <<XMLEOF 2>/dev/null || true
 <hostdev mode='subsystem' type='usb' managed='yes'>
   <source>
-    <vendor id='0x${VENTOY_USB_VENDOR}'/>
-    <product id='0x${VENTOY_USB_PRODUCT}'/>
+    <vendor id='0x${USB_VENDOR}'/>
+    <product id='0x${USB_PRODUCT}'/>
   </source>
 </hostdev>
 XMLEOF
-            log "Ventoy USB-Passthrough wiederhergestellt."
+            log "FEDORA-USB USB-Passthrough wiederhergestellt."
         fi
     else
         # Stick nicht am Host — Passthrough aus VM-XML entfernen damit VM starten kann
         if virsh dumpxml "$VM_NAME" | grep -q "hostdev"; then
-            warn "Ventoy USB nicht am Host — entferne Passthrough aus VM-XML."
+            warn "FEDORA-USB nicht am Host — entferne Passthrough aus VM-XML."
             virsh dumpxml "$VM_NAME" > /tmp/${VM_NAME}-nousb.xml
             python3 -c "
 import sys, re
@@ -593,21 +592,21 @@ open('/tmp/${VM_NAME}-nousb.xml', 'w').write(xml)
 
     wait_for_ssh "$ip"
 
-    # Auf GNOME Auto-Login + Ventoy-Automount warten (max 60s)
-    log "Warte auf Ventoy-Mount (GNOME Auto-Login)..."
-    local ventoy_path=""
+    # Auf GNOME Auto-Login + FEDORA-USB-Automount warten (max 60s)
+    log "Warte auf FEDORA-USB-Mount (GNOME Auto-Login)..."
+    local usb_path=""
     local mount_waited=0
-    until [[ -n "$ventoy_path" ]]; do
+    until [[ -n "$usb_path" ]]; do
         sleep 3; mount_waited=$((mount_waited + 3))
-        ventoy_path=$($SSH "$VM_USER@$ip" \
-            "findmnt -rno TARGET LABEL=Ventoy 2>/dev/null" || true)
+        usb_path=$($SSH "$VM_USER@$ip" \
+            "findmnt -rno TARGET LABEL=FEDORA-USB 2>/dev/null" || true)
         [[ $mount_waited -gt 60 ]] && {
             log "Automount nicht verfügbar — mounte manuell..."
-            $SSH "$VM_USER@$ip" "echo '${VM_PASS}' | sudo -S bash -c 'mkdir -p /run/media/${VM_USER}/Ventoy && mount /dev/sda1 /run/media/${VM_USER}/Ventoy' 2>/dev/null" || true
-            ventoy_path="/run/media/${VM_USER}/Ventoy"
+            $SSH "$VM_USER@$ip" "echo '${VM_PASS}' | sudo -S bash -c 'mkdir -p /run/media/${VM_USER}/FEDORA-USB && mount LABEL=FEDORA-USB /run/media/${VM_USER}/FEDORA-USB' 2>/dev/null" || true
+            usb_path="/run/media/${VM_USER}/FEDORA-USB"
         }
     done
-    log "Ventoy-Pfad in VM: $ventoy_path"
+    log "FEDORA-USB-Pfad in VM: $usb_path"
 
     # ── Screenshot VORHER (offenes Terminal) ──────────────────────────────────
     # Screenshots nur für GUI-Profile (headless hat keinen Desktop)
@@ -627,7 +626,7 @@ open('/tmp/${VM_NAME}-nousb.xml', 'w').write(xml)
 
     log "Starte fedora-provision.sh --profile ${profile} ..."
     $SSH "$VM_USER@$ip" \
-        "echo '${VM_PASS}' | sudo -S bash '${ventoy_path}/fedora-provision.sh' --profile '${profile}' --run-now" \
+        "echo '${VM_PASS}' | sudo -S bash '${usb_path}/fedora-provision.sh' --profile '${profile}' --run-now" \
         || warn "Provisioner abgebrochen oder mit Fehler beendet — Logs prüfen"
 
     log "Lösche first-login Marker (SSH-Version läuft gleich) ..."
@@ -648,7 +647,7 @@ open('/tmp/${VM_NAME}-nousb.xml', 'w').write(xml)
     done
     [[ $boot_done -eq 1 ]] && log "First-Boot abgeschlossen."
 
-    # ── Aktuelle Repo-Skripte in VM einspielen (override Ventoy-Version) ─────
+    # ── Aktuelle Repo-Skripte in VM einspielen (override USB-Version) ─────
     log "Sync: Repo-Skripte → VM ..."
     $SSH "$VM_USER@$ip" "cat > /tmp/fedora-first-login.sh" \
         < "${PROJECT_DIR}/scripts/first-login.sh"
@@ -658,7 +657,7 @@ open('/tmp/${VM_NAME}-nousb.xml', 'w').write(xml)
 
     # ── GDM stoppen — konfliktfreie dconf-Schreibung ──────────────────────────
     # ── Fehlende Pakete aus Repo-first-boot.sh nachinstallieren ──────────────
-    # Falls Ventoy-first-boot.sh neuer Pakete nicht kennt, hier nachholen.
+    # Falls USB-first-boot.sh neue Pakete nicht kennt, hier nachholen.
     # Muss VOR GDM-Stop passieren damit GNOME beim Neustart die Extensions findet.
     if ! $SSH "$VM_USER@$ip" "rpm -q gnome-shell-extension-dash-to-dock &>/dev/null" 2>/dev/null; then
         log "Nachinstallation: gnome-shell-extension-dash-to-dock ..."
@@ -696,13 +695,13 @@ open('/tmp/${VM_NAME}-nousb.xml', 'w').write(xml)
     log "Starte GDM (Autologin mit neuer Config) ..."
     $SSH "$VM_USER@$ip" \
         "echo '${VM_PASS}' | sudo -S systemctl start gdm" 2>/dev/null || true
-    # Warten bis GNOME-Session wieder läuft (Autologin + Ventoy-Mount)
-    local ventoy_path2=""
+    # Warten bis GNOME-Session wieder läuft (Autologin + FEDORA-USB-Mount)
+    local usb_path2=""
     local gdm_waited=0
-    until [[ -n "$ventoy_path2" ]]; do
+    until [[ -n "$usb_path2" ]]; do
         sleep 5; gdm_waited=$((gdm_waited + 5))
-        ventoy_path2=$($SSH "$VM_USER@$ip" \
-            "findmnt -rno TARGET LABEL=Ventoy 2>/dev/null" 2>/dev/null || true)
+        usb_path2=$($SSH "$VM_USER@$ip" \
+            "findmnt -rno TARGET LABEL=FEDORA-USB 2>/dev/null" 2>/dev/null || true)
         [[ $gdm_waited -gt 120 ]] && { warn "GNOME Session nicht bereit nach 120s."; break; }
     done
     log "GNOME Session bereit (${gdm_waited}s)."
@@ -855,7 +854,7 @@ cmd_smoke() {
     local usb_vm
     usb_vm=$(virsh list --name 2>/dev/null | while read -r vm; do
         [[ -z "$vm" ]] && continue
-        virsh dumpxml "$vm" 2>/dev/null | grep -q "${VENTOY_USB_VENDOR}.*${VENTOY_USB_PRODUCT}\|${VENTOY_USB_PRODUCT}.*${VENTOY_USB_VENDOR}" && echo "$vm"
+        virsh dumpxml "$vm" 2>/dev/null | grep -q "${USB_VENDOR}.*${USB_PRODUCT}\|${USB_PRODUCT}.*${USB_VENDOR}" && echo "$vm"
     done | head -1 || true)
 
     if [[ -n "$usb_vm" ]]; then

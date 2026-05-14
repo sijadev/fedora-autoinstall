@@ -1,0 +1,271 @@
+#!/usr/bin/env bash
+# build-usb.sh — Erstellt einen bootbaren FEDORA-USB-Stick mit GRUB2 + Bazzite-Kernel.
+#
+# Ersetzt Ventoy. Einmaliger Aufbau; danach sync-usb.sh für Updates verwenden.
+#
+# Partitionsschema:
+#   Part 1: 256 MB  FAT32  LABEL=EFI         (EFI System Partition)
+#   Part 2: Rest    FAT32  LABEL=FEDORA-USB  (Kickstart, Scripts, Kernel)
+#
+# Kernel: Bazzite-COPR (kernel-bazzite-core + kernel-bazzite-modules)
+#   Bringt sm_120/Blackwell-Support für RTX 9070/50xx ohne iGPU-Workaround.
+#   RPMs werden in iso/kernel-cache/ gecacht.
+#
+# Stage2: Fedora Mirror (Netzwerk) — kein ISO auf USB nötig.
+#
+# Usage:
+#   sudo scripts/build-usb.sh /dev/sdX
+#   sudo scripts/build-usb.sh /dev/sdX --kernel-rpm /path/to/kernel.rpm
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# ── Args ──────────────────────────────────────────────────────────────────────
+USB_DEV="${1:-}"
+KERNEL_RPM="${2:-}"
+if [[ "$KERNEL_RPM" == "--kernel-rpm" ]]; then
+    KERNEL_RPM="${3:-}"
+fi
+
+if [[ -z "$USB_DEV" ]]; then
+    echo "Usage: sudo $0 /dev/sdX [--kernel-rpm /path/to/kernel-bazzite.rpm]" >&2
+    exit 1
+fi
+
+[[ "$EUID" -ne 0 ]] && { echo "Bitte als root ausführen: sudo $0 $*" >&2; exit 1; }
+[[ -b "$USB_DEV" ]] || { echo "Kein Blockgerät: $USB_DEV" >&2; exit 1; }
+
+if [[ -t 1 ]]; then
+    RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
+else
+    RED=""; GREEN=""; YELLOW=""; CYAN=""; BOLD=""; RESET=""
+fi
+log()  { echo -e "${GREEN}[build-usb]${RESET} $*"; }
+warn() { echo -e "${YELLOW}[build-usb]${RESET} $*" >&2; }
+die()  { echo -e "${RED}[build-usb] $*${RESET}" >&2; exit 1; }
+step() { echo -e "\n${CYAN}${BOLD}══ $* ══${RESET}"; }
+
+# ── Voraussetzungen ───────────────────────────────────────────────────────────
+step "Voraussetzungen"
+for cmd in sgdisk mkfs.fat grub2-install xorriso cpio zstd rpm2cpio; do
+    command -v "$cmd" &>/dev/null || die "'$cmd' fehlt. Installiere: dnf install gdisk dosfstools grub2-efi-x64 grub2-tools xorriso cpio zstd rpm-build"
+done
+log "Alle Tools vorhanden."
+
+# ── Sicherheitscheck ──────────────────────────────────────────────────────────
+step "Sicherheitscheck: $USB_DEV"
+USB_SIZE_GB=$(( $(blockdev --getsize64 "$USB_DEV") / 1024 / 1024 / 1024 ))
+log "Gerät: $USB_DEV  (${USB_SIZE_GB} GB)"
+(( USB_SIZE_GB >= 4 ))  || die "USB-Stick zu klein: ${USB_SIZE_GB} GB (min 4 GB)"
+(( USB_SIZE_GB <= 512 )) || die "Gerät mit ${USB_SIZE_GB} GB wirkt suspekt groß — abgebrochen."
+
+# Nicht die System-Root überschreiben
+ROOT_DEV=$(df / | tail -1 | awk '{print $1}' | sed 's/[0-9]*$//' | sed 's/p[0-9]*$//')
+[[ "$USB_DEV" == "$ROOT_DEV" ]] && die "Verweigert: $USB_DEV ist das Root-Gerät."
+
+echo ""
+echo -e "${RED}${BOLD}WARNUNG: $USB_DEV wird komplett überschrieben!${RESET}"
+echo -e "  Gerät:  $USB_DEV  (${USB_SIZE_GB} GB)"
+echo -e "  Inhalt: wird gelöscht und neu partitioniert"
+echo ""
+read -r -p "Wirklich fortfahren? [j/N] " ans
+[[ "${ans,,}" == "j" ]] || die "Abgebrochen."
+
+# ── Temp-Dirs + Cleanup ───────────────────────────────────────────────────────
+WORK_DIR=$(mktemp -d -t build-usb-XXXXXX)
+EFI_MNT="${WORK_DIR}/efi"
+DATA_MNT="${WORK_DIR}/data"
+KERNEL_EXTRACT="${WORK_DIR}/kernel-rpm"
+mkdir -p "$EFI_MNT" "$DATA_MNT" "$KERNEL_EXTRACT"
+
+EFI_PART=""
+DATA_PART=""
+cleanup() {
+    mountpoint -q "$DATA_MNT" && umount "$DATA_MNT" || true
+    mountpoint -q "$EFI_MNT"  && umount "$EFI_MNT"  || true
+    rm -rf "$WORK_DIR"
+}
+trap cleanup EXIT
+
+# ── Bazzite-Kernel besorgen ───────────────────────────────────────────────────
+step "Bazzite-Kernel besorgen"
+
+KERNEL_CACHE="${PROJECT_DIR}/iso/kernel-cache"
+mkdir -p "$KERNEL_CACHE"
+
+if [[ -n "$KERNEL_RPM" ]]; then
+    log "Verwende angegebenes RPM: $KERNEL_RPM"
+    cp "$KERNEL_RPM" "$KERNEL_EXTRACT/"
+else
+    # Cache: alle RPMs aus kernel-cache/ verwenden falls vorhanden
+    cached_core=$(ls -t "${KERNEL_CACHE}"/kernel-bazzite-core-*.rpm 2>/dev/null | head -1 || true)
+    cached_mods=$(ls -t "${KERNEL_CACHE}"/kernel-bazzite-modules-*.rpm 2>/dev/null | head -1 || true)
+
+    if [[ -n "$cached_core" && -n "$cached_mods" ]]; then
+        log "Verwende gecachte RPMs:"
+        log "  Core:    $(basename "$cached_core")"
+        log "  Modules: $(basename "$cached_mods")"
+        cp "$cached_core" "$cached_mods" "$KERNEL_EXTRACT/"
+    else
+        log "Lade kernel-bazzite von COPR (Fedora 43)..."
+        dnf \
+            --repofrompath="bazzite-kernel,https://download.copr.fedorainfracloud.org/results/bazzite-org/kernel-bazzite/fedora-43-x86_64/" \
+            --disablerepo='*' --enablerepo=bazzite-kernel \
+            download --destdir="$KERNEL_EXTRACT" \
+            kernel-bazzite-core kernel-bazzite-modules \
+            || die "Kernel-RPM-Download fehlgeschlagen. Versuche --kernel-rpm <pfad>"
+        # Cache für nächsten Durchlauf
+        cp "${KERNEL_EXTRACT}"/*.rpm "$KERNEL_CACHE/" 2>/dev/null || true
+        log "RPMs gecacht in: $KERNEL_CACHE"
+    fi
+fi
+
+log "Extrahiere RPMs..."
+pushd "$KERNEL_EXTRACT" >/dev/null
+for rpm in *.rpm; do
+    rpm2cpio "$rpm" | cpio -idmu --quiet 2>/dev/null
+done
+popd >/dev/null
+
+NEW_VMLINUZ=$(find "$KERNEL_EXTRACT/lib/modules" -name vmlinuz | head -1)
+[[ -z "$NEW_VMLINUZ" ]] && die "vmlinuz nicht in Kernel-RPM gefunden."
+NEW_KVER=$(basename "$(dirname "$NEW_VMLINUZ")")
+log "Bazzite-Kernel: $NEW_KVER"
+
+# ── Anaconda-initrd mit Bazzite-Modulen bauen ────────────────────────────────
+step "Anaconda-initrd: Bazzite-Module einbetten"
+
+src_iso=$(ls -t "${PROJECT_DIR}"/iso/Fedora-Everything-netinst-*.iso 2>/dev/null | head -1 || true)
+[[ -z "$src_iso" ]] && die "Keine Fedora-Netinst-ISO unter iso/ — z.B. Fedora-Everything-netinst-x86_64-43-1.6.iso"
+log "Source-ISO (für initrd): $src_iso"
+
+ISO_MNT="${WORK_DIR}/iso-mnt"
+mkdir -p "$ISO_MNT"
+mount -o loop,ro "$src_iso" "$ISO_MNT"
+
+INITRD_WORK="${WORK_DIR}/initrd"
+mkdir -p "$INITRD_WORK"
+pushd "$INITRD_WORK" >/dev/null
+log "Entpacke initrd.img..."
+zstdcat "${ISO_MNT}/images/pxeboot/initrd.img" 2>/dev/null | cpio -idm --quiet \
+    || xzcat  "${ISO_MNT}/images/pxeboot/initrd.img" 2>/dev/null | cpio -idm --quiet \
+    || gzip -dc "${ISO_MNT}/images/pxeboot/initrd.img"           | cpio -idm --quiet \
+    || die "initrd.img konnte nicht entpackt werden."
+
+OLD_KVER=$(ls usr/lib/modules/ 2>/dev/null | head -1 || true)
+[[ -z "$OLD_KVER" ]] && die "Konnte keine Kernel-Version in initrd.img finden."
+log "Original-Kernel im initrd: $OLD_KVER  →  Ersetze durch $NEW_KVER"
+
+rm -rf "usr/lib/modules/${OLD_KVER}"
+mkdir -p "usr/lib/modules/${NEW_KVER}"
+cp -a "${KERNEL_EXTRACT}/lib/modules/${NEW_KVER}/." "usr/lib/modules/${NEW_KVER}/"
+
+log "Repacke initrd.img (zstd)..."
+find . | cpio -o -H newc --quiet | zstd -19 -T0 -q > "${WORK_DIR}/initrd.img"
+popd >/dev/null
+
+umount "$ISO_MNT"
+log "initrd.img fertig: $(du -h "${WORK_DIR}/initrd.img" | cut -f1)"
+
+# ── Partitionieren ────────────────────────────────────────────────────────────
+step "USB-Stick partitionieren: $USB_DEV"
+
+# Alle Partitionen aushängen
+for part in "${USB_DEV}"* ; do
+    [[ "$part" == "$USB_DEV" ]] && continue
+    umount "$part" 2>/dev/null || true
+done
+
+sgdisk --zap-all "$USB_DEV" >/dev/null
+sgdisk \
+    --new=1:0:+256M   --typecode=1:EF00 --change-name=1:"EFI" \
+    --new=2:0:0        --typecode=2:0700 --change-name=2:"FEDORA-USB" \
+    "$USB_DEV" >/dev/null
+partprobe "$USB_DEV"
+sleep 1
+
+# Partition-Pfade (sda1/sda2 oder nvme0n1p1/nvme0n1p2)
+if [[ "$USB_DEV" =~ nvme|mmcblk ]]; then
+    EFI_PART="${USB_DEV}p1"
+    DATA_PART="${USB_DEV}p2"
+else
+    EFI_PART="${USB_DEV}1"
+    DATA_PART="${USB_DEV}2"
+fi
+log "EFI-Partition:  $EFI_PART"
+log "Daten-Partition: $DATA_PART"
+
+mkfs.fat -F 32 -n "EFI"       "$EFI_PART"  >/dev/null
+mkfs.fat -F 32 -n "FEDORA-USB" "$DATA_PART" >/dev/null
+log "Partitionen formatiert."
+
+# ── GRUB2 installieren ────────────────────────────────────────────────────────
+step "GRUB2 EFI installieren"
+
+mount "$EFI_PART"  "$EFI_MNT"
+mount "$DATA_PART" "$DATA_MNT"
+
+grub2-install \
+    --target=x86_64-efi \
+    --efi-directory="$EFI_MNT" \
+    --boot-directory="${DATA_MNT}/boot" \
+    --removable \
+    --no-nvram \
+    || die "grub2-install fehlgeschlagen."
+
+log "GRUB2 installiert."
+
+# grub.cfg auf die EFI-Partition schreiben (GRUB sucht dort)
+mkdir -p "${EFI_MNT}/EFI/BOOT"
+install -m 0644 "${PROJECT_DIR}/boot/grub.cfg" "${EFI_MNT}/EFI/BOOT/grub.cfg"
+# Zusätzlich in boot/grub/ (Boot-Verzeichnis) — GRUB sucht an beiden Orten
+mkdir -p "${DATA_MNT}/boot/grub"
+install -m 0644 "${PROJECT_DIR}/boot/grub.cfg" "${DATA_MNT}/boot/grub/grub.cfg"
+log "grub.cfg kopiert."
+
+# ── Bazzite-Kernel + initrd kopieren ─────────────────────────────────────────
+step "Kernel + initrd auf USB kopieren"
+
+mkdir -p "${DATA_MNT}/boot"
+install -m 0644 "$NEW_VMLINUZ"           "${DATA_MNT}/boot/vmlinuz"
+install -m 0644 "${WORK_DIR}/initrd.img" "${DATA_MNT}/boot/initrd.img"
+log "vmlinuz: $(du -h "${DATA_MNT}/boot/vmlinuz"  | cut -f1)"
+log "initrd:  $(du -h "${DATA_MNT}/boot/initrd.img" | cut -f1)"
+
+# ── Kickstart + Scripts + Systemd-Units kopieren ──────────────────────────────
+step "Kickstart + Scripts + Systemd auf USB kopieren"
+
+mkdir -p "${DATA_MNT}/kickstart" "${DATA_MNT}/scripts" "${DATA_MNT}/systemd"
+
+cp "${PROJECT_DIR}/kickstart/common-post.inc" "${DATA_MNT}/kickstart/"
+cp "${PROJECT_DIR}"/kickstart/*.ks "${DATA_MNT}/kickstart/" 2>/dev/null || true
+
+cp -r "${PROJECT_DIR}/scripts/." "${DATA_MNT}/scripts/"
+
+install -m 0750 "${PROJECT_DIR}/fedora-provision.sh" "${DATA_MNT}/fedora-provision.sh"
+
+if [[ -d "${PROJECT_DIR}/systemd" ]]; then
+    cp -r "${PROJECT_DIR}/systemd/." "${DATA_MNT}/systemd/"
+fi
+
+log "Dateien kopiert."
+
+# ── Sync + Ergebnis ───────────────────────────────────────────────────────────
+step "Sync"
+sync
+log "USB-Stick fertig: $USB_DEV"
+
+echo ""
+echo -e "  ${BOLD}Partitionen:${RESET}"
+echo -e "    EFI:       $EFI_PART  (LABEL=EFI, GRUB2 BOOTX64.EFI)"
+echo -e "    FEDORA-USB: $DATA_PART (LABEL=FEDORA-USB, Kernel + KS + Scripts)"
+echo ""
+echo -e "  ${BOLD}Kernel:${RESET} $NEW_KVER"
+echo ""
+echo -e "  ${BOLD}Nächste Schritte:${RESET}"
+echo -e "    USB einstecken → UEFI Boot → GRUB2-Menü erscheint"
+echo -e "    [f] Vollinstallation  →  Anaconda startet (Bazzite-Kernel, keine RTX-9070-Hänger)"
+echo ""
+echo -e "  ${BOLD}Updates:${RESET}  scripts/sync-usb.sh"

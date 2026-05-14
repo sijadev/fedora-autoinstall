@@ -406,12 +406,12 @@ echo "[common-post] Done. Profile: ${INSTALL_PROFILE}"
 %post --nochroot --log=/root/ks-post-savelogs.log
 
 TIMESTAMP=$(date '+%Y%m%d-%H%M%S')
-VENTOY_DEV=$(blkid -L Ventoy 2>/dev/null | head -1 || true)
+USB_DEV=$(blkid -L FEDORA-USB 2>/dev/null | head -1 || true)
 LOG_DIR=""
 
-if [[ -n "$VENTOY_DEV" ]]; then
+if [[ -n "$USB_DEV" ]]; then
     MOUNT_TMP=$(mktemp -d)
-    mount "$VENTOY_DEV" "$MOUNT_TMP" 2>/dev/null && {
+    mount "$USB_DEV" "$MOUNT_TMP" 2>/dev/null && {
         LOG_DIR="${MOUNT_TMP}/logs"
         mkdir -p "$LOG_DIR"
 
@@ -447,7 +447,7 @@ if [[ -n "$VENTOY_DEV" ]]; then
     }
     rmdir "$MOUNT_TMP" 2>/dev/null || true
 else
-    echo "Ventoy USB nicht gefunden — Logs nicht gesichert."
+    echo "FEDORA-USB nicht gefunden — Logs nicht gesichert."
 fi
 
 %end
@@ -462,7 +462,7 @@ SYSROOT="${ANA_INSTALL_PATH:-/mnt/sysroot}"
 [[ ! -d "$SYSROOT" ]] && SYSROOT="/mnt/sysimage"
 [[ ! -d "$SYSROOT" ]] && { echo "Kein sysroot gefunden — Abbruch."; exit 0; }
 
-# Quell-Verzeichnis ermitteln: Custom-ISO oder Ventoy
+# Quell-Verzeichnis ermitteln: Custom-ISO oder FEDORA-USB
 SRC=""
 for candidate in /run/install/repo /run/install/sources/mount-* /mnt/install/repo; do
     if [[ -f "${candidate}/fedora-provision.sh" || -d "${candidate}/scripts" ]]; then
@@ -470,10 +470,10 @@ for candidate in /run/install/repo /run/install/sources/mount-* /mnt/install/rep
     fi
 done
 if [[ -z "$SRC" ]]; then
-    VENTOY_DEV=$(blkid -L Ventoy 2>/dev/null | head -1 || true)
-    if [[ -n "$VENTOY_DEV" ]]; then
+    USB_DEV=$(blkid -L FEDORA-USB 2>/dev/null | head -1 || true)
+    if [[ -n "$USB_DEV" ]]; then
         MNT=$(mktemp -d)
-        mount "$VENTOY_DEV" "$MNT" 2>/dev/null && SRC="$MNT"
+        mount "$USB_DEV" "$MNT" 2>/dev/null && SRC="$MNT"
     fi
 fi
 [[ -z "$SRC" ]] && { echo "Keine Quelle (ISO/USB) gefunden."; exit 0; }

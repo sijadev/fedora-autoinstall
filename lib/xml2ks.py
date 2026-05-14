@@ -109,10 +109,11 @@ def validate(root: ET.Element, xml_path: Path) -> list[str]:
     if part_scheme == "custom" and not part_extra:
         errors.append("<partitioning/kickstart_extra> is required when scheme is 'custom'.")
 
-    # vLLM-Omni CUDA version sanity
-    vllm_cuda = _get(root, "first-login/vllm-omni/cuda-version")
-    if vllm_cuda and not re.match(r'^\d+\.\d+$', vllm_cuda):
-        errors.append(f"<cuda-version> must be MAJOR.MINOR (got: {vllm_cuda!r})")
+    # vLLM-Router port sanity
+    vllm_router_el = root.find("first-login/vllm-router")
+    vllm_port = _attr(vllm_router_el, "port", "")
+    if vllm_port and not vllm_port.isdigit():
+        errors.append(f"<vllm-router port=...> must be a number (got: {vllm_port!r})")
 
     return errors
 
@@ -155,12 +156,15 @@ def generate_kickstart(
     ext_els = root.findall("first-login/gnome-extensions/extension") or []
     gnome_extensions = [el.text.strip() for el in ext_els if el.text]
 
-    # User info for first-login service
-    vllm_el        = root.find("first-login/vllm-omni")
-    vllm_venv      = _attr(vllm_el, "venv", "~/.venvs/bitwig-omni")
-    vllm_cuda_ver  = _get(root, "first-login/vllm-omni/cuda-version", "13.2")
-    vllm_arch      = _get(root, "first-login/vllm-omni/arch-list", "12.0")
-    vllm_model     = _get(root, "first-login/vllm-omni/model", "Qwen/Qwen3-14B-AWQ")
+    # vLLM-Router config
+    vllm_router_el   = root.find("first-login/vllm-router")
+    vllm_router_port = _attr(vllm_router_el, "port", "8000")
+    vllm_registry    = _get(root, "first-login/vllm-router/registry",
+                            "~/.config/vllm-router/models.json")
+    agent_model      = _get(root, "first-login/vllm-router/agent-model",
+                            "Qwen/Qwen3-14B-AWQ")
+    audio_model      = _get(root, "first-login/vllm-router/audio-model",
+                            "moonshotai/Kimi-Audio-7B-Instruct")
 
     pytorch_el     = root.find("first-login/pytorch-venv")
     pytorch_venv   = _attr(pytorch_el, "path", "~/.venvs/ai")
@@ -215,11 +219,10 @@ def generate_kickstart(
     # ── Env vars for first-login service ─────────────────────────────────────
     env_block = "\n".join([
         f'FEDORA_TARGET_USER="{username}"',
-        f'FEDORA_PYTORCH_VENV="{pytorch_venv}"',
-        f'FEDORA_VLLM_VENV="{vllm_venv}"',
-        f'FEDORA_VLLM_CUDA_VERSION="{vllm_cuda_ver}"',
-        f'FEDORA_VLLM_ARCH_LIST="{vllm_arch}"',
-        f'FEDORA_VLLM_MODEL="{vllm_model}"',
+        f'FEDORA_VLLM_ROUTER_PORT="{vllm_router_port}"',
+        f'FEDORA_VLLM_REGISTRY="{vllm_registry}"',
+        f'FEDORA_AGENT_MODEL="{agent_model}"',
+        f'FEDORA_AUDIO_MODEL="{audio_model}"',
         f'FEDORA_WS_GTK_ARGS="{ws_gtk_args}"',
         f'FEDORA_WS_ICON_ARGS="{ws_icon_args}"',
         f'FEDORA_WS_WALL_ARGS="{ws_wall_args}"',

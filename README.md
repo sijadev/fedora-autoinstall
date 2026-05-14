@@ -1,8 +1,8 @@
 # fedora-autoinstall
 
-Vollautomatisches Unattended-Install-Framework für **Fedora Linux** via Ventoy USB-Stick.
+Vollautomatisches Unattended-Install-Framework für **Fedora Linux** — eigener GRUB2-Bootloader + Bazzite-Kernel auf USB-Stick, kein Ventoy.
 
-Ein einziger Befehl beschreibt den USB-Stick mit ISO, Kickstart-Profilen und GRUB-Menü. Beim Booten wählt man ein Profil — der Rest läuft ohne Eingriff durch.
+Beim Booten erscheint direkt das GRUB2-Menü mit Hotkeys — der Rest läuft ohne Eingriff durch.
 
 ---
 
@@ -10,12 +10,12 @@ Ein einziger Befehl beschreibt den USB-Stick mit ISO, Kickstart-Profilen und GRU
 
 | Was | Version / Bedingung |
 |---|---|
-| Fedora-basiertes Host-System | für `fedora-install.sh` |
+| Fedora-basiertes Host-System | für `build-usb.sh` |
 | Python 3 | `python3`, `pip`, `venv` |
-| `curl`, `lsblk`, `findmnt`, `sha256sum`, `git` | Standard-Tools |
-| `7z` (p7zip-plugins) | für ISO CDLABEL-Extraktion |
-| Ventoy USB-Stick | ≥ 32 GB empfohlen, Ventoy vorinstalliert |
-| Root-Rechte | `sudo ./fedora-install.sh …` |
+| `sgdisk`, `mkfs.fat`, `grub2-install` | `dnf install gdisk dosfstools grub2-efi-x64` |
+| `xorriso`, `cpio`, `zstd`, `rpm2cpio` | `dnf install xorriso cpio zstd rpm-build` |
+| USB-Stick | ≥ 8 GB, wird komplett neu formatiert |
+| Root-Rechte | `sudo scripts/build-usb.sh …` |
 
 > **Ziel-Hardware:** UEFI-System mit NVIDIA GPU (Turing RTX 20xx oder neuer), AMD Ryzen CPU empfohlen.  
 > Legacy-BIOS wird nicht unterstützt.
@@ -26,9 +26,12 @@ Ein einziger Befehl beschreibt den USB-Stick mit ISO, Kickstart-Profilen und GRU
 
 ```
 fedora-autoinstall/
-├── fedora-install.sh          # Haupt-Orchestrator
 ├── fedora-provision.sh        # Provisioner für laufende Systeme
+├── fedora-iso-build.sh        # Custom-ISO bauen (für dd-Flash ohne USB-Boot)
 ├── Containerfile.vllm         # Custom vLLM Image (Blackwell sm_120 optimiert)
+│
+├── boot/
+│   └── grub.cfg               # GRUB2-Menü (5 Profile: f/d/m/t/h)
 │
 ├── config/
 │   ├── example.xml            # Referenz-Konfiguration
@@ -39,52 +42,105 @@ fedora-autoinstall/
 │   ├── fedora-theme-bash.ks   # GNOME + WhiteSur, kein AI
 │   ├── fedora-headless-vllm.ks# Kein GUI, Podman + Kimi-Audio + Qwen3
 │   ├── fedora-vm.ks           # VM (KVM/QEMU, vda)
-│   └── common-post.inc        # Gemeinsamer %post-Block (sync mit scripts/!)
-│
-├── ventoy/
-│   ├── ventoy_grub.cfg.tpl    # GRUB-Menü (5 Profile: m/f/t/h/v)
-│   └── ventoy.json.tpl        # Ventoy auto_install-Template
+│   └── common-post.inc        # Gemeinsamer %post-Block
 │
 ├── lib/
 │   ├── common.sh              # Logging, dry-run, Safety-Checks
-│   ├── usb.sh                 # Ventoy USB-Erkennung und Mount
 │   └── xml2ks.py              # XML → Kickstart Konverter + Validator
 │
 ├── scripts/
+│   ├── build-usb.sh           # USB-Stick einmalig aufbauen (GRUB2 + Bazzite-Kernel)
+│   ├── sync-usb.sh            # Repo → USB synchronisieren
 │   ├── first-boot.sh          # Systemweite Provisionierung (root, einmalig)
-│   ├── first-login.sh         # User-Provisionierung (sija, einmalig)
+│   ├── first-login.sh         # User-Provisionierung (einmalig)
 │   ├── vm-test.sh             # VM-Test via KVM/QEMU + SSH
+│   ├── vm-test-blackwell.sh   # Headless KVM-Test: Blackwell-Boot-Simulation
 │   ├── podman-pipeline.sh     # Layered Container-Build + --build-vllm
 │   └── podman-run.sh          # Interaktiver Container-Start
 │
 ├── systemd/
 │   └── fedora-first-boot.service
 │
-└── iso/                       # Lokaler ISO-Cache
+└── iso/
+    ├── kernel-cache/          # Bazzite-Kernel-RPM-Cache (kein Re-Download)
+    └── Fedora-Everything-netinst-*.iso  # Source-ISO (manuell ablegen)
 ```
 
 ---
 
 ## Schnellstart
 
-### 1. USB-Stick beschreiben
+### 1. USB-Stick einmalig aufbauen
 
 ```bash
-sudo ./fedora-install.sh --config config/mein-system.xml
+# Source-ISO nach iso/ legen (einmalig):
+# https://fedoraproject.org/everything/download  →  iso/
+
+# USB-Stick aufbauen (formatiert, installiert GRUB2 + Bazzite-Kernel):
+sudo scripts/build-usb.sh /dev/sdX
 ```
 
-### Alternative: Custom-ISO bauen (ohne Ventoy)
+Was `build-usb.sh` macht:
+- GPT: Part 1 = EFI (256 MB FAT32), Part 2 = FEDORA-USB (Rest FAT32)
+- GRUB2 EFI (`BOOTX64.EFI`) + `boot/grub.cfg` installieren
+- Bazzite-Kernel von COPR laden (RPM-Cache in `iso/kernel-cache/`)
+- Anaconda-initrd mit Bazzite-Modulen neu packen
+- Kickstart, Scripts, Systemd-Units auf USB kopieren
 
-Statt Ventoy kann eine **eigene bootbare Fedora-ISO** gebaut werden, in die Kickstart + Scripts direkt eingebettet sind. Vorteil: self-contained (`dd` reicht), und optional kann der **Bazzite-Kernel direkt ins ISO** injiziert werden — dann bootet auch **Blackwell ohne iGPU-Workaround**.
+Bazzite-Kernel-RPMs werden in `iso/kernel-cache/` gecacht — kein Re-Download beim nächsten Mal.
+
+### 2. USB-Stick aktuell halten
 
 ```bash
-# Voraussetzungen
+# Prüfen ob Stick aktuell ist:
+scripts/sync-usb.sh --check
+
+# Synchronisieren (interaktiv mit Diff):
+scripts/sync-usb.sh
+
+# Ohne Rückfrage:
+scripts/sync-usb.sh --force
+```
+
+> **Kernel-Update:** `build-usb.sh` erneut ausführen — `sync-usb.sh` aktualisiert nur Scripts/Kickstart/Config, nicht den Kernel.
+
+### 3. Profil wählen und installieren
+
+USB einstecken → UEFI Boot → GRUB2-Menü → Hotkey drücken:
+
+| Taste | Profil | Was passiert |
+|-------|--------|-------------|
+| `f` | Vollinstallation | Anaconda → `fedora-full.ks` (GNOME + NVIDIA + AI) |
+| `d` | Debug-Install | Text-Modus + Serial-Log + Logs auf USB |
+| `m` | VM-Test | Anaconda → `fedora-vm.ks` (KVM/QEMU) |
+| `t` | Theme + Bash | Provisioner auf bestehendem System |
+| `h` | Headless vLLM | Provisioner: Podman + Kimi-Audio + Qwen3 |
+
+Stage2 (Anaconda-Installer) wird live vom Fedora Mirror geladen — keine ISO auf dem USB-Stick nötig.
+
+### 4. Provisioner auf laufendem System
+
+```bash
+# Theme + WhiteSur + Oh-My-Bash
+sudo bash /run/media/$USER/FEDORA-USB/fedora-provision.sh --profile theme-bash
+
+# Podman + Kimi-Audio-7B + Qwen3 (AI Agent)
+sudo bash /run/media/$USER/FEDORA-USB/fedora-provision.sh --profile headless-vllm
+```
+
+---
+
+## Alternative: Custom-ISO (ohne USB-Boot)
+
+Für `dd`-Flash direkt auf USB oder SD-Karte — kein GRUB2-Setup nötig:
+
+```bash
 sudo dnf install lorax xorriso cpio zstd
 
 # Standard-ISO mit Kickstart (full-Profil)
 sudo ./fedora-iso-build.sh --profile full
 
-# Mit Kernel-Swap für Blackwell (RTX 50/9070)
+# Mit Bazzite-Kernel-Swap für Blackwell (RTX 50/9070)
 sudo ./fedora-iso-build.sh --profile full --swap-kernel
 
 # Direkt auf USB-Stick schreiben
@@ -93,28 +149,19 @@ sudo ./fedora-iso-build.sh --profile full --swap-kernel --write /dev/sdX
 
 Ergebnis: `iso/Fedora-Auto-full.iso` — booten startet Anaconda automatisch mit eingebettetem Kickstart.
 
-### NVIDIA Blackwell (RTX 50 / 9070) — Pflicht vor Install
+---
 
-Anaconda hängt auf Blackwell-GPUs mit schwarzem Bildschirm. Workaround:
+## NVIDIA Blackwell (RTX 50 / 9070)
 
-1. **BIOS** vor USB-Boot:
-   - `Primary Display` / `Init Display First` → **IGD** / **iGPU**
-   - `IGPU Multi-Monitor` → **Enabled**
-   - **Secure Boot** → **Disabled**
-2. **Monitor** an Mainboard-HDMI/DP anschließen (nicht an die NVIDIA-Karte)
-3. **Ventoy-Hauptmenü**: vor ISO-Auswahl **Ctrl+R** drücken → GRUB2 Mode
-4. Installation läuft jetzt über die iGPU des Ryzen
-5. **Nach erfolgreichem first-boot** (Bazzite-Kernel + NVIDIA-Treiber installiert):
-   - BIOS: `Primary Display` → **PEG/PCIe**
-   - Monitor zurück an NVIDIA-Karte
+Der **Bazzite-Kernel** im USB-Boot bringt nativen sm_120-Support — der iGPU-Workaround aus alten Ventoy-Anleitungen ist **nicht mehr nötig**.
 
-Der erste Boot installiert automatisch den **Bazzite-Kernel** (`FEDORA_KERNEL_SOURCE=bazzite`, Default) mit aktuellem Blackwell-Support. Opt-out: `FEDORA_KERNEL_SOURCE=fedora` in `/etc/fedora-provision.env`.
+Einfach [f] drücken und abwarten.
 
-### Diagnose: Schwarzer Bildschirm beim Install
+### Diagnose: Schwarzer Bildschirm
 
-Wenn nach Auswahl `[f]` oder `[d]` nur ein kurzer Terminal-Flash erscheint und dann der Bildschirm schwarz bleibt: **mindestens 90 Sekunden warten** — Anaconda lädt stage2 über Netzwerk nach (netinstall).
+Falls Anaconda nach dem Boot schweigt: **mindestens 90 Sekunden warten** — stage2 wird live vom Netzwerk geladen.
 
-Falls weiterhin schwarz, **TTY-Switch** versuchen (mehrere durchprobieren):
+Falls weiterhin schwarz, **TTY-Switch** versuchen:
 
 | Tastenkombi | Inhalt |
 |---|---|
@@ -124,37 +171,14 @@ Falls weiterhin schwarz, **TTY-Switch** versuchen (mehrere durchprobieren):
 | `Ctrl+Alt+F4` | Storage-Log |
 | `Ctrl+Alt+F5` | Programm-Log |
 
-- **TTY-Switch funktioniert** → reines Display-Problem, iGPU-Switch im BIOS löst es
-- **TTYs auch tot** → Kernel-Hang, anderes ISO probieren (Fedora Workstation Live oder Bazzite Installer-ISO)
-
-### 2. Profil wählen
-
-USB einstecken → Im Ventoy-Hauptmenü **F6** drücken → Hotkey wählen:
-
-| Taste | Profil | Was passiert |
-|-------|--------|-------------|
-| `m` | VM-Test | Anaconda → `fedora-vm.ks` (KVM/QEMU) |
-| `f` | Vollinstallation | Anaconda → `fedora-full.ks` |
-| `t` | Theme + Bash | Provisioner auf bestehendem System |
-| `h` | Headless vLLM | Provisioner: Podman + Kimi-Audio + Qwen3 |
-| `v` | vLLM only | Provisioner: vLLM only |
-
-### 3. Provisioner auf laufendem System
-
-```bash
-# Theme + WhiteSur + Oh-My-Bash
-sudo bash /run/media/$USER/Ventoy/fedora-provision.sh --profile theme-bash
-
-# Podman + Kimi-Audio-7B + Qwen3-8B (AI Agent)
-sudo bash /run/media/$USER/Ventoy/fedora-provision.sh --profile headless-vllm
-```
+Für tiefere Diagnose: **[d] Debug-Install** — Serial-Log landet auf dem USB-Stick unter `logs/`.
 
 ---
 
 ## Profile im Detail
 
-### `full` — Vollinstallation (ISO-Boot)
-Frische Neuinstallation auf leerem System. Btrfs-Dateisystem, GNOME Desktop, NVIDIA Open Driver, CUDA, WhiteSur-Theme, Oh-My-Bash, Podman, AI-Stack.
+### `full` — Vollinstallation (USB-Boot)
+Frische Neuinstallation auf leerem System. Btrfs, GNOME Desktop, NVIDIA Open Driver, CUDA, WhiteSur-Theme, Oh-My-Bash, Podman, AI-Stack.
 
 ### `theme-bash` — Theme + Bash (Provisioner)
 WhiteSur GTK/Icon/Wallpaper/Cursor-Themes, Dash-to-Dock, Blur-my-Shell, Oh-My-Bash. Kein AI-Stack.
@@ -162,7 +186,7 @@ WhiteSur GTK/Icon/Wallpaper/Cursor-Themes, Dash-to-Dock, Blur-my-Shell, Oh-My-Ba
 ### `headless-vllm` — Podman + KI-Agent (Provisioner)
 NVIDIA Open Driver, CUDA, Podman mit zwei vLLM-Services:
 - **Kimi-Audio-7B** auf Port 8000 — Musik-Analyse
-- **Qwen3-8B** auf Port 8001 — Reasoning + LangGraph
+- **Qwen3-14B** auf Port 8001 — Reasoning + LangGraph
 
 ### `vm` — VM (intern)
 KVM/QEMU-Gast, virtio-Disk (`vda`). Für automatisierte VM-Tests.
@@ -236,7 +260,7 @@ Neo4j — Musik-Theorie DB
   Chord Progressions, Reference Songs, Rhythm Patterns
        │
        ▼
-Qwen3-8B + Thinking — Port 8001 (~5 GB VRAM)
+Qwen3-14B + Thinking — Port 8001 (~5 GB VRAM)
   <think>...</think> → LangGraph Slaves
        │
        ▼
@@ -244,14 +268,6 @@ Qwen3-8B + Thinking — Port 8001 (~5 GB VRAM)
 ```
 
 **VRAM gesamt: ~9 GB** — beide Modelle gleichzeitig in 16 GB VRAM.
-
-### Verzeichnisse
-
-| Verzeichnis | Inhalt |
-|-------------|--------|
-| `~/bitwig-input/` | MP3/WAV/FLAC Eingabedateien |
-| `~/bitwig-output/` | Generierte `.bwtemplate.json` Ergebnisse |
-| `~/.models/huggingface/` | Modell-Gewichte (getrennt von `~/.cache/`) |
 
 ### Pipeline starten
 
@@ -273,7 +289,7 @@ setzt `OPENAI_BASE_URL=http://localhost:8000/v1` und wählt das Modell per Reque
 der Router startet/stoppt vLLM-Backend-Container (Quadlet `vllm@<name>.service`) on-demand.
 
 ```bash
-# Verfügbare Modelle anzeigen (active=true → läuft bereits)
+# Verfügbare Modelle anzeigen
 curl http://localhost:8000/v1/models
 
 # Chat — Backend wird beim ersten Request automatisch gestartet (30-180s Cold-Start)
@@ -282,7 +298,7 @@ curl http://localhost:8000/v1/chat/completions -d '{
   "messages": [{"role":"user","content":"hi"}]
 }'
 
-# Preload, ohne Anfrage zu senden
+# Preload ohne Anfrage
 curl -X POST 'http://localhost:8000/admin/preload?model=agent'
 
 # Status aller Modelle (laufend / idle / VRAM-Anteil)
@@ -303,10 +319,6 @@ curl http://localhost:8000/admin/status
 }
 ```
 
-Der Router schreibt automatisch das Quadlet-Env (`~/.config/vllm-router/instances/<name>.env`)
-und ruft `systemctl --user start vllm@<name>.service`. Idle-Backends werden nach
-`VLLM_ROUTER_IDLE_TIMEOUT` (Default 15 Min) gestoppt, um VRAM freizugeben.
-
 ```python
 # LangGraph-Beispiel
 from langchain_openai import ChatOpenAI
@@ -326,27 +338,28 @@ llm = ChatOpenAI(base_url="http://localhost:8000/v1", model="agent", api_key="sk
 ## VM-Test
 
 ```bash
-# Vollständiger Test-Zyklus
-./scripts/vm-test.sh install    # Frische Installation (Anaconda)
-./scripts/vm-test.sh base       # Snapshot anlegen
-./scripts/vm-test.sh test theme-bash  # Provisioner testen
-```
+# Blackwell-Boot-Simulation (headless KVM, Serial-Log-Monitoring)
+scripts/vm-test-blackwell.sh
+scripts/vm-test-blackwell.sh --keep   # VM nach Test behalten
 
-**VM-Anforderungen:** 100 GB Disk, 8 GB RAM, 4 vCPUs, Ventoy USB-Passthrough.
+# Vollständiger Provisioner-Test
+scripts/vm-test.sh install    # Frische Installation (Anaconda)
+scripts/vm-test.sh snapshot   # Snapshot anlegen
+scripts/vm-test.sh test theme-bash  # Provisioner testen
+```
 
 ---
 
 ## Boot-Ablauf
 
 ```
-Ventoy USB
-  └─ ISO (Fedora Netinstall)
-       └─ GRUB (ventoy_grub.cfg) — WhiteSur Theme
-            └─ Anaconda (graphical, nomodeset)
-                 ├─ %pre: Disk automatisch erkennen
-                 ├─ Btrfs partitionieren (@ + @home Subvolumes)
-                 ├─ %post: provision.env + first-boot.sh + first-login.desktop
-                 └─ %post --nochroot: fstab + GRUB auf subvol=@ umstellen
+FEDORA-USB (GRUB2 + Bazzite-Kernel)
+  └─ GRUB2-Menü (boot/grub.cfg)
+       └─ Anaconda — stage2 vom Fedora Mirror (Netzwerk)
+            ├─ %pre: Disk automatisch erkennen
+            ├─ Btrfs partitionieren (@ + @home Subvolumes)
+            ├─ %post: provision.env + first-boot.sh + first-login.desktop
+            └─ %post --nochroot: fstab + Logs auf USB sichern
 ```
 
 ### Erster Boot (root, einmalig)
@@ -398,4 +411,5 @@ inst.disk=nvme1n1
 - **Passwort-Hash:** `openssl passwd -6 meinPasswort` — in `config/example.xml` ersetzen.
 - **HuggingFace-Token:** In `/etc/fedora-provision.env` als `FEDORA_HF_TOKEN` eintragen.
 - **Modell-Cache:** `~/.models/huggingface/` — bewusst von `~/.cache/` getrennt, überlebt Cache-Bereinigungen.
+- **Kernel-Cache:** `iso/kernel-cache/` — Bazzite-RPMs werden gecacht, kein Re-Download bei `build-usb.sh`.
 - **common-post.inc:** Muss mit `scripts/first-boot.sh` und `scripts/first-login.sh` synchron gehalten werden.
