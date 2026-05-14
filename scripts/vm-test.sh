@@ -873,6 +873,7 @@ cmd_smoke() {
         ["kickstart/common-post.inc"]="${ventoy_mount}/kickstart/common-post.inc"
         ["scripts/first-boot.sh"]="${ventoy_mount}/scripts/first-boot.sh"
         ["scripts/first-login.sh"]="${ventoy_mount}/scripts/first-login.sh"
+        ["ventoy/ventoy_grub.cfg.tpl"]="${ventoy_mount}/ventoy/ventoy_grub.cfg"
     )
 
     local stale=()
