@@ -895,11 +895,21 @@ cmd_smoke() {
         echo ""
         read -r -t 15 -p "  Jetzt synchronisieren? [J/n] " ans 2>/dev/tty || ans="J"
         if [[ "${ans,,}" != "n" ]]; then
+            # ISO-Dateinamen auf dem Stick für Template-Substitution ermitteln
+            local iso_name
+            iso_name=$(ls "${ventoy_mount}/"*.iso 2>/dev/null | head -1 | xargs -r basename || true)
+
             for rel in "${!FILES[@]}"; do
                 local src="${PROJECT_DIR}/${rel}"
                 local dst="${FILES[$rel]}"
                 if ! diff -q "$src" "$dst" &>/dev/null 2>&1; then
-                    cp "$src" "$dst" && log "Kopiert: $rel"
+                    # ventoy_grub.cfg: FEDORA_ISO_FILENAME Platzhalter ersetzen
+                    if [[ "$rel" == "ventoy/ventoy_grub.cfg.tpl" ]] && [[ -n "$iso_name" ]]; then
+                        sed "s/FEDORA_ISO_FILENAME/${iso_name}/g" "$src" > "$dst"
+                        log "Kopiert (ISO=${iso_name}): $rel"
+                    else
+                        cp "$src" "$dst" && log "Kopiert: $rel"
+                    fi
                 fi
             done
             sync
