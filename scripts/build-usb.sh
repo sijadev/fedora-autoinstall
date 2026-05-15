@@ -77,108 +77,43 @@ read -r -p "Wirklich fortfahren? [j/N] " ans
 WORK_DIR=$(mktemp -d -t build-usb-XXXXXX)
 EFI_MNT="${WORK_DIR}/efi"
 DATA_MNT="${WORK_DIR}/data"
-KERNEL_EXTRACT="${WORK_DIR}/kernel-rpm"
-mkdir -p "$EFI_MNT" "$DATA_MNT" "$KERNEL_EXTRACT"
+ISO_MNT="${WORK_DIR}/iso-mnt"
+mkdir -p "$EFI_MNT" "$DATA_MNT" "$ISO_MNT"
 
 EFI_PART=""
 DATA_PART=""
 cleanup() {
+    mountpoint -q "$ISO_MNT"  && umount "$ISO_MNT"  || true
     mountpoint -q "$DATA_MNT" && umount "$DATA_MNT" || true
     mountpoint -q "$EFI_MNT"  && umount "$EFI_MNT"  || true
     rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
 
-# ── Kernel besorgen (Fedora 43 Mirror) ────────────────────────────────────────
-step "Kernel besorgen (Fedora 43 Mirror)"
-
-KERNEL_CACHE="${PROJECT_DIR}/iso/kernel-cache"
-mkdir -p "$KERNEL_CACHE"
-
-if [[ -n "$KERNEL_RPM" ]]; then
-    log "Verwende angegebenes RPM: $KERNEL_RPM"
-    cp "$KERNEL_RPM" "$KERNEL_EXTRACT/"
-else
-    # Cache: alle RPMs aus kernel-cache/ verwenden falls vorhanden
-    cached_kernel=$(ls -t "${KERNEL_CACHE}"/kernel-*.rpm 2>/dev/null | head -1 || true)
-    cached_mods=$(ls -t "${KERNEL_CACHE}"/kernel-modules-*.rpm 2>/dev/null | head -1 || true)
-
-    if [[ -n "$cached_kernel" && -n "$cached_mods" ]]; then
-        log "Verwende gecachte RPMs:"
-        log "  Kernel:  $(basename "$cached_kernel")"
-        log "  Modules: $(basename "$cached_mods")"
-        cp "$cached_kernel" "$cached_mods" "$KERNEL_EXTRACT/"
-    else
-        log "Lade kernel von verfügbaren Repos..."
-        dnf download --destdir="$KERNEL_EXTRACT" \
-            kernel kernel-modules kernel-devel \
-            || die "Kernel-RPM-Download fehlgeschlagen. Versuche --kernel-rpm <pfad>"
-        # Cache für nächsten Durchlauf
-        cp "${KERNEL_EXTRACT}"/*.rpm "$KERNEL_CACHE/" 2>/dev/null || true
-        log "RPMs gecacht in: $KERNEL_CACHE"
-    fi
-fi
-
-log "Extrahiere RPMs..."
-pushd "$KERNEL_EXTRACT" >/dev/null
-for rpm in *.rpm; do
-    rpm2cpio "$rpm" | cpio -idmu --quiet 2>/dev/null
-done
-popd >/dev/null
-
-NEW_VMLINUZ=$(find "$KERNEL_EXTRACT" -path "*/boot/vmlinuz*" -o -path "*/lib/modules/*/vmlinuz*" 2>/dev/null | head -1 || true)
-
-# Fallback: Aktuellen System-Kernel verwenden
-if [[ -z "$NEW_VMLINUZ" ]]; then
-    warn "vmlinuz nicht in RPM gefunden — verwende System-Kernel als Fallback"
-    if [[ -f "/boot/vmlinuz-$(uname -r)" ]]; then
-        NEW_VMLINUZ="/boot/vmlinuz-$(uname -r)"
-        log "Verwende System-Kernel: $NEW_VMLINUZ"
-    else
-        NEW_VMLINUZ=$(ls -t /boot/vmlinuz* 2>/dev/null | head -1 || true)
-        [[ -z "$NEW_VMLINUZ" ]] && die "Kein vmlinuz gefunden — versuche --kernel-rpm <pfad>"
-        log "Verwende System-Kernel: $NEW_VMLINUZ"
-    fi
-fi
-
-[[ -f "$NEW_VMLINUZ" ]] || die "vmlinuz nicht gefunden: $NEW_VMLINUZ"
-NEW_KVER=$(basename "$NEW_VMLINUZ" | sed 's/vmlinuz-//')
-log "Bazzite-Kernel: $NEW_KVER"
-
-# ── Anaconda-initrd mit Bazzite-Modulen bauen ────────────────────────────────
-step "Anaconda-initrd: Bazzite-Module einbetten"
+# ── Kernel + initrd direkt aus Fedora-netinstall-ISO ─────────────────────────
+# Kein angepasster Kernel nötig — Fedora-Standard-Installer-Kernel ist
+# kompatibel mit Anaconda und allen Dateisystemen (Btrfs, LVM, etc.)
+# Bazzite-Kernel wird nach der Installation via first-boot.sh installiert.
+step "Kernel + initrd aus Fedora-netinstall-ISO extrahieren"
 
 src_iso=$(ls -t "${PROJECT_DIR}"/iso/Fedora-Everything-netinst-*.iso 2>/dev/null | head -1 || true)
 [[ -z "$src_iso" ]] && die "Keine Fedora-Netinst-ISO unter iso/ — z.B. Fedora-Everything-netinst-x86_64-43-1.6.iso"
-log "Source-ISO (für initrd): $src_iso"
+log "Source-ISO: $src_iso"
 
-ISO_MNT="${WORK_DIR}/iso-mnt"
-mkdir -p "$ISO_MNT"
 mount -o loop,ro "$src_iso" "$ISO_MNT"
 
-INITRD_WORK="${WORK_DIR}/initrd"
-mkdir -p "$INITRD_WORK"
-pushd "$INITRD_WORK" >/dev/null
-log "Entpacke initrd.img..."
-zstdcat "${ISO_MNT}/images/pxeboot/initrd.img" 2>/dev/null | cpio -idm --quiet \
-    || xzcat  "${ISO_MNT}/images/pxeboot/initrd.img" 2>/dev/null | cpio -idm --quiet \
-    || gzip -dc "${ISO_MNT}/images/pxeboot/initrd.img"           | cpio -idm --quiet \
-    || die "initrd.img konnte nicht entpackt werden."
+[[ -f "${ISO_MNT}/images/pxeboot/vmlinuz" ]]    || die "vmlinuz nicht in ISO gefunden."
+[[ -f "${ISO_MNT}/images/pxeboot/initrd.img" ]] || die "initrd.img nicht in ISO gefunden."
 
-OLD_KVER=$(ls usr/lib/modules/ 2>/dev/null | head -1 || true)
-[[ -z "$OLD_KVER" ]] && die "Konnte keine Kernel-Version in initrd.img finden."
-log "Original-Kernel im initrd: $OLD_KVER  →  Ersetze durch $NEW_KVER"
-
-rm -rf "usr/lib/modules/${OLD_KVER}"
-mkdir -p "usr/lib/modules/${NEW_KVER}"
-cp -a "${KERNEL_EXTRACT}/lib/modules/${NEW_KVER}/." "usr/lib/modules/${NEW_KVER}/"
-
-log "Repacke initrd.img (zstd)..."
-find . | cpio -o -H newc --quiet | zstd -19 -T0 -q > "${WORK_DIR}/initrd.img"
-popd >/dev/null
+cp "${ISO_MNT}/images/pxeboot/vmlinuz"    "${WORK_DIR}/vmlinuz"
+cp "${ISO_MNT}/images/pxeboot/initrd.img" "${WORK_DIR}/initrd.img"
 
 umount "$ISO_MNT"
-log "initrd.img fertig: $(du -h "${WORK_DIR}/initrd.img" | cut -f1)"
+
+KVER=$(file "${WORK_DIR}/vmlinuz" | grep -oP 'version \K\S+' || echo "unbekannt")
+log "Fedora-Installer-Kernel: ${KVER}"
+log "vmlinuz:   $(du -h "${WORK_DIR}/vmlinuz"    | cut -f1)"
+log "initrd.img: $(du -h "${WORK_DIR}/initrd.img" | cut -f1)"
 
 # ── Partitionieren ────────────────────────────────────────────────────────────
 step "USB-Stick partitionieren: $USB_DEV"
@@ -237,11 +172,11 @@ mkdir -p "${DATA_MNT}/boot/grub"
 install -m 0644 "${PROJECT_DIR}/boot/grub.cfg" "${DATA_MNT}/boot/grub/grub.cfg"
 log "grub.cfg kopiert."
 
-# ── Bazzite-Kernel + initrd kopieren ─────────────────────────────────────────
+# ── Fedora-Installer-Kernel + initrd kopieren ────────────────────────────────
 step "Kernel + initrd auf USB kopieren"
 
 mkdir -p "${DATA_MNT}/boot"
-install -m 0644 "$NEW_VMLINUZ"           "${DATA_MNT}/boot/vmlinuz"
+install -m 0644 "${WORK_DIR}/vmlinuz"    "${DATA_MNT}/boot/vmlinuz"
 install -m 0644 "${WORK_DIR}/initrd.img" "${DATA_MNT}/boot/initrd.img"
 log "vmlinuz: $(du -h "${DATA_MNT}/boot/vmlinuz"  | cut -f1)"
 log "initrd:  $(du -h "${DATA_MNT}/boot/initrd.img" | cut -f1)"
