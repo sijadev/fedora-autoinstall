@@ -1,0 +1,45 @@
+{
+  "_comment": "Fedora Autoinstall Konfiguration — nur diese Werte anpassen",
+
+  "user": {
+    "name": "sija",
+    "password": "PASSWORT_HIER_EINGEBEN",
+    "groups": "wheel,libvirt,video,audio"
+  },
+
+  "system": {
+    "hostname": "fedora-workstation",
+    "timezone": "Europe/Berlin",
+    "locale": "de_DE.UTF-8",
+    "keyboard": "de"
+  },
+
+  "profile": "full",
+
+  "gpu": {
+    "cuda_source": "fedora",
+    "cuda_version": "13.2",
+    "arch_list": "12.0"
+  },
+
+  "theme": {
+    "gtk_args": "-c Dark",
+    "icon_args": "",
+    "wallpaper_args": "",
+    "omb_theme": "modern"
+  },
+
+  "ai": {
+    "pytorch_venv": "~/.venvs/ai",
+    "vllm_venv": "~/.venvs/bitwig-omni",
+    "audio_venv": "~/.venvs/kimi-audio",
+    "audio_model": "moonshotai/Kimi-Audio-7B-Instruct",
+    "agent_model": "Qwen/Qwen3-14B-AWQ"
+  },
+
+  "neo4j": {
+    "uri": "bolt://localhost:7687",
+    "user": "neo4j",
+    "password": "DATENBANKPASSWORT_HIER"
+  }
+}
