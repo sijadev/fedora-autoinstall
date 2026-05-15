@@ -128,22 +128,31 @@ COMMON_SRC="${PROJECT_DIR}/kickstart/common-post.inc"
 INITRD_APPEND="${WORK_DIR}/ks-append"
 mkdir -p "$INITRD_APPEND/kickstart"
 
-# Alle Kickstarts einbetten — grub.cfg referenziert sie per file:///kickstart/<name>
-cp "$COMMON_SRC" "$INITRD_APPEND/kickstart/common-post.inc"
+# %include auflösen: common-post.inc direkt in jeden Kickstart einbetten.
+# Anaconda kann nach Stage2-Load keine initramfs-Pfade mehr lesen.
+flatten_ks() {
+    local src="$1" dst="$2"
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^%include[[:space:]]+(/kickstart/common-post\.inc|kickstart/common-post\.inc) ]]; then
+            cat "$COMMON_SRC"
+        else
+            echo "$line"
+        fi
+    done < "$src" > "$dst"
+}
+
 for ks in "${PROJECT_DIR}"/kickstart/*.ks; do
-    cp "$ks" "$INITRD_APPEND/kickstart/"
+    dst="$INITRD_APPEND/kickstart/$(basename "$ks")"
+    flatten_ks "$ks" "$dst"
+    log "  Eingebettet (inline): $(basename "$ks")"
 done
 # Haupt-Kickstart für [f] als ks.cfg (Kurzform)
-cp "$KS_SRC" "$INITRD_APPEND/ks.cfg"
+flatten_ks "$KS_SRC" "$INITRD_APPEND/ks.cfg"
 
 # Als zweites initrd-Cpio anhängen (Anaconda mergt mehrere initrds)
 ( cd "$INITRD_APPEND" && find . | cpio -o -H newc --quiet ) >> "${WORK_DIR}/initrd.img"
 
-log "Kickstarts in initrd eingebettet:"
-for ks in "$INITRD_APPEND"/kickstart/*.ks "$INITRD_APPEND/ks.cfg"; do
-    log "  $(basename "$ks")"
-done
-log "initrd.img (mit KS): $(du -h "${WORK_DIR}/initrd.img" | cut -f1)"
+log "initrd.img (mit KS, %include aufgelöst): $(du -h "${WORK_DIR}/initrd.img" | cut -f1)"
 
 # ── Partitionieren ────────────────────────────────────────────────────────────
 step "USB-Stick partitionieren: $USB_DEV"
