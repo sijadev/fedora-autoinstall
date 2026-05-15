@@ -814,16 +814,53 @@ class GenerateKickstartTests(unittest.TestCase):
         self.assertIn("[Unit]", ks)
         self.assertIn("Description=Test", ks)
 
-    def test_missing_script_files_produce_empty_heredoc(self):
+    def test_missing_script_file_warns_on_stderr(self):
+        """Angegebener Pfad der nicht existiert → stderr-Warnung statt stillem leerem Heredoc."""
+        import io
+        buf = io.StringIO()
+        with patch("sys.stderr", buf):
+            xml2ks.generate_kickstart(
+                load_fixture("minimal.xml"),
+                first_boot_script=Path("/nonexistent/first-boot.sh"),
+            )
+        self.assertIn("WARNING", buf.getvalue())
+        self.assertIn("nonexistent", buf.getvalue())
+
+    def test_none_script_path_produces_no_warning(self):
+        """None als Pfad = absichtlich weggelassen → keine Warnung."""
+        import io
+        buf = io.StringIO()
+        with patch("sys.stderr", buf):
+            xml2ks.generate_kickstart(
+                load_fixture("minimal.xml"),
+                first_boot_script=None,
+            )
+        self.assertNotIn("WARNING", buf.getvalue())
+
+    def test_scripts_with_real_content_embedded(self):
+        """Echte Script-Dateien müssen ihren Inhalt im Kickstart haben — kein leeres heredoc."""
+        PROJECT = Path(__file__).parent.parent
+        fb   = PROJECT / "scripts" / "first-boot.sh"
+        fl   = PROJECT / "scripts" / "first-login.sh"
+        unit = PROJECT / "systemd" / "fedora-first-boot.service"
+        if not fb.exists() or not fl.exists() or not unit.exists():
+            self.skipTest("Projekt-Scripts nicht gefunden")
+
         ks = xml2ks.generate_kickstart(
             load_fixture("minimal.xml"),
-            first_boot_script=Path("/nonexistent/first-boot.sh"),
-            first_login_script=None,
+            first_boot_script=fb,
+            first_login_script=fl,
+            systemd_unit=unit,
         )
-        # heredoc delimiters must still be present (empty but valid KS)
-        self.assertIn("cat > /usr/local/sbin/fedora-first-boot.sh <<'FBEOF'", ks)
-        self.assertIn("FBEOF", ks)
-        self.assertIn("cat > /usr/local/bin/fedora-first-login.sh <<'FLEOF'", ks)
+        # Kein leeres heredoc — Script-Inhalt muss vorhanden sein
+        self.assertNotIn("<<'FBEOF'\n\nFBEOF", ks, "first-boot.sh heredoc ist leer")
+        self.assertNotIn("<<'FLEOF'\n\nFLEOF", ks, "first-login.sh heredoc ist leer")
+        self.assertNotIn("<<'UNITEOF'\n\nUNITEOF", ks, "systemd unit heredoc ist leer")
+        # Mindestens ein erkennbares Element der echten Scripts
+        self.assertTrue(
+            "set -euo pipefail" in ks or "#!/usr/bin/env bash" in ks,
+            "Kein Script-Inhalt in first-boot.sh gefunden"
+        )
 
     def test_autostart_desktop_entry_for_target_user(self):
         ks = self._ks()

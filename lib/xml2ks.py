@@ -121,8 +121,16 @@ def validate(root: ET.Element, xml_path: Path) -> list[str]:
 # ── Kickstart generation ──────────────────────────────────────────────────────
 
 def _embed_script(path: Optional[Path]) -> str:
-    """Read a script file and return its content, or empty string if None/missing."""
-    if path is None or not path.exists():
+    """Read a script file and return its content.
+
+    Prints a warning to stderr only when a path is given but the file is missing,
+    so callers notice the omission rather than silently getting an empty heredoc.
+    Passing None is treated as "intentionally omitted" and produces no warning.
+    """
+    if path is None:
+        return ""
+    if not path.exists():
+        print(f"WARNING: script not found: {path} — heredoc will be empty", file=sys.stderr)
         return ""
     return path.read_text(encoding="utf-8")
 
