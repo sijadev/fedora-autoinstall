@@ -34,11 +34,11 @@ cat > /tmp/disk-setup.cfg <<EOFCFG
 ignoredisk --only-use=${DISK}
 zerombr
 clearpart --all --initlabel --drives=${DISK}
-bootloader --boot-drive=${DISK}
+bootloader --boot-drive=${DISK} --append="rootflags=subvol=@"
 part /boot/efi --fstype=efi    --size=600  --ondrive=${DISK}
 part /boot     --fstype=xfs    --size=1024 --ondrive=${DISK}
 part btrfs.01  --fstype=btrfs  --size=1    --grow --ondrive=${DISK}
-btrfs none  --data=single --metadata=single  btrfs.01
+btrfs none  --label=fedora --data=single --metadata=single  btrfs.01
 btrfs /     --subvol --name=@      LABEL=fedora
 btrfs /home --subvol --name=@home  LABEL=fedora
 EOFCFG
