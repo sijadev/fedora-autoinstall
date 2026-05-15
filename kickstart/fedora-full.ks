@@ -39,7 +39,8 @@ network --hostname=fedora-workstation
 
 # ── Authentication ────────────────────────────────────────────────────────────
 rootpw --lock
-user --groups=wheel,libvirt,video,audio --name=sija --password=$6$rounds=4096$exampleSalt$A2xI1.hfVf4M8bJH3uQ6Q7fKJ3QYgAnfYQPc0dyY8aTJiD9f8Lh3EEcKB6DzQ9s9lfhYf6Q2xv.YO1f4Yv4eY0 --iscrypted --gecos="sija"
+user --groups=wheel,libvirt,video,audio --name=sija --password=$6$rounds=4096$exampleSalt$A2xI1.hfVf4M8bJH3uQ6Q7fKJ3QYgAnfYQPc0dyY8aTJiD9f8Lh3EEcKB6DzQ9s9lfhYf6Q2xv.YO1f4Yv4eY0 \
+     --iscrypted --gecos="sija"
 
 # ── Packages ──────────────────────────────────────────────────────────────────
 %packages
@@ -74,12 +75,6 @@ set -euo pipefail
 # ── Write provisioning environment ───────────────────────────────────────────
 cat > /etc/fedora-provision.env <<'ENVEOF'
 FEDORA_TARGET_USER="sija"
-FEDORA_CUDA_SOURCE="fedora"
-FEDORA_PYTORCH_VENV="~/.venvs/ai"
-FEDORA_VLLM_VENV="~/.venvs/bitwig-omni"
-FEDORA_VLLM_CUDA_VERSION="13.0"
-FEDORA_VLLM_ARCH_LIST="12.0"
-FEDORA_AUDIO_VENV="~/.venvs/kimi-audio"
 FEDORA_VLLM_ROUTER_PORT="8000"
 FEDORA_VLLM_REGISTRY="~/.config/vllm-router/models.json"
 FEDORA_AGENT_MODEL="Qwen/Qwen3-14B-AWQ"
@@ -88,9 +83,6 @@ FEDORA_WS_GTK_ARGS="-l -c Dark"
 FEDORA_WS_ICON_ARGS="-dark"
 FEDORA_WS_WALL_ARGS=""
 FEDORA_OMB_THEME="modern"
-FEDORA_NEO4J_URI="bolt://localhost:7687"
-FEDORA_NEO4J_USER="neo4j"
-FEDORA_NEO4J_PASSWORD="bitwig-agent"
 ENVEOF
 chmod 0644 /etc/fedora-provision.env
 
@@ -1256,51 +1248,5 @@ NoDisplay=true
 X-GNOME-Autostart-enabled=true
 DESKTOPEOF
 chown -R sija:sija "$AUTOSTART_DIR"
-
-%end
-
-# ── %post --nochroot: Provisioner + Scripts ins Zielsystem einbetten ──────────
-%post --nochroot --log=/root/ks-post-embed-provisioner.log
-
-set +e
-SYSROOT="${ANA_INSTALL_PATH:-/mnt/sysroot}"
-[[ ! -d "$SYSROOT" ]] && SYSROOT="/mnt/sysimage"
-[[ ! -d "$SYSROOT" ]] && { echo "Kein sysroot gefunden — Abbruch."; exit 0; }
-
-SRC=""
-for candidate in /run/install/repo /run/install/sources/mount-* /mnt/install/repo; do
-    if [[ -f "${candidate}/fedora-provision.sh" || -d "${candidate}/scripts" ]]; then
-        SRC="$candidate"; break
-    fi
-done
-if [[ -z "$SRC" ]]; then
-    VENTOY_DEV=$(blkid -L Ventoy 2>/dev/null | head -1 || true)
-    if [[ -n "$VENTOY_DEV" ]]; then
-        MNT=$(mktemp -d)
-        mount "$VENTOY_DEV" "$MNT" 2>/dev/null && SRC="$MNT"
-    fi
-fi
-[[ -z "$SRC" ]] && { echo "Keine Quelle (ISO/USB) gefunden — Scripts fehlen im Zielsystem."; exit 0; }
-echo "Quelle: $SRC"
-
-mkdir -p "$SYSROOT/usr/local/sbin" \
-         "$SYSROOT/usr/local/bin" \
-         "$SYSROOT/usr/local/share/fedora-autoinstall" \
-         "$SYSROOT/usr/share/applications"
-
-[[ -f "${SRC}/fedora-provision.sh" ]] && \
-    install -m 0750 "${SRC}/fedora-provision.sh" "$SYSROOT/usr/local/sbin/fedora-provision.sh"
-
-[[ -f "${SRC}/scripts/welcome-dialog.sh" ]] && \
-    install -m 0755 "${SRC}/scripts/welcome-dialog.sh" "$SYSROOT/usr/local/bin/fedora-welcome-dialog.sh"
-
-[[ -f "${SRC}/scripts/fedora-provision.desktop" ]] && \
-    install -m 0644 "${SRC}/scripts/fedora-provision.desktop" "$SYSROOT/usr/share/applications/fedora-provision.desktop"
-
-[[ -d "${SRC}/scripts" ]]   && cp -r "${SRC}/scripts"   "$SYSROOT/usr/local/share/fedora-autoinstall/"
-[[ -d "${SRC}/kickstart" ]] && cp -r "${SRC}/kickstart" "$SYSROOT/usr/local/share/fedora-autoinstall/"
-[[ -d "${SRC}/systemd" ]]   && cp -r "${SRC}/systemd"   "$SYSROOT/usr/local/share/fedora-autoinstall/"
-
-echo "Provisioner + Scripts unter /usr/local/{sbin,bin,share}/ eingebettet."
 
 %end

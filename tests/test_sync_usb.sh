@@ -24,7 +24,9 @@ run_test() {
     local name="$1"; shift
     if "$@" &>/dev/null; then
         PASS=$(( PASS + 1 ))
-        [[ $VERBOSE -eq 1 ]] && echo "  ok  $name"
+        if [[ $VERBOSE -eq 1 ]]; then
+            echo "  ok  $name"
+        fi
     else
         FAIL=$(( FAIL + 1 ))
         ERRORS+=("$name")
@@ -39,13 +41,17 @@ run_test_output() {
     out=$("$@" 2>&1) || true
     if echo "$out" | grep -q "$pattern"; then
         PASS=$(( PASS + 1 ))
-        [[ $VERBOSE -eq 1 ]] && echo "  ok  $name"
+        if [[ $VERBOSE -eq 1 ]]; then
+            echo "  ok  $name"
+        fi
     else
         FAIL=$(( FAIL + 1 ))
         ERRORS+=("$name")
         echo "  FAIL  $name"
-        [[ $VERBOSE -eq 1 ]] && echo "       output: $out"
-        [[ $VERBOSE -eq 1 ]] && echo "       pattern: $pattern"
+        if [[ $VERBOSE -eq 1 ]]; then
+            echo "       output: $out"
+            echo "       pattern: $pattern"
+        fi
     fi
 }
 

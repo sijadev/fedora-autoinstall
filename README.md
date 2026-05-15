@@ -350,6 +350,21 @@ scripts/vm-test.sh test theme-bash  # Provisioner testen
 
 ---
 
+## Tests
+
+```bash
+# Standard-Testlauf (stabil, inkl. systemd Unit-Tests)
+bash tests/run-all.sh
+
+# Verbose
+bash tests/run-all.sh -v
+
+# Voller Lauf (inkl. Python + Kickstart-Validator)
+bash tests/run-all.sh --full
+```
+
+---
+
 ## Boot-Ablauf
 
 ```

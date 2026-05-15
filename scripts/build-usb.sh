@@ -47,6 +47,35 @@ warn() { echo -e "${YELLOW}[build-usb]${RESET} $*" >&2; }
 die()  { echo -e "${RED}[build-usb] $*${RESET}" >&2; exit 1; }
 step() { echo -e "\n${CYAN}${BOLD}══ $* ══${RESET}"; }
 
+ensure_unmounted_part() {
+    local part="$1"
+    local tries=0
+
+    while findmnt -rn -S "$part" >/dev/null 2>&1; do
+        local mnt
+        mnt=$(findmnt -rn -o TARGET -S "$part" 2>/dev/null | head -1)
+        warn "$part ist gemountet (${mnt:-unbekannt}) - versuche unmount..."
+
+        umount "$part" 2>/dev/null || true
+        if command -v udisksctl &>/dev/null; then
+            udisksctl unmount -b "$part" >/dev/null 2>&1 || true
+        fi
+        findmnt -rn -S "$part" >/dev/null 2>&1 && umount -l "$part" 2>/dev/null || true
+
+        command -v udevadm &>/dev/null && udevadm settle || true
+        sleep 0.3
+
+        tries=$((tries + 1))
+        (( tries >= 8 )) && break
+    done
+
+    if findmnt -rn -S "$part" >/dev/null 2>&1; then
+        local mnt
+        mnt=$(findmnt -rn -o TARGET -S "$part" 2>/dev/null | head -1)
+        die "$part ist noch gemountet (${mnt:-unbekannt}). Bitte Dateimanager/Finder schließen und erneut ausfuhren."
+    fi
+}
+
 # ── Voraussetzungen ───────────────────────────────────────────────────────────
 step "Voraussetzungen"
 for cmd in sgdisk mkfs.fat grub2-install cpio file xz zstd; do
@@ -121,10 +150,10 @@ log "initrd.img: $(du -h "${WORK_DIR}/initrd.img" | cut -f1)"
 step "USB-Stick partitionieren: $USB_DEV"
 
 # Alle Partitionen aushängen
-for part in "${USB_DEV}"* ; do
+while IFS= read -r part; do
     [[ "$part" == "$USB_DEV" ]] && continue
-    umount "$part" 2>/dev/null || true
-done
+    ensure_unmounted_part "$part"
+done < <(lsblk -nrpo NAME "$USB_DEV" 2>/dev/null)
 
 sgdisk --zap-all "$USB_DEV" >/dev/null
 sgdisk \
