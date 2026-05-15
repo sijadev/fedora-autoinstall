@@ -56,4 +56,4 @@ chmod 0644 /etc/fedora-provision.env
 
 %end
 
-%include /kickstart/common-post.inc
+%include common-post.inc

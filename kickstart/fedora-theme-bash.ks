@@ -57,4 +57,4 @@ GDMEOF
 
 %end
 
-%include /kickstart/common-post.inc
+%include common-post.inc

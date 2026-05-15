@@ -10,9 +10,20 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 import apply_config as ac  # type: ignore[import-untyped]  # noqa: E402
 
+FIXTURES = Path(__file__).parent / "fixtures"
+PROJECT  = Path(__file__).parent.parent
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
+def load_fixture_config() -> dict:
+    """Lädt tests/fixtures/install.json — Werte aus config/example.xml."""
+    return json.loads((FIXTURES / "install.json").read_text())
+
+
+# Fixture-Config (ohne _comment, direkt nutzbar)
+EXAMPLE_CONFIG: dict = {k: v for k, v in load_fixture_config().items() if not k.startswith("_")}
+
+# Minimale Config für einfache Unit-Tests
 MINIMAL_CONFIG = {
     "user": {
         "name": "testuser",
@@ -51,26 +62,29 @@ MINIMAL_CONFIG = {
     },
 }
 
+# SAMPLE_KS spiegelt die echte Struktur von kickstart/fedora-full.ks wider.
+# Enthält alle Variablen, die apply_config.py ersetzen soll.
 SAMPLE_KS = """\
 keyboard --xlayouts='de'
 lang de_DE.UTF-8
 timezone Europe/Berlin --utc
 network --hostname=fedora-workstation
-user --groups=wheel,libvirt,video,audio --name=sija  --password=$6$rounds=4096$oldhash  --iscrypted
-AutomaticLogin=sija
+user --groups=wheel,libvirt,video,audio --name=sija --password=$6$rounds=4096$oldhash  --iscrypted --gecos="sija"
 FEDORA_TARGET_USER="sija"
 FEDORA_CUDA_SOURCE="nvidia"
+FEDORA_PYTORCH_VENV="~/.venvs/old-ai"
+FEDORA_VLLM_VENV="~/.venvs/old-omni"
 FEDORA_VLLM_CUDA_VERSION="12.0"
 FEDORA_VLLM_ARCH_LIST="11.0"
+FEDORA_AUDIO_VENV="~/.venvs/old-audio"
+FEDORA_VLLM_ROUTER_PORT="9999"
+FEDORA_VLLM_REGISTRY="~/.config/vllm-router/old.json"
+FEDORA_AGENT_MODEL="old/agent"
+FEDORA_AUDIO_MODEL="old/model"
 FEDORA_WS_GTK_ARGS="-l -c Light"
 FEDORA_WS_ICON_ARGS="-light"
 FEDORA_WS_WALL_ARGS="-t Mojave"
 FEDORA_OMB_THEME="font"
-FEDORA_PYTORCH_VENV="~/.venvs/old-ai"
-FEDORA_VLLM_VENV="~/.venvs/old-omni"
-FEDORA_AUDIO_VENV="~/.venvs/old-audio"
-FEDORA_AUDIO_MODEL="old/model"
-FEDORA_AGENT_MODEL="old/agent"
 FEDORA_NEO4J_URI="bolt://remotehost:7687"
 FEDORA_NEO4J_USER="admin"
 FEDORA_NEO4J_PASSWORD="oldpassword"
@@ -180,14 +194,6 @@ class PatchKickstartTests(unittest.TestCase):
         self.assertIn("--name=alice", result)
         self.assertTrue(changed)
 
-    def test_replaces_autologin_user(self):
-        result, changed = self._patch(
-            SAMPLE_KS,
-            {r"AutomaticLogin=\w+": "AutomaticLogin=alice"}
-        )
-        self.assertIn("AutomaticLogin=alice", result)
-        self.assertTrue(changed)
-
     def test_replaces_env_var(self):
         result, changed = self._patch(
             SAMPLE_KS,
@@ -223,11 +229,11 @@ class PatchKickstartTests(unittest.TestCase):
             SAMPLE_KS,
             {
                 r"--hostname=[\w-]+": "--hostname=multi-host",
-                r"AutomaticLogin=\w+": "AutomaticLogin=multiuser",
+                r'FEDORA_TARGET_USER="[^"]+"': 'FEDORA_TARGET_USER="multiuser"',
             }
         )
         self.assertIn("--hostname=multi-host", result)
-        self.assertIn("AutomaticLogin=multiuser", result)
+        self.assertIn('FEDORA_TARGET_USER="multiuser"', result)
 
 
 # ── Vollständiger Workflow (Integration) ──────────────────────────────────────
@@ -267,9 +273,11 @@ class IntegrationTests(unittest.TestCase):
         lines, _ = self._run_main(MINIMAL_CONFIG)
         self.assertTrue(any("--hostname=test-host" in l for l in lines))
 
-    def test_autologin_user_applied(self):
+    def test_autologin_not_in_kickstart(self):
+        """AutomaticLogin=... ist kein KS-Direktiv und darf nicht im KS auftauchen."""
         lines, _ = self._run_main(MINIMAL_CONFIG)
-        self.assertTrue(any("AutomaticLogin=testuser" in l for l in lines))
+        self.assertFalse(any("AutomaticLogin=" in l for l in lines),
+                         "AutomaticLogin darf nicht im Kickstart stehen")
 
     def test_env_vars_applied(self):
         lines, _ = self._run_main(MINIMAL_CONFIG)
@@ -278,6 +286,32 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn('FEDORA_OMB_THEME="modern"', joined)
         self.assertIn('FEDORA_TARGET_USER="testuser"', joined)
         self.assertIn('FEDORA_NEO4J_PASSWORD="dbpassword"', joined)
+
+    def test_all_env_vars_applied(self):
+        """Alle 18 FEDORA_-Variablen müssen nach apply_config vorhanden sein."""
+        lines, _ = self._run_main(MINIMAL_CONFIG)
+        joined = "\n".join(lines)
+        expected_vars = [
+            "FEDORA_TARGET_USER",
+            "FEDORA_CUDA_SOURCE",
+            "FEDORA_PYTORCH_VENV",
+            "FEDORA_VLLM_VENV",
+            "FEDORA_VLLM_CUDA_VERSION",
+            "FEDORA_VLLM_ARCH_LIST",
+            "FEDORA_AUDIO_VENV",
+            "FEDORA_AGENT_MODEL",
+            "FEDORA_AUDIO_MODEL",
+            "FEDORA_WS_GTK_ARGS",
+            "FEDORA_WS_ICON_ARGS",
+            "FEDORA_WS_WALL_ARGS",
+            "FEDORA_OMB_THEME",
+            "FEDORA_NEO4J_URI",
+            "FEDORA_NEO4J_USER",
+            "FEDORA_NEO4J_PASSWORD",
+        ]
+        for var in expected_vars:
+            with self.subTest(var=var):
+                self.assertIn(var, joined, f"{var} fehlt nach apply_config")
 
     def test_timezone_applied(self):
         lines, _ = self._run_main(MINIMAL_CONFIG)
@@ -319,12 +353,43 @@ class IntegrationTests(unittest.TestCase):
     def test_password_hash_written_to_kickstart(self):
         lines, _ = self._run_main(MINIMAL_CONFIG)
         joined = "\n".join(lines)
-        # Passwort-Hash muss SHA-512 Format haben
         self.assertTrue(
             re.search(r"--password=\$6\$", joined),
             "SHA-512 Passwort-Hash nicht im Kickstart gefunden"
         )
         self.assertIn("--iscrypted", joined)
+
+    def test_example_config_applies_to_sample_ks(self):
+        """EXAMPLE_CONFIG (aus install.json Fixture) muss alle KS-Variablen korrekt patchen."""
+        lines, rc = self._run_main(EXAMPLE_CONFIG)
+        self.assertEqual(rc, 0, "apply_config sollte mit EXAMPLE_CONFIG ohne Fehler laufen")
+        joined = "\n".join(lines)
+        self.assertIn('--name=sija', joined)
+        self.assertIn('FEDORA_CUDA_SOURCE="fedora"', joined)
+        self.assertIn('FEDORA_PYTORCH_VENV="~/.venvs/ai"', joined)
+        self.assertIn('FEDORA_VLLM_VENV="~/.venvs/bitwig-omni"', joined)
+        self.assertIn('FEDORA_AUDIO_VENV="~/.venvs/kimi-audio"', joined)
+        self.assertIn('FEDORA_NEO4J_URI="bolt://localhost:7687"', joined)
+        self.assertIn('FEDORA_NEO4J_USER="neo4j"', joined)
+
+    def test_example_config_on_real_fedora_full_ks(self):
+        """EXAMPLE_CONFIG gegen echtes fedora-full.ks testen — erkennt echte Bugs."""
+        real_ks = PROJECT / "kickstart" / "fedora-full.ks"
+        if not real_ks.exists():
+            self.skipTest("kickstart/fedora-full.ks nicht gefunden")
+        real_content = real_ks.read_text()
+        lines, rc = self._run_main(EXAMPLE_CONFIG, ks_content=real_content)
+        self.assertEqual(rc, 0)
+        joined = "\n".join(lines)
+        # Alle kritischen Env-Variablen müssen nach Werte aus install.json gesetzt sein
+        self.assertIn('FEDORA_PYTORCH_VENV="~/.venvs/ai"', joined,
+                      "FEDORA_PYTORCH_VENV nicht korrekt ersetzt in echtem fedora-full.ks")
+        self.assertIn('FEDORA_VLLM_VENV="~/.venvs/bitwig-omni"', joined,
+                      "FEDORA_VLLM_VENV nicht korrekt ersetzt")
+        self.assertIn('FEDORA_NEO4J_PASSWORD="bitwig-agent"', joined,
+                      "FEDORA_NEO4J_PASSWORD nicht korrekt ersetzt")
+        self.assertIn('FEDORA_CUDA_SOURCE="fedora"', joined,
+                      "FEDORA_CUDA_SOURCE nicht korrekt ersetzt")
 
 
 if __name__ == "__main__":

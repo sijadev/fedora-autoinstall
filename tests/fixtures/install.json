@@ -1,0 +1,45 @@
+{
+  "_comment": "Test-Fixture — Werte aus config/example.xml. Nur für Tests, kein Produktiv-Einsatz.",
+
+  "user": {
+    "name": "sija",
+    "password": "test-fixture-password",
+    "groups": "wheel,libvirt,video,audio"
+  },
+
+  "system": {
+    "hostname": "fedora-workstation",
+    "timezone": "Europe/Berlin",
+    "locale": "de_DE.UTF-8",
+    "keyboard": "de"
+  },
+
+  "profile": "full",
+
+  "gpu": {
+    "cuda_source": "fedora",
+    "cuda_version": "13.0",
+    "arch_list": "12.0"
+  },
+
+  "theme": {
+    "gtk_args": "-l -c Dark",
+    "icon_args": "-dark",
+    "wallpaper_args": "",
+    "omb_theme": "modern"
+  },
+
+  "ai": {
+    "pytorch_venv": "~/.venvs/ai",
+    "vllm_venv": "~/.venvs/bitwig-omni",
+    "audio_venv": "~/.venvs/kimi-audio",
+    "audio_model": "moonshotai/Kimi-Audio-7B-Instruct",
+    "agent_model": "Qwen/Qwen3-14B-AWQ"
+  },
+
+  "neo4j": {
+    "uri": "bolt://localhost:7687",
+    "user": "neo4j",
+    "password": "bitwig-agent"
+  }
+}

@@ -116,8 +116,6 @@ log "vmlinuz:   $(du -h "${WORK_DIR}/vmlinuz"    | cut -f1)"
 log "initrd.img: $(du -h "${WORK_DIR}/initrd.img" | cut -f1)"
 
 # Kickstarts werden auf die FEDORA-USB-Partition kopiert.
-# grub.cfg verwendet inst.ks=hd:LABEL=FEDORA-USB:/kickstart/ + rd.retry=30.
-log "initrd.img: $(du -h "${WORK_DIR}/initrd.img" | cut -f1)"
 
 # ── Partitionieren ────────────────────────────────────────────────────────────
 step "USB-Stick partitionieren: $USB_DEV"

@@ -86,7 +86,6 @@ def main():
         r"--name=\w+": f"--name={user['name']}",
         r"--groups=[\w,]+": f"--groups={user['groups']}",
         r"--password=\S+\s+--iscrypted": f"--password={pw_hash}  --iscrypted",
-        r"AutomaticLogin=\w+": f"AutomaticLogin={user['name']}",
 
         # System
         r"--hostname=[\w-]+": f"--hostname={sys_cfg['hostname']}",
