@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # install.sh — USB-Stick für Fedora-Autoinstall erstellen
 #
-# Workflow:
-#   1. Fedora-Netinstall-ISO herunterladen (falls nicht vorhanden)
-#   2. USB-Stick partitionieren, GRUB2 + Kernel + Kickstarts einrichten
-#
-# Usage:
-#   sudo ./install.sh /dev/sdX
+# Konfiguration (Standard: XML):
+#   sudo ./install.sh /dev/sdX                          # XML: config/example.xml
+#   sudo ./install.sh /dev/sdX --config mein.xml        # XML: eigene Datei
+#   sudo ./install.sh /dev/sdX --custom                 # JSON: config/install.json
+#   sudo ./install.sh /dev/sdX --custom mein.json       # JSON: eigene Datei
 #   sudo ./install.sh /dev/sdX --iso /pfad/zur/Fedora.iso
 
 set -euo pipefail
@@ -29,13 +28,34 @@ die()  { echo -e "${RED}[install] FEHLER: $*${RESET}" >&2; exit 1; }
 step() { echo -e "\n${CYAN}${BOLD}══ $* ══${RESET}"; }
 
 # ── Args ──────────────────────────────────────────────────────────────────────
-USB_DEV="${1:-}"
+USB_DEV=""
 CUSTOM_ISO=""
+CONFIG_MODE="xml"                              # "xml" oder "json"
+XML_FILE="${SCRIPT_DIR}/config/example.xml"
+JSON_FILE="${SCRIPT_DIR}/config/install.json"
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --iso) CUSTOM_ISO="${2:-}"; shift 2 ;;
-        /dev/*) USB_DEV="$1"; shift ;;
-        *) shift ;;
+        --iso)
+            CUSTOM_ISO="${2:?'--iso braucht einen Pfad'}"; shift 2 ;;
+        --config)
+            CONFIG_MODE="xml"
+            XML_FILE="${2:?'--config braucht eine XML-Datei'}"; shift 2 ;;
+        --custom)
+            CONFIG_MODE="json"
+            # optionales zweites Argument: eigene JSON-Datei
+            if [[ -n "${2:-}" && "${2}" != -* ]]; then
+                JSON_FILE="$2"; shift 2
+            else
+                shift
+            fi ;;
+        /dev/*)
+            USB_DEV="$1"; shift ;;
+        -h|--help)
+            sed -n '2,10p' "$0" | sed 's/^# \?//'
+            exit 0 ;;
+        *)
+            die "Unbekanntes Argument: $1" ;;
     esac
 done
 
@@ -43,7 +63,13 @@ if [[ -z "$USB_DEV" ]]; then
     echo ""
     echo -e "${BOLD}Fedora Autoinstall — USB-Stick erstellen${RESET}"
     echo ""
-    echo "Usage: sudo $0 /dev/sdX [--iso /pfad/zur/Fedora.iso]"
+    echo "Usage: sudo $0 /dev/sdX [OPTIONEN]"
+    echo ""
+    echo "  (Standard)  XML-Konfiguration: config/example.xml"
+    echo "  --config F  Eigene XML-Datei"
+    echo "  --custom    JSON-Konfiguration: config/install.json"
+    echo "  --custom F  Eigene JSON-Datei"
+    echo "  --iso F     Lokale Fedora-ISO statt Download"
     echo ""
     echo "Verfügbare Geräte:"
     lsblk -o NAME,SIZE,TRAN,LABEL,MOUNTPOINT | grep -v "^loop"
@@ -57,12 +83,12 @@ fi
 # ── Voraussetzungen ───────────────────────────────────────────────────────────
 step "Voraussetzungen prüfen"
 missing=()
-for cmd in sgdisk mkfs.fat grub2-install cpio file curl; do
+for cmd in sgdisk mkfs.fat grub2-install cpio file curl python3; do
     command -v "$cmd" &>/dev/null || missing+=("$cmd")
 done
 if [[ ${#missing[@]} -gt 0 ]]; then
     die "Fehlende Tools: ${missing[*]}
-  Installieren: sudo dnf install gdisk dosfstools grub2-efi-x64 grub2-tools cpio file curl"
+  Installieren: sudo dnf install gdisk dosfstools grub2-efi-x64 grub2-tools cpio file curl python3"
 fi
 log "Alle Voraussetzungen erfüllt."
 
@@ -79,23 +105,37 @@ else
         log "ISO vorhanden: $(basename "$existing")"
     else
         log "Lade Fedora ${FEDORA_VERSION} netinstall-ISO herunter..."
-        log "URL: $FEDORA_ISO_URL"
-        curl -L --progress-bar -o "${ISO_DIR}/Fedora-Everything-netinst-x86_64-${FEDORA_VERSION}-1.6.iso" \
+        curl -L --progress-bar \
+            -o "${ISO_DIR}/Fedora-Everything-netinst-x86_64-${FEDORA_VERSION}-1.6.iso" \
             "$FEDORA_ISO_URL" || die "ISO-Download fehlgeschlagen."
-        log "ISO heruntergeladen: $(du -h "${ISO_DIR}/Fedora-Everything-netinst-x86_64-${FEDORA_VERSION}-1.6.iso" | cut -f1)"
+        log "ISO heruntergeladen."
     fi
 fi
 
-# ── Konfiguration anwenden (optional) ────────────────────────────────────────
-CONFIG_FILE="${SCRIPT_DIR}/config/install.json"
-if [[ -f "$CONFIG_FILE" ]]; then
-    step "Konfiguration anwenden"
-    err_out=$(python3 "${SCRIPT_DIR}/scripts/apply-config.py" --config "$CONFIG_FILE" 2>&1) && {
-        log "Kickstarts aktualisiert."
+# ── Konfiguration anwenden ────────────────────────────────────────────────────
+step "Konfiguration anwenden (${CONFIG_MODE^^})"
+
+if [[ "$CONFIG_MODE" == "xml" ]]; then
+    [[ -f "$XML_FILE" ]] || die "XML-Konfiguration nicht gefunden: $XML_FILE"
+    log "XML: $XML_FILE"
+    err_out=$(python3 "${SCRIPT_DIR}/lib/xml2ks.py" \
+        --config "$XML_FILE" \
+        --output "${SCRIPT_DIR}/kickstart/fedora-full.ks" 2>&1) && {
+        log "Kickstart aus XML generiert: kickstart/fedora-full.ks"
     } || {
-        warn "config/install.json konnte nicht angewendet werden — Kickstarts bleiben unverändert."
+        warn "XML-Konfiguration konnte nicht angewendet werden — Kickstart bleibt unverändert."
         warn "Fehler: $err_out"
-        warn "Zum manuellen Anwenden: python3 scripts/apply-config.py --config config/install.json"
+    }
+
+elif [[ "$CONFIG_MODE" == "json" ]]; then
+    [[ -f "$JSON_FILE" ]] || die "JSON-Konfiguration nicht gefunden: $JSON_FILE"
+    log "JSON: $JSON_FILE"
+    err_out=$(python3 "${SCRIPT_DIR}/scripts/apply_config.py" \
+        --config "$JSON_FILE" 2>&1) && {
+        log "Kickstarts aus JSON aktualisiert."
+    } || {
+        warn "JSON-Konfiguration konnte nicht angewendet werden — Kickstarts bleiben unverändert."
+        warn "Fehler: $err_out"
     }
 fi
 
