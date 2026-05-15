@@ -128,13 +128,27 @@ COMMON_SRC="${PROJECT_DIR}/kickstart/common-post.inc"
 INITRD_APPEND="${WORK_DIR}/ks-append"
 mkdir -p "$INITRD_APPEND/kickstart"
 
-# %include auflösen: common-post.inc direkt in jeden Kickstart einbetten.
+# %include auflösen: alle lokalen Dateipfade direkt einbetten.
 # Anaconda kann nach Stage2-Load keine initramfs-Pfade mehr lesen.
+# /tmp/-Pfade werden ausgenommen (%pre-generiert, zur Laufzeit verfügbar).
 flatten_ks() {
     local src="$1" dst="$2"
     while IFS= read -r line; do
-        if [[ "$line" =~ ^%include[[:space:]]+(/kickstart/common-post\.inc|kickstart/common-post\.inc) ]]; then
-            cat "$COMMON_SRC"
+        if [[ "$line" =~ ^%include[[:space:]]+([^[:space:]]+) ]]; then
+            local inc="${BASH_REMATCH[1]}"
+            if [[ "$inc" == /tmp/* ]]; then
+                # /tmp/ wird von %pre generiert — Laufzeit-Pfad, korrekt belassen
+                echo "$line"
+            else
+                # Absoluten oder relativen Pfad gegen Kickstart-Verzeichnis auflösen
+                local inc_file="${PROJECT_DIR}/${inc#/}"
+                if [[ -f "$inc_file" ]]; then
+                    cat "$inc_file"
+                else
+                    warn "  %include '$inc' nicht gefunden: $inc_file — belassen"
+                    echo "$line"
+                fi
+            fi
         else
             echo "$line"
         fi
@@ -149,10 +163,20 @@ done
 # Haupt-Kickstart für [f] als ks.cfg (Kurzform)
 flatten_ks "$KS_SRC" "$INITRD_APPEND/ks.cfg"
 
+# Scripts + Provisioner einbetten — common-post.inc kopiert sie aus /run/install/source
+# (Anaconda-Standardpfad für initrd-Inhalte, auch ohne USB-Stick verfügbar)
+mkdir -p "$INITRD_APPEND/run/install/source/scripts"
+for f in first-boot.sh first-login.sh welcome-dialog.sh fedora-provision.desktop; do
+    src="${PROJECT_DIR}/scripts/$f"
+    [[ -f "$src" ]] && cp "$src" "$INITRD_APPEND/run/install/source/scripts/" && log "  Script eingebettet: $f"
+done
+cp "${PROJECT_DIR}/fedora-provision.sh" "$INITRD_APPEND/run/install/source/fedora-provision.sh" 2>/dev/null && \
+    log "  Script eingebettet: fedora-provision.sh"
+
 # Als zweites initrd-Cpio anhängen (Anaconda mergt mehrere initrds)
 ( cd "$INITRD_APPEND" && find . | cpio -o -H newc --quiet ) >> "${WORK_DIR}/initrd.img"
 
-log "initrd.img (mit KS, %include aufgelöst): $(du -h "${WORK_DIR}/initrd.img" | cut -f1)"
+log "initrd.img (mit KS + Scripts, %include aufgelöst): $(du -h "${WORK_DIR}/initrd.img" | cut -f1)"
 
 # ── Partitionieren ────────────────────────────────────────────────────────────
 step "USB-Stick partitionieren: $USB_DEV"
