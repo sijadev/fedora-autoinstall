@@ -49,8 +49,8 @@ step() { echo -e "\n${CYAN}${BOLD}══ $* ══${RESET}"; }
 
 # ── Voraussetzungen ───────────────────────────────────────────────────────────
 step "Voraussetzungen"
-for cmd in sgdisk mkfs.fat grub2-install cpio file; do
-    command -v "$cmd" &>/dev/null || die "'$cmd' fehlt. Installiere: dnf install gdisk dosfstools grub2-efi-x64 grub2-tools cpio file"
+for cmd in sgdisk mkfs.fat grub2-install cpio file xz zstd; do
+    command -v "$cmd" &>/dev/null || die "'$cmd' fehlt. Installiere: dnf install gdisk dosfstools grub2-efi-x64 grub2-tools cpio file xz zstd"
 done
 log "Alle Tools vorhanden."
 
@@ -173,8 +173,31 @@ done
 cp "${PROJECT_DIR}/fedora-provision.sh" "$INITRD_APPEND/run/install/source/fedora-provision.sh" 2>/dev/null && \
     log "  Script eingebettet: fedora-provision.sh"
 
-# Als zweites initrd-Cpio anhängen (Anaconda mergt mehrere initrds)
-( cd "$INITRD_APPEND" && find . | cpio -o -H newc --quiet ) >> "${WORK_DIR}/initrd.img"
+# Komprimierungsformat des originalen initrd.img erkennen und gleiches Format verwenden.
+# Unkomprimiertes cpio an XZ/zstd-initrd zu hängen bricht dracut beim ersten Start.
+_detect_comp() {
+    local f="$1"
+    local magic
+    magic=$(file "$f")
+    case "$magic" in
+        *XZ*)       echo "xz" ;;
+        *Zstandard*) echo "zstd" ;;
+        *gzip*)     echo "gzip" ;;
+        *)          echo "gzip" ;;
+    esac
+}
+
+INITRD_COMP=$(_detect_comp "${WORK_DIR}/initrd.img")
+log "initrd.img Komprimierung: ${INITRD_COMP}"
+
+case "$INITRD_COMP" in
+    xz)    COMP_CMD="xz -9 -T0 -c" ;;
+    zstd)  COMP_CMD="zstd -19 -T0 -q -c" ;;
+    gzip)  COMP_CMD="gzip -9 -c" ;;
+esac
+
+# Als zweites initrd-Cpio anhängen — im gleichen Komprimierungsformat
+( cd "$INITRD_APPEND" && find . | cpio -o -H newc --quiet | $COMP_CMD ) >> "${WORK_DIR}/initrd.img"
 
 log "initrd.img (mit KS + Scripts, %include aufgelöst): $(du -h "${WORK_DIR}/initrd.img" | cut -f1)"
 
