@@ -1,41 +1,10 @@
 #version=RHEL9
 # Fedora Linux — Headless Podman + vLLM API
 # Profil: headless-vllm — Kein GUI, NVIDIA, Podman-Pipeline, vLLM als Dienst
-# Ventoy-Menü: "Headless Podman + vLLM API"
+# Baut auf fedora-vm.ks Basis-Installation auf — keine eigene Partitionierung
 
 text
 reboot
-
-# ── Disk auto-detection (SATA sda / NVMe nvme0n1 / virtio vda) ───────────────
-%pre
-#!/bin/bash
-
-# Priority 1: explicit override via kernel cmdline  inst.disk=nvme0n1
-DISK=$(grep -oP '(?<=inst\.disk=)\S+' /proc/cmdline || true)
-
-# Priority 2: largest internal non-USB, non-removable disk
-if [[ -z "$DISK" ]]; then
-    DISK=$(lsblk -bdno NAME,TYPE,TRAN,RM,SIZE | awk '$2=="disk" && $3!="usb" && $4=="0" && $1!~/^zram/ {print $5+0, $1}' | sort -rn | head -1 | awk '{print $2}')
-fi
-
-if [[ -z "$DISK" ]]; then
-    echo "ERROR: Keine geeignete Installations-Disk gefunden." >&2
-    echo "Verfügbare Disks:" >&2
-    lsblk -dno NAME,TYPE,TRAN,RM,SIZE >&2
-    echo "Override: 'inst.disk=<name>' als Kernel-Parameter im GRUB-Menü (e) hinzufügen." >&2
-    exit 1
-fi
-
-echo "Ziel-Disk: ${DISK}" >&2
-cat > /tmp/disk-setup.cfg <<EOFCFG
-ignoredisk --only-use=${DISK}
-zerombr
-clearpart --all --initlabel --drives=${DISK}
-bootloader --boot-drive=${DISK}
-EOFCFG
-%end
-
-%include /tmp/disk-setup.cfg
 
 # ── Locale / Keyboard / Timezone ─────────────────────────────────────────────
 keyboard --xlayouts='de'
@@ -45,12 +14,6 @@ timezone Europe/Berlin --utc
 # ── Network ───────────────────────────────────────────────────────────────────
 network --bootproto=dhcp --device=link --activate
 network --hostname=fedora-vllm
-
-# ── Disk / Partitioning ───────────────────────────────────────────────────────
-autopart --type=lvm
-
-# ── Bootloader ────────────────────────────────────────────────────────────────
-# (drive set dynamically via %pre / %include above)
 
 # ── Authentication ────────────────────────────────────────────────────────────
 rootpw --lock
@@ -75,8 +38,6 @@ cmake
 ninja-build
 pciutils
 %end
-
-# ── %addon ────────────────────────────────────────────────────────────────────
 
 # ── %post: write profile-specific environment ─────────────────────────────────
 %post --log=/root/ks-profile.log
