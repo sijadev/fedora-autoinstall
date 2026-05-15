@@ -183,12 +183,9 @@ def generate_kickstart(
 
     # ── Partitioning section ──────────────────────────────────────────────────
     if part_scheme == "auto":
-        part_section = (
-            f"ignoredisk --only-use={disk.replace('/dev/', '')}\n"
-            "zerombr\n"
-            f"clearpart --all --initlabel --drives={disk.replace('/dev/', '')}\n"
-            "autopart --type=lvm"
-        )
+        # %pre erkennt die größte interne Disk automatisch
+        # ignoriert USB (TRAN=usb), zram und Partitionen
+        part_section = "%include /tmp/disk-setup.cfg"
     else:
         part_section = part_extra.strip()
 
@@ -209,9 +206,16 @@ def generate_kickstart(
         "cmake",
         "ninja-build",
     ]
-    all_packages = base_packages + extra_packages
+    seen = set(base_packages)
+    all_packages = list(base_packages)
+    for pkg in extra_packages:
+        if pkg not in seen:
+            seen.add(pkg)
+            all_packages.append(pkg)
     for g in extra_groups:
-        all_packages.append(f"@{g}")
+        entry = f"@{g}"
+        if entry not in seen:
+            all_packages.append(entry)
 
     packages_block = "\n".join(all_packages)
 
@@ -230,6 +234,30 @@ def generate_kickstart(
     ])
 
     # ── Compose the Kickstart ─────────────────────────────────────────────────
+    # %pre block für auto-detection (nur wenn auto-partitioning)
+    pre_block = ""
+    if part_scheme == "auto":
+        pre_block = f"""\
+%pre
+#!/bin/bash
+DISK=$(grep -oP '(?<=inst\\.disk=)\\S+' /proc/cmdline || true)
+if [[ -z "$DISK" ]]; then
+    DISK=$(lsblk -bdno NAME,TYPE,TRAN,RM,SIZE \\
+        | awk '$2=="disk" && $3!="usb" && $4=="0" && $1!~/^zram/ {{print $5+0, $1}}' \\
+        | sort -rn | head -1 | awk '{{print $2}}')
+fi
+[[ -z "$DISK" ]] && {{ echo "ERROR: Keine Installations-Disk gefunden" >&2; exit 1; }}
+echo "Ziel-Disk: $DISK" >&2
+cat > /tmp/disk-setup.cfg <<DEOF
+ignoredisk --only-use=$DISK
+zerombr
+clearpart --all --initlabel --drives=$DISK
+bootloader --boot-drive=$DISK
+autopart --type=lvm
+DEOF
+%end
+"""
+
     ks = f"""\
 #version=RHEL9
 # Fedora Linux — Unattended Installation
@@ -239,6 +267,7 @@ def generate_kickstart(
 text
 reboot
 
+{pre_block}
 # ── Locale / keyboard / timezone ─────────────────────────────────────────────
 keyboard --xlayouts='{keyboard}'
 lang {locale}
@@ -250,9 +279,6 @@ network --hostname={hostname}
 
 # ── Disk / partitioning ───────────────────────────────────────────────────────
 {part_section}
-
-# ── Bootloader ────────────────────────────────────────────────────────────────
-bootloader --location=mbr --boot-drive={disk.replace('/dev/', '')}
 
 # ── Authentication ────────────────────────────────────────────────────────────
 rootpw --lock

@@ -6,6 +6,25 @@
 text
 reboot
 
+%pre
+#!/bin/bash
+DISK=$(grep -oP '(?<=inst\.disk=)\S+' /proc/cmdline || true)
+if [[ -z "$DISK" ]]; then
+    DISK=$(lsblk -bdno NAME,TYPE,TRAN,RM,SIZE \
+        | awk '$2=="disk" && $3!="usb" && $4=="0" && $1!~/^zram/ {print $5+0, $1}' \
+        | sort -rn | head -1 | awk '{print $2}')
+fi
+[[ -z "$DISK" ]] && { echo "ERROR: Keine Installations-Disk gefunden" >&2; exit 1; }
+echo "Ziel-Disk: $DISK" >&2
+cat > /tmp/disk-setup.cfg <<DEOF
+ignoredisk --only-use=$DISK
+zerombr
+clearpart --all --initlabel --drives=$DISK
+bootloader --boot-drive=$DISK
+autopart --type=lvm
+DEOF
+%end
+
 # ── Locale / keyboard / timezone ─────────────────────────────────────────────
 keyboard --xlayouts='de'
 lang de_DE.UTF-8
@@ -16,13 +35,7 @@ network --bootproto=dhcp --device=link --activate
 network --hostname=fedora-workstation
 
 # ── Disk / partitioning ───────────────────────────────────────────────────────
-ignoredisk --only-use=sda
-zerombr
-clearpart --all --initlabel --drives=sda
-autopart --type=lvm
-
-# ── Bootloader ────────────────────────────────────────────────────────────────
-bootloader --location=mbr --boot-drive=sda
+%include /tmp/disk-setup.cfg
 
 # ── Authentication ────────────────────────────────────────────────────────────
 rootpw --lock
@@ -45,14 +58,6 @@ gcc
 gcc-c++
 cmake
 ninja-build
-git
-curl
-python3
-python3-pip
-python3-virtualenv
-gnome-shell-extension-user-theme
-gnome-shell-extension-dash-to-panel
-flatpak
 virt-manager
 qemu-kvm
 libvirt
