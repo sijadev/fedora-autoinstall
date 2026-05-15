@@ -44,7 +44,7 @@ user --groups=wheel,libvirt,video,audio --name=sija --password=$6$rounds=4096$ex
 
 # ── Packages ──────────────────────────────────────────────────────────────────
 %packages
-@^fedora-desktop
+@^workstation-product-environment
 git
 curl
 python3
@@ -88,18 +88,1144 @@ chmod 0644 /etc/fedora-provision.env
 
 # ── Write first-boot script ───────────────────────────────────────────────────
 cat > /usr/local/sbin/fedora-first-boot.sh <<'FBEOF'
+#!/usr/bin/env bash
+# scripts/first-boot.sh — System-wide one-shot provisioning (runs as root via systemd)
+#
+# Executed by fedora-first-boot.service exactly once after the first boot.
+# Marker: /var/lib/fedora-provision/first-boot.done
+#
+# Tasks:
+#   1. System-Update (dnf upgrade)
+#   2. NVIDIA Open Driver update
+#   3. CUDA installation (Fedora/Fedora or NVIDIA repo)
+#   4. Set system-wide CUDA environment variables
+
+set -euo pipefail
+
+MARKER_DIR="/var/lib/fedora-provision"
+MARKER_FILE="$MARKER_DIR/first-boot.done"
+LOG_FILE="/var/log/fedora-first-boot.log"
+ENV_FILE="/etc/fedora-provision.env"
+CUDA_ENV_FILE="/etc/profile.d/cuda.sh"
+
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+log()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO]  $*"; }
+warn() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARN]  $*"; }
+err()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $*" >&2; }
+die()  { err "$*"; exit 1; }
+step() { echo; echo "══ $* ══"; }
+
+# ── Idempotency guard ─────────────────────────────────────────────────────────
+if [[ -f "$MARKER_FILE" ]]; then
+    log "First-boot already completed (marker exists: $MARKER_FILE). Skipping."
+    exit 0
+fi
+
+mkdir -p "$MARKER_DIR"
+
+# ── Load provisioning env ─────────────────────────────────────────────────────
+if [[ -f "$ENV_FILE" ]]; then
+    # shellcheck source=/dev/null
+    source "$ENV_FILE"
+fi
+
+INSTALL_PROFILE="${FEDORA_INSTALL_PROFILE:-full}"
+log "Install profile: ${INSTALL_PROFILE}"
+
+# ── 0. DNF Optimierungen ─────────────────────────────────────────────────────
+step "DNF Optimierungen"
+cat >> /etc/dnf/dnf.conf <<'DNFEOF'
+max_parallel_downloads=10
+fastestmirror=True
+deltarpm=True
+DNFEOF
+log "DNF: max_parallel_downloads=10, fastestmirror, deltarpm."
+
+# ── 0b. Flathub einrichten ────────────────────────────────────────────────────
+step "Flathub"
+if command -v flatpak &>/dev/null; then
+    flatpak remote-add --if-not-exists flathub \
+        https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null \
+        && log "Flathub hinzugefügt." \
+        || warn "Flathub setup fehlgeschlagen (non-fatal)."
+fi
+
+# ── 0c. fstrim (SSD TRIM wöchentlich) ────────────────────────────────────────
+step "fstrim.timer"
+systemctl enable fstrim.timer 2>/dev/null \
+    && log "fstrim.timer aktiviert." \
+    || warn "fstrim.timer enable fehlgeschlagen (non-fatal)."
+
+# ── 0d. Theme-Abhängigkeiten + GNOME Extensions ───────────────────────────────
+step "Theme dependencies + GNOME Extensions"
+if [[ "$INSTALL_PROFILE" =~ ^(full|theme-bash)$ ]]; then
+    dnf install -y \
+        sassc \
+        glib2-devel \
+        gnome-shell-extension-user-theme \
+        gnome-shell-extension-dash-to-dock \
+        gnome-shell-extension-appindicator \
+        gnome-shell-extension-blur-my-shell \
+        gnome-shell-extension-caffeine \
+        2>/dev/null \
+        && log "Theme deps + GNOME extensions installiert." \
+        || warn "Theme deps/extensions install fehlgeschlagen (non-fatal)."
+fi
+
+# ── 1. System-Update ──────────────────────────────────────────────────────────
+step "System-Update"
+log "Running dnf upgrade..."
+dnf upgrade -y || die "dnf upgrade failed."
+log "dnf upgrade completed."
+
+# ── 1b. Bazzite Kernel (Blackwell-Support + Gaming Patches) ───────────────────
+# Bazzite-Kernel ist konzeptuell verwandt mit Nobara-Kernel und wird aktiv für
+# Fedora 43 + Blackwell GPUs (RTX 50/9070) gepflegt. Muss VOR akmod-nvidia-open
+# installiert werden, damit Module gegen den richtigen Kernel gebaut werden.
+step "Bazzite Kernel installieren"
+
+if [[ "${FEDORA_KERNEL_SOURCE:-bazzite}" != "fedora" ]]; then
+    if dnf copr enable -y bazzite-org/kernel-bazzite 2>/dev/null; then
+        if dnf install -y \
+            kernel-bazzite \
+            kernel-bazzite-core \
+            kernel-bazzite-modules \
+            kernel-bazzite-modules-extra \
+            kernel-bazzite-devel 2>/dev/null; then
+            log "Bazzite-Kernel installiert."
+            if command -v grubby &>/dev/null; then
+                NEW_KERNEL=$(ls /boot/vmlinuz-*bazzite* 2>/dev/null | sort -V | tail -1)
+                if [[ -n "$NEW_KERNEL" ]]; then
+                    grubby --set-default "$NEW_KERNEL" \
+                        && log "Bazzite-Kernel als Default gesetzt: $(basename "$NEW_KERNEL")" \
+                        || warn "grubby --set-default fehlgeschlagen."
+                fi
+            fi
+        else
+            warn "Bazzite-Kernel install fehlgeschlagen — Standard-Kernel bleibt aktiv."
+        fi
+    else
+        warn "COPR bazzite-org/kernel-bazzite nicht verfügbar — Standard-Kernel bleibt aktiv."
+    fi
+else
+    log "FEDORA_KERNEL_SOURCE=fedora — Bazzite-Kernel übersprungen."
+fi
+
+# ── 2. NVIDIA Open Driver ─────────────────────────────────────────────────────
+step "NVIDIA Open Driver update"
+
+# iGPU + dGPU Hinweis: Wenn beide vorhanden, lief Install vermutlich über iGPU
+# (Blackwell-Workaround). Nach erfolgreichem first-boot kann BIOS auf PEG zurück.
+if command -v lspci &>/dev/null; then
+    if lspci -nn 2>/dev/null | grep -qiE 'VGA.*(AMD|Intel)' \
+       && lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
+        warn "iGPU + NVIDIA dGPU erkannt. Falls Install über iGPU lief:"
+        warn "  → Nach Reboot BIOS umstellen: Primary Display = PEG/PCIe"
+        warn "  → Monitor wieder an NVIDIA-Karte anschließen"
+    fi
+fi
+
+check_nvidia_open_compat() {
+    # Check GPU PCI IDs against architectures that support the Open Module:
+    # Turing (TU1xx), Ampere (GA1xx), Ada Lovelace (AD1xx), Blackwell (GB1xx)
+    if ! command -v lspci &>/dev/null; then
+        warn "lspci not available; skipping GPU compatibility check."
+        return 0
+    fi
+    local gpu_info
+    gpu_info=$(lspci -nn | grep -i 'NVIDIA' || true)
+    if [[ -z "$gpu_info" ]]; then
+        warn "No NVIDIA GPU detected (VM or non-NVIDIA system) — skipping NVIDIA driver."
+        return 1
+    fi
+    if echo "$gpu_info" | grep -qiE 'GP10[0-9]|GP1[0-9]{2}'; then
+        die "NVIDIA Pascal GPU detected. Open Driver requires Turing or newer. Aborting."
+    fi
+    log "NVIDIA GPU detected (Open Driver compatible): $gpu_info"
+}
+
+if check_nvidia_open_compat; then
+    # Prüfen ob NVIDIA-Treiber bereits funktionsfähig installiert ist
+    if nvidia-smi &>/dev/null; then
+        log "NVIDIA-Treiber bereits aktiv ($(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null)) — Installation übersprungen."
+    else
+        log "Installing/updating NVIDIA Open Kernel Module driver..."
+        dnf install -y \
+            kernel-devel \
+            kernel-headers \
+            akmod-nvidia-open \
+            xorg-x11-drv-nvidia-cuda \
+            || warn "NVIDIA Open Driver installation fehlgeschlagen (non-fatal — ggf. bereits via DKMS/Nobara installiert)."
+
+        if command -v akmods &>/dev/null; then
+            log "Building kernel modules (akmods)..."
+            akmods --force || warn "akmods fehlgeschlagen (non-fatal)."
+        fi
+        log "NVIDIA Open Driver installed/updated."
+    fi
+fi  # end: check_nvidia_open_compat
+
+# ── 2b. Podman + NVIDIA Container Toolkit (headless-vllm / vllm-only) ─────────
+if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
+    step "Podman + NVIDIA Container Toolkit"
+
+    dnf install -y podman podman-compose 2>/dev/null \
+        && log "Podman installiert." \
+        || warn "Podman install fehlgeschlagen (non-fatal)."
+
+    # NVIDIA Container Toolkit — GPU-Passthrough in Podman/Docker
+    if lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
+        if ! rpm -q nvidia-container-toolkit &>/dev/null; then
+            curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo \
+                -o /etc/yum.repos.d/nvidia-container-toolkit.repo 2>/dev/null
+            dnf install -y nvidia-container-toolkit 2>/dev/null \
+                && log "nvidia-container-toolkit installiert." \
+                || warn "nvidia-container-toolkit fehlgeschlagen (non-fatal)."
+        fi
+        nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml 2>/dev/null \
+            && log "NVIDIA CDI-Profil generiert." \
+            || warn "nvidia-ctk CDI fehlgeschlagen (non-fatal)."
+    fi
+
+    # ── vLLM via Podman Quadlet (systemd Container Service) ───────────────────
+    # Multi-Model Hotswap: ein einziges parametrisiertes Quadlet-Template
+    # (vllm@.container) startet vllm-Backends on-demand. Router auf :8000
+    # dispatched OpenAI-Requests an aktive Backends (Quelle: vllm-router.py).
+    TARGET_USER="${FEDORA_TARGET_USER:-sija}"
+    USER_HOME="/home/${TARGET_USER}"
+    AUDIO_MODEL="${FEDORA_AUDIO_MODEL:-moonshotai/Kimi-Audio-7B-Instruct}"
+    AGENT_MODEL="${FEDORA_AGENT_MODEL:-Qwen/Qwen3-8B}"
+    QUADLET_DIR="${USER_HOME}/.config/containers/systemd"
+    ROUTER_DIR="${USER_HOME}/.config/vllm-router"
+    REPO_DIR="/usr/local/share/fedora-autoinstall"
+    mkdir -p "$QUADLET_DIR" "$ROUTER_DIR/instances"
+
+    # ── Cleanup: alte statische Quadlets entfernen (Migration) ───────────────
+    for old in vllm-audio.container vllm-agent.container; do
+        if [[ -f "${QUADLET_DIR}/${old}" ]]; then
+            systemctl --user --machine="${TARGET_USER}@" stop "${old%.container}.service" 2>/dev/null || true
+            rm -f "${QUADLET_DIR}/${old}"
+            log "Alt-Quadlet entfernt: ${old}"
+        fi
+    done
+
+    # ── Quadlet-Template + Router-Unit installieren ───────────────────────────
+    if [[ -f "${REPO_DIR}/systemd/vllm@.container" ]]; then
+        install -m 0644 "${REPO_DIR}/systemd/vllm@.container" "${QUADLET_DIR}/vllm@.container"
+    else
+        warn "vllm@.container Template fehlt unter ${REPO_DIR}/systemd/ — Build unvollständig?"
+    fi
+    if [[ -f "${REPO_DIR}/systemd/vllm-router.service" ]]; then
+        mkdir -p "${USER_HOME}/.config/systemd/user"
+        install -m 0644 "${REPO_DIR}/systemd/vllm-router.service" \
+            "${USER_HOME}/.config/systemd/user/vllm-router.service"
+    fi
+
+    # ── Default-Registry seeden (falls noch keine vorhanden) ──────────────────
+    REGISTRY="${ROUTER_DIR}/models.json"
+    if [[ ! -f "$REGISTRY" ]]; then
+        cat > "$REGISTRY" <<REGEOF
+{
+  "agent": {
+    "hf_repo": "${AGENT_MODEL}",
+    "port": 8100,
+    "vram_share": 0.45,
+    "max_len": 8192,
+    "extra": "--enable-reasoning --reasoning-parser deepseek_r1"
+  },
+  "audio": {
+    "hf_repo": "${AUDIO_MODEL}",
+    "port": 8101,
+    "vram_share": 0.40,
+    "max_len": 4096,
+    "extra": "--trust-remote-code --limit-mm-per-prompt audio=5"
+  }
+}
+REGEOF
+        log "Default-Registry geseedet: $REGISTRY"
+    fi
+
+    chown -R "${TARGET_USER}:${TARGET_USER}" \
+        "$QUADLET_DIR" "$ROUTER_DIR" "${USER_HOME}/.config/systemd" 2>/dev/null || true
+
+    log "vLLM Quadlet-Template installiert (vllm@.container)."
+    log "Router-Service-Unit installiert (vllm-router.service)."
+    log "Registry: $REGISTRY  — bearbeiten zum Modelle hinzufügen."
+    log "Aktivierung erfolgt im first-login (loginctl linger + enable)."
+fi
+
+# ── 3. CUDA installation ──────────────────────────────────────────────────────
+step "CUDA installation"
+
+if [[ "$INSTALL_PROFILE" == "theme-bash" ]]; then
+    log "Profile '${INSTALL_PROFILE}' — CUDA not required. Skipping."
+elif ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
+    warn "No NVIDIA GPU detected — skipping CUDA installation (VM or non-NVIDIA system)."
+else
+
+CUDA_SOURCE="${FEDORA_CUDA_SOURCE:-fedora}"
+
+install_cuda_fedora() {
+    log "Installing CUDA from Fedora/Fedora repos..."
+    # Fedora packages: 'cuda' (toolkit), 'cuda-cudart-devel' (dev headers)
+    # Note: 'cuda-toolkit' does not exist in Fedora repos (use 'cuda' instead)
+    dnf install -y \
+        cuda \
+        cuda-cudart-devel \
+        || die "CUDA installation from Fedora/Fedora repos failed."
+}
+
+install_cuda_nvidia_repo() {
+    log "Installing CUDA from official NVIDIA repo..."
+    local arch; arch=$(uname -m)
+    local distro="rhel9"
+    local repo_url="https://developer.download.nvidia.com/compute/cuda/repos/${distro}/${arch}/cuda-${distro}.repo"
+
+    if ! dnf config-manager --add-repo "$repo_url" 2>/dev/null; then
+        # Try with dnf5 syntax
+        dnf config-manager addrepo --from-repofile="$repo_url" \
+            || die "Failed to add NVIDIA CUDA repo."
+    fi
+
+    dnf install -y \
+        cuda-toolkit \
+        cuda-devel \
+        || die "CUDA installation from NVIDIA repo failed."
+}
+
+case "$CUDA_SOURCE" in
+    fedora|fedora) install_cuda_fedora   ;;
+    nvidia)        install_cuda_nvidia_repo ;;
+    *)             die "Unknown cuda source: $CUDA_SOURCE" ;;
+esac
+
+# Discover installed CUDA path
+CUDA_HOME_DETECTED=""
+# Fedora-Repo CUDA: nvcc unter /usr/bin, Libs unter /usr/lib64
+# NVIDIA-Repo CUDA: unter /usr/local/cuda*
+for candidate in /usr/local/cuda /usr/local/cuda-* /usr; do
+    if [[ -x "${candidate}/bin/nvcc" ]]; then
+        CUDA_HOME_DETECTED="$candidate"
+        break
+    fi
+done
+[[ -n "$CUDA_HOME_DETECTED" ]] || die "nvcc not found after CUDA installation."
+log "CUDA installed at: $CUDA_HOME_DETECTED"
+
+CUDA_VERSION_INSTALLED=$("${CUDA_HOME_DETECTED}/bin/nvcc" --version \
+    | grep -oP 'release \K[\d.]+' | head -1)
+log "CUDA version: $CUDA_VERSION_INSTALLED"
+
+# ── 4. System-wide CUDA environment variables ─────────────────────────────────
+step "CUDA environment variables"
+
+cat > "$CUDA_ENV_FILE" <<ENVEOF
+# Fedora Auto-Install: CUDA environment — managed by fedora-first-boot.sh
+export CUDA_HOME="${CUDA_HOME_DETECTED}"
+export PATH="\${CUDA_HOME}/bin\${PATH:+:\$PATH}"
+export LD_LIBRARY_PATH="\${CUDA_HOME}/lib64\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+ENVEOF
+chmod 0644 "$CUDA_ENV_FILE"
+log "CUDA env written to $CUDA_ENV_FILE"
+
+# Also write a systemd-compatible EnvironmentFile entry
+mkdir -p /etc/systemd/system.conf.d
+cat > /etc/systemd/system.conf.d/cuda-env.conf <<SYSENVEOF
+# CUDA environment for systemd services
+[Manager]
+DefaultEnvironment=CUDA_HOME=${CUDA_HOME_DETECTED}
+SYSENVEOF
+systemctl daemon-reload
+
+fi  # end: CUDA (GPU present + profile requires CUDA)
+
+# ── 5. Kernel/Sysctl performance tuning ──────────────────────────────────────
+step "Kernel/Sysctl tuning"
+
+cat > /etc/sysctl.d/99-fedora-performance.conf <<'SYSCTLEOF'
+# Fedora Auto-Install: performance tuning
+vm.swappiness = 10
+vm.vfs_cache_pressure = 50
+kernel.sched_migration_cost_ns = 500000
+net.core.somaxconn = 1024
+SYSCTLEOF
+chmod 0644 /etc/sysctl.d/99-fedora-performance.conf
+sysctl --system 2>&1 | grep -E 'Applying|error' | while read -r l; do log "  sysctl: $l"; done || true
+log "Sysctl tuning applied."
+
+# Transparent Hugepages: madvise (opt-in per Prozess — PyTorch/vLLM nutzen es gezielt)
+cat > /etc/tmpfiles.d/transparent-hugepages.conf <<'THPEOF'
+w /sys/kernel/mm/transparent_hugepage/enabled - - - - madvise
+w /sys/kernel/mm/transparent_hugepage/defrag  - - - - defer+madvise
+THPEOF
+chmod 0644 /etc/tmpfiles.d/transparent-hugepages.conf
+echo madvise        > /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null || true
+echo defer+madvise  > /sys/kernel/mm/transparent_hugepage/defrag  2>/dev/null || true
+log "Transparent hugepages: madvise (per tmpfiles.d persistent)."
+
+# ── 6. CPU Performance Governor (tuned) ───────────────────────────────────────
+step "CPU performance profile"
+
+if ! command -v tuned-adm &>/dev/null; then
+    dnf install -y tuned && log "tuned installed." || warn "tuned install failed (non-fatal)."
+fi
+
+if command -v tuned-adm &>/dev/null; then
+    # tuned: throughput-performance für Disk/IRQ/Netzwerk
+    # CPU-Governor wird danach von cpu-schedutil.service auf schedutil gesetzt
+    # (scx_bpfland arbeitet mit schedutil, nicht performance)
+    cat > /etc/systemd/system/cpu-performance.service <<'CPUEOF'
+[Unit]
+Description=System throughput profile via tuned (Disk/IRQ/Net)
+After=tuned.service
+Requires=tuned.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/tuned-adm profile throughput-performance
+ExecStop=/usr/sbin/tuned-adm profile balanced
+
+[Install]
+WantedBy=multi-user.target
+CPUEOF
+
+    # schedutil Override: läuft nach tuned und setzt Governor zurück
+    # scx_bpfland braucht schedutil für korrekte Frequenzskalierung
+    cat > /etc/systemd/system/cpu-schedutil.service <<'SUTILEOF'
+[Unit]
+Description=Set CPU Governor to schedutil (für scx_bpfland)
+After=cpu-performance.service
+Wants=cpu-performance.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c 'for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo schedutil > "$f" 2>/dev/null || true; done'
+
+[Install]
+WantedBy=multi-user.target
+SUTILEOF
+
+    systemctl daemon-reload
+    systemctl enable tuned.service           2>/dev/null || true
+    systemctl enable cpu-performance.service 2>/dev/null || true
+    systemctl enable cpu-schedutil.service   2>/dev/null || true
+    systemctl start  tuned.service           2>/dev/null || true
+    tuned-adm profile throughput-performance 2>/dev/null \
+        && log "tuned: throughput-performance aktiv (Disk/IRQ/Net)." \
+        || warn "tuned-adm fehlgeschlagen (non-fatal)."
+    for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+        echo schedutil > "$f" 2>/dev/null || true
+    done
+    log "CPU Governor: schedutil (kompatibel mit scx_bpfland)."
+fi
+
+# ── 6b. scx_bpfland Scheduler ─────────────────────────────────────────────────
+step "scx_bpfland Scheduler"
+if ! rpm -q scx-scheds &>/dev/null; then
+    if ! dnf copr list --enabled 2>/dev/null | grep -q 'bieszczaders'; then
+        dnf copr enable -y bieszczaders/kernel-cachyos-addons 2>/dev/null || true
+    fi
+    dnf install -y scx-scheds scx-tools 2>/dev/null \
+        && log "scx-scheds + scx-tools installiert (COPR bieszczaders)." \
+        || warn "scx-scheds install fehlgeschlagen (non-fatal)."
+fi
+
+if command -v scx_bpfland &>/dev/null; then
+    # scx_bpfland als direkter systemd-Service (einfacher als scx_loader)
+    cat > /etc/systemd/system/scx-bpfland.service <<'SCXEOF'
+[Unit]
+Description=scx_bpfland — Cache-aware scheduler für AMD Ryzen
+Documentation=https://github.com/sched-ext/scx
+After=multi-user.target
+# Nach cpu-schedutil damit Governor bereits schedutil ist
+After=cpu-schedutil.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/scx_bpfland
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+SCXEOF
+    systemctl daemon-reload
+    systemctl enable scx-bpfland.service 2>/dev/null \
+        && log "scx-bpfland.service aktiviert." \
+        || warn "scx-bpfland enable fehlgeschlagen (non-fatal)."
+fi
+
+# ── 7. NVIDIA Persistence Mode ────────────────────────────────────────────────
+if lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
+    step "NVIDIA persistence mode"
+    cat > /etc/systemd/system/nvidia-performance.service <<'NVEOF'
+[Unit]
+Description=NVIDIA Persistence Mode
+After=multi-user.target
+ConditionPathExists=/usr/bin/nvidia-smi
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/nvidia-smi -pm 1
+ExecStop=/usr/bin/nvidia-smi  -pm 0
+
+[Install]
+WantedBy=multi-user.target
+NVEOF
+    systemctl daemon-reload
+    systemctl enable nvidia-performance.service 2>/dev/null \
+        && log "nvidia-performance.service aktiviert." \
+        || warn "nvidia-performance.service enable fehlgeschlagen (non-fatal)."
+fi
+
+# ── 8. WhiteSur GRUB Theme ───────────────────────────────────────────────────
+step "WhiteSur GRUB Theme"
+if [[ "$INSTALL_PROFILE" =~ ^(full|theme-bash|vm)$ ]]; then
+    GRUB_THEMES_DIR="/tmp/grub2-themes-build"
+    if ! git clone --depth=1 "https://github.com/vinceliuice/grub2-themes.git" \
+            "$GRUB_THEMES_DIR" 2>/dev/null; then
+        warn "grub2-themes clone fehlgeschlagen (non-fatal)."
+    elif [[ -x "${GRUB_THEMES_DIR}/install.sh" ]]; then
+        # Auflösung erkennen: 1080p als Standard, 4k falls höher
+        GRUB_RES="1080p"
+        bash "${GRUB_THEMES_DIR}/install.sh" -t whitesur -s "${GRUB_RES}" 2>/dev/null \
+            && log "WhiteSur GRUB Theme installiert (${GRUB_RES})." \
+            || warn "GRUB Theme install fehlgeschlagen (non-fatal)."
+        rm -rf "$GRUB_THEMES_DIR"
+    fi
+fi
+
+# ── 9. Timeshift + grub-btrfs (nur bei Btrfs-Root) ───────────────────────────
+if findmnt -n -o FSTYPE / 2>/dev/null | grep -qx 'btrfs'; then
+    step "Timeshift + grub-btrfs"
+    # timeshift ist in Fedora-Repos verfügbar
+    dnf install -y timeshift inotify-tools 2>/dev/null \
+        && log "timeshift + inotify-tools installiert." \
+        || warn "timeshift install fehlgeschlagen (non-fatal)."
+
+    # grub-btrfs benötigt COPR kylegospo/grub-btrfs (nicht in Standard-Repos)
+    # grub-btrfs-timeshift ist das Timeshift-integrierte Paket (ersetzt grub-btrfs)
+    if ! rpm -q grub-btrfs-timeshift &>/dev/null && ! rpm -q grub-btrfs &>/dev/null; then
+        dnf copr enable -y kylegospo/grub-btrfs 2>/dev/null \
+            && dnf install -y grub-btrfs-timeshift 2>/dev/null \
+            && log "grub-btrfs-timeshift installiert (COPR kylegospo)." \
+            || warn "grub-btrfs COPR install fehlgeschlagen (non-fatal)."
+    fi
+
+    # Bei Btrfs-Subvolumes enthält SOURCE den Subvolume-Pfad (z.B. /dev/vda3[@])
+    # → nur den Device-Teil extrahieren
+    BTRFS_DEV=$(findmnt -n -o SOURCE / | sed 's/\[.*\]$//')
+    BTRFS_UUID=$(blkid -s UUID -o value "$BTRFS_DEV" 2>/dev/null || true)
+
+    # btrfs qgroups für Timeshift aktivieren
+    btrfs quota enable / 2>/dev/null || true
+
+    if [[ -n "$BTRFS_UUID" ]] && command -v timeshift &>/dev/null; then
+        mkdir -p /etc/timeshift
+        cat > /etc/timeshift/timeshift.json <<TIMESHIFTEOF
+{
+  "backup_device_uuid" : "${BTRFS_UUID}",
+  "parent_device_size" : "0",
+  "do_first_run" : "false",
+  "btrfs_mode" : "true",
+  "include_btrfs_home_for_backup" : "false",
+  "stop_cron_emails" : "true",
+  "btrfs_use_qgroup" : "true",
+  "schedule_monthly" : "true",
+  "schedule_weekly" : "false",
+  "schedule_daily" : "false",
+  "schedule_hourly" : "false",
+  "schedule_boot" : "true",
+  "count_monthly" : "3",
+  "count_weekly" : "3",
+  "count_daily" : "5",
+  "count_hourly" : "6",
+  "count_boot" : "5"
+}
+TIMESHIFTEOF
+        chmod 0644 /etc/timeshift/timeshift.json
+        log "Timeshift konfiguriert: BTRFS-Modus, UUID=${BTRFS_UUID}."
+    fi
+
+    # BLS-Entries auf subvol=@ aktualisieren (grubby patcht alle Kernel-Einträge)
+    # grub2-mkconfig liest sonst das laufende Subvolume → wäre falsch beim ersten Boot
+    if command -v grubby &>/dev/null; then
+        grubby --update-kernel=ALL --remove-args='rootflags' --args='rootflags=subvol=@' \
+            && log "grubby: BLS-Entries auf rootflags=subvol=@ gesetzt." \
+            || warn "grubby update fehlgeschlagen (non-fatal)."
+    fi
+
+    # grub-btrfs: Snapshots automatisch im GRUB-Menü registrieren
+    if systemctl list-unit-files grub-btrfs.path &>/dev/null; then
+        systemctl enable --now grub-btrfs.path 2>/dev/null \
+            && log "grub-btrfs.path aktiviert." \
+            || warn "grub-btrfs.path enable fehlgeschlagen (non-fatal)."
+    fi
+    grub2-mkconfig -o /boot/grub2/grub.cfg 2>/dev/null \
+        && log "GRUB-Konfiguration aktualisiert." \
+        || warn "grub2-mkconfig fehlgeschlagen (non-fatal)."
+else
+    log "Root ist kein btrfs — Timeshift/grub-btrfs übersprungen."
+fi
+
+# ── 10. zram-generator (Swap im RAM — Pflicht ohne Swap-Partition) ───────────
+step "zram-generator"
+if ! rpm -q zram-generator &>/dev/null; then
+    dnf install -y zram-generator \
+        && log "zram-generator installiert." \
+        || warn "zram-generator install fehlgeschlagen (non-fatal)."
+fi
+# Konfiguration: 50% RAM, max 8 GB, zstd-Kompression
+cat > /etc/systemd/zram-generator.conf <<'ZRAMEOF'
+[zram0]
+zram-size = min(ram / 2, 8192)
+compression-algorithm = zstd
+ZRAMEOF
+chmod 0644 /etc/systemd/zram-generator.conf
+log "zram-generator: 50% RAM (max 8 GB), zstd."
+
+# ── 11. irqbalance (IRQ-Verteilung auf alle CPU-Kerne) ───────────────────────
+step "irqbalance"
+if ! rpm -q irqbalance &>/dev/null; then
+    dnf install -y irqbalance \
+        && log "irqbalance installiert." \
+        || warn "irqbalance install fehlgeschlagen (non-fatal)."
+fi
+systemctl enable --now irqbalance 2>/dev/null \
+    && log "irqbalance aktiviert." \
+    || warn "irqbalance enable fehlgeschlagen (non-fatal)."
+
+# ── 12. ananicy-cpp (Prozess-Priorisierung) ──────────────────────────────────
+step "ananicy-cpp"
+if ! rpm -q ananicy-cpp &>/dev/null; then
+    # COPR aktivieren und installieren
+    if dnf copr enable -y eriknguyen/ananicy-cpp &>/dev/null; then
+        dnf install -y ananicy-cpp \
+            && log "ananicy-cpp installiert." \
+            || warn "ananicy-cpp install fehlgeschlagen (non-fatal)."
+    else
+        warn "ananicy-cpp COPR nicht verfügbar — übersprungen (non-fatal)."
+    fi
+fi
+if command -v ananicy-cpp &>/dev/null; then
+    systemctl enable --now ananicy-cpp 2>/dev/null \
+        && log "ananicy-cpp aktiviert." \
+        || warn "ananicy-cpp enable fehlgeschlagen (non-fatal)."
+fi
+
+# ── 13. AMD Ryzen Optimierungen ──────────────────────────────────────────────
+if grep -qi 'amd\|ryzen\|epyc' /proc/cpuinfo 2>/dev/null; then
+    step "AMD Ryzen optimizations"
+
+    # amd-pstate EPP auf 'performance' setzen (persistent via systemd-Service)
+    cat > /etc/systemd/system/amd-pstate-epp.service <<'AMDEOF'
+[Unit]
+Description=AMD P-State Energy Performance Preference (performance)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c 'for f in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do echo performance > "$f" 2>/dev/null || true; done'
+
+[Install]
+WantedBy=multi-user.target
+AMDEOF
+    systemctl daemon-reload
+    systemctl enable amd-pstate-epp.service 2>/dev/null \
+        && log "amd-pstate-epp.service aktiviert." \
+        || warn "amd-pstate-epp enable fehlgeschlagen (non-fatal)."
+    # Sofort anwenden
+    for f in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
+        echo performance > "$f" 2>/dev/null || true
+    done
+    log "AMD P-State EPP auf 'performance' gesetzt."
+
+    # GRUB Kernel-Parameter für Ryzen
+    GRUB_FILE="/etc/default/grub"
+    if [[ -f "$GRUB_FILE" ]] && ! grep -q 'amd_pstate' "$GRUB_FILE"; then
+        sed -i 's/GRUB_CMDLINE_LINUX="\(.*\)"/GRUB_CMDLINE_LINUX="\1 amd_pstate=active amd_iommu=on cpufreq.default_governor=performance"/' \
+            "$GRUB_FILE"
+        grub2-mkconfig -o /boot/grub2/grub.cfg 2>/dev/null \
+            && log "GRUB: AMD Kernel-Parameter eingetragen." \
+            || warn "grub2-mkconfig fehlgeschlagen (non-fatal)."
+    else
+        log "GRUB AMD-Parameter bereits vorhanden oder grub-config nicht gefunden."
+    fi
+else
+    log "Kein AMD CPU erkannt — AMD Ryzen Optimierungen übersprungen."
+fi
+
+# ── Done ──────────────────────────────────────────────────────────────────────
+step "First-boot provisioning complete"
+marker_set() { mkdir -p "$(dirname "$1")"; touch "$1"; }
+marker_set "$MARKER_FILE"
+log "Marker written: $MARKER_FILE"
+log "First-boot provisioning finished successfully."
 
 FBEOF
 chmod 0750 /usr/local/sbin/fedora-first-boot.sh
 
 # ── Write first-login runner ──────────────────────────────────────────────────
 cat > /usr/local/bin/fedora-first-login.sh <<'FLEOF'
+#!/usr/bin/env bash
+# scripts/first-login.sh — User-level one-shot provisioning for the target user
+#
+# Runs via ~/.config/autostart/fedora-first-login.desktop on first GNOME login.
+# Marker: ~/.local/share/fedora-provision/first-login.done
+#
+# Tasks (in order):
+#   1.  Flatpak Extension Manager
+#   2.  Enable GNOME extensions
+#   3.  WhiteSur GTK theme  (git clone / pull + install)
+#   4.  WhiteSur Icon theme
+#   5.  WhiteSur Wallpapers
+#   6.  Oh My Bash (install + set theme)
+#   7.  Python venv ~/.venvs/ai
+#   8.  CUDA compat check → PyTorch install
+#   9.  vLLM-Omni venv + HuggingFace CLI
+#   10. CUDA 13.2 toolchain check/install
+#   11. vLLM-Omni source build (sm120 / CUDA 13.2)
+#   12. Download Qwen3-14B-AWQ model (lazy HF token)
+
+set -euo pipefail
+
+MARKER_DIR="${HOME}/.local/share/fedora-provision"
+MARKER_FILE="${MARKER_DIR}/first-login.done"
+LOG_FILE="${MARKER_DIR}/first-login.log"
+ENV_FILE="/etc/fedora-provision.env"
+
+mkdir -p "$MARKER_DIR"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+# Modell-Verzeichnis von ~/.cache getrennt — überlebt cache-Bereinigungen
+export HF_HOME="${HOME}/.models/huggingface"
+export TRANSFORMERS_CACHE="${HF_HOME}/hub"
+mkdir -p "$HF_HOME"
+
+log()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO]  $*"; }
+warn() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARN]  $*"; }
+err()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $*" >&2; }
+die()  { err "$*"; exit 1; }
+step() { echo; echo "══ $* ══"; }
+
+have_passwordless_sudo() {
+    sudo -n true 2>/dev/null
+}
+
+# ── Idempotency guard ─────────────────────────────────────────────────────────
+if [[ -f "$MARKER_FILE" ]]; then
+    log "First-login already completed. Removing autostart entry."
+    rm -f "${HOME}/.config/autostart/fedora-first-login.desktop"
+    exit 0
+fi
+
+# ── Load provisioning env ─────────────────────────────────────────────────────
+[[ -f "$ENV_FILE" ]] && source "$ENV_FILE"
+
+INSTALL_PROFILE="${FEDORA_INSTALL_PROFILE:-full}"
+log "Install profile: ${INSTALL_PROFILE}"
+
+TARGET_USER="${FEDORA_TARGET_USER:-${USER}}"
+PYTORCH_VENV="${FEDORA_PYTORCH_VENV:-${HOME}/.venvs/ai}"
+VLLM_VENV="${FEDORA_VLLM_VENV:-${HOME}/.venvs/bitwig-omni}"
+VLLM_CUDA_VERSION="${FEDORA_VLLM_CUDA_VERSION:-13.2}"
+VLLM_ARCH_LIST="${FEDORA_VLLM_ARCH_LIST:-12.0}"
+VLLM_MODEL="${FEDORA_VLLM_MODEL:-Qwen/Qwen3-14B-AWQ}"
+WS_GTK_ARGS="${FEDORA_WS_GTK_ARGS:-}"
+WS_ICON_ARGS="${FEDORA_WS_ICON_ARGS:-}"
+WS_WALL_ARGS="${FEDORA_WS_WALL_ARGS:-}"
+OMB_THEME="${FEDORA_OMB_THEME:-modern}"
+
+THEMES_DIR="${HOME}/.cache/fedora-themes-build"
+
+# ── Profile: headless profiles skip all GUI steps ────────────────────────────
+if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
+    step "Headless profile (${INSTALL_PROFILE}) — skipping GUI provisioning"
+    log "GNOME steps 1-5 skipped. Oh-My-Bash + AI steps will run via systemd service."
+fi
+
+# ── 1. Flatpak Extension Manager ──────────────────────────────────────────────
+step "Flatpak Extension Manager"
+if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
+    log "Skipped (headless profile)."
+elif ! flatpak list --user 2>/dev/null | grep -q 'com.mattjakeman.ExtensionManager'; then
+    log "Installing Extension Manager..."
+    flatpak install --user --noninteractive flathub com.mattjakeman.ExtensionManager \
+        || warn "Extension Manager install failed (non-fatal)."
+else
+    log "Extension Manager already installed."
+fi
+
+# ── 2. GNOME extensions aktivieren ───────────────────────────────────────────
+step "GNOME extensions"
+if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
+    log "Skipped (headless profile)."
+else
+    EXTENSIONS=(
+        "user-theme@gnome-shell-extensions.gcampax.github.com"
+        "dash-to-dock@micxgx.gmail.com"
+        "blur-my-shell@aunetx"
+        "caffeine@patapon.info"
+        "appindicatorsupport@rgcjonas.gmail.com"
+    )
+    # dash-to-panel kollidiert mit dash-to-dock — explizit ausgeschlossen
+    CONFLICTING=("dash-to-panel@jderose9.github.com")
+
+    # Nur gsettings schreiben — kein DBUS Enable/Disable.
+    # DBUS EnableExtension triggert GNOME Shell zur sofortigen Neubewertung und
+    # überschreibt dconf wieder wenn dash-to-dock nicht im laufenden Scan-Ergebnis
+    # auftaucht (race condition bei frisch installierten System-Extensions).
+    # gsettings-Wert wirkt sicher beim nächsten GNOME-Start.
+    if command -v gsettings &>/dev/null; then
+        current=$(gsettings get org.gnome.shell enabled-extensions 2>/dev/null || echo "[]")
+        current=$(echo "$current" | grep -oP "'[^']+'" | tr -d "'" | grep -v '^$' || true)
+        new_list=""
+        for ext in "${EXTENSIONS[@]}"; do
+            new_list+="'${ext}', "
+            echo "$current" | grep -qF "$ext" || log "Füge zur enabled-Liste hinzu: $ext"
+        done
+        while IFS= read -r e; do
+            [[ -z "$e" ]] && continue
+            found=0
+            for ext in "${EXTENSIONS[@]}"; do [[ "$e" == "$ext" ]] && found=1; done
+            for ext in "${CONFLICTING[@]}"; do [[ "$e" == "$ext" ]] && found=1; done
+            [[ $found -eq 0 ]] && new_list+="'${e}', "
+        done <<< "$current"
+        new_list="[${new_list%, }]"
+        gsettings set org.gnome.shell enabled-extensions "$new_list" 2>/dev/null \
+            && log "Extensions in gsettings gesetzt: $new_list" \
+            || warn "gsettings enabled-extensions fehlgeschlagen."
+    fi
+
+    # ── Dash-to-Dock Konfiguration (macOS-Stil) ───────────────────────────────
+    dtd() { gsettings set org.gnome.shell.extensions.dash-to-dock "$@" 2>/dev/null || true; }
+    dtd dock-position            BOTTOM
+    dtd dock-fixed               false
+    dtd autohide                 true
+    dtd intellihide              true
+    dtd intellihide-mode         FOCUS_APPLICATION_WINDOWS
+    dtd animation-time           0.15
+    dtd require-pressure-to-show false
+    dtd show-delay               0.1
+    dtd hide-delay               0.2
+    dtd transparency-mode        DYNAMIC
+    dtd min-alpha                0.85
+    dtd max-alpha                0.95
+    dtd dash-max-icon-size       48
+    dtd icon-size-fixed          false
+    dtd running-indicator-style  DOTS
+    dtd show-running             true
+    dtd show-trash               true
+    dtd show-mounts              true
+    dtd show-apps-at-top         true
+    dtd click-action             cycle-windows
+    dtd scroll-action            switch-workspace
+    dtd hot-keys                 true
+    dtd isolate-workspaces       false
+    dtd extend-height            false
+    dtd disable-overview-on-startup true
+    log "Dash-to-Dock konfiguriert (macOS-Stil)."
+
+    # GNOME Shell: Overview beim Login nicht anzeigen → direkt zum Desktop
+    gsettings set org.gnome.shell disable-overview-on-startup true 2>/dev/null || true
+    log "GNOME Overview-on-startup deaktiviert."
+fi
+
+# ── 3-5. WhiteSur themes ──────────────────────────────────────────────────
+step "WhiteSur themes"
+if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm)$ ]]; then
+    log "Skipped (headless profile)."
+else
+
+WHITESUR_ERRORS=()
+
+ws_install_theme() {
+    local repo_name="$1"       # e.g. WhiteSur-gtk-theme
+    local repo_url="$2"
+    local install_dest_flag="$3"   # e.g. "-d ~/.local/share/themes"
+    local extra_args="$4"
+    local install_dir="${THEMES_DIR}/${repo_name}"
+
+    log "WhiteSur: $repo_name"
+
+    # Clone or pull
+    if [[ -d "$install_dir/.git" ]]; then
+        log "  Updating existing repo..."
+        git -C "$install_dir" pull --ff-only 2>&1 | while read -r l; do log "  git: $l"; done || \
+            warn "  git pull failed for $repo_name (continuing)."
+    else
+        mkdir -p "$THEMES_DIR"
+        log "  Cloning $repo_url..."
+        git clone --depth=1 "$repo_url" "$install_dir" 2>&1 | \
+            while read -r l; do log "  git: $l"; done || {
+                WHITESUR_ERRORS+=("$repo_name: git clone failed")
+                return
+            }
+    fi
+
+    local args_var="$extra_args"
+
+    # Run installer — cd into repo dir so relative paths (e.g. 'dist/') work
+    local install_sh="${install_dir}/install.sh"
+    if [[ ! -x "$install_sh" ]]; then
+        WHITESUR_ERRORS+=("$repo_name: install.sh not found or not executable")
+        return
+    fi
+
+    # TERM=xterm: setterm -cursor off inside install.sh fails with TERM=dumb (SSH default), exiting non-zero
+    # shellcheck disable=SC2086
+    local _tmpout
+    _tmpout=$(mktemp)
+    if (cd "$install_dir" && TERM=xterm bash "./install.sh" $install_dest_flag $args_var) >"$_tmpout" 2>&1; then
+        while IFS= read -r l; do log "  install: $l"; done < "$_tmpout"
+        rm -f "$_tmpout"
+        log "  $repo_name installed successfully."
+    else
+        while IFS= read -r l; do log "  install: $l"; done < "$_tmpout"
+        rm -f "$_tmpout"
+        WHITESUR_ERRORS+=("$repo_name: install.sh exited with error")
+    fi
+}
+
+GTK_DEST="-d ${HOME}/.local/share/themes"
+ICON_DEST="-d ${HOME}/.local/share/icons"
+
+ws_install_theme \
+    "WhiteSur-gtk-theme" \
+    "https://github.com/vinceliuice/WhiteSur-gtk-theme.git" \
+    "$GTK_DEST" \
+    "-l -c Dark"
+
+# Icon Theme (kein dark-Variant vorhanden — Standard WhiteSur blau)
+ws_install_theme \
+    "WhiteSur-icon-theme" \
+    "https://github.com/vinceliuice/WhiteSur-icon-theme.git" \
+    "$ICON_DEST" \
+    ""
+
+# Wallpapers — install-gnome-backgrounds.sh (nicht install.sh!)
+walls_dir="${THEMES_DIR}/WhiteSur-wallpapers"
+log "WhiteSur: WhiteSur-wallpapers"
+mkdir -p "$THEMES_DIR"
+# Sicherstellen dass gnome-background-properties ein Verzeichnis ist, nicht eine Datei
+[[ -f "${HOME}/.local/share/gnome-background-properties" ]] && \
+    rm -f "${HOME}/.local/share/gnome-background-properties"
+mkdir -p "${HOME}/.local/share/gnome-background-properties"
+if [[ -d "${walls_dir}/.git" ]]; then
+    git -C "$walls_dir" pull --ff-only 2>&1 | while read -r l; do log "  git: $l"; done || \
+        warn "  git pull failed for wallpapers (continuing)."
+else
+    git clone --depth=1 "https://github.com/vinceliuice/WhiteSur-wallpapers.git" "$walls_dir" 2>&1 | \
+        while read -r l; do log "  git: $l"; done || { WHITESUR_ERRORS+=("WhiteSur-wallpapers: clone failed"); }
+fi
+if [[ -x "${walls_dir}/install-gnome-backgrounds.sh" ]]; then
+    (cd "$walls_dir" && bash install-gnome-backgrounds.sh $WS_WALL_ARGS) 2>&1 | \
+        while read -r l; do log "  install: $l"; done \
+        && log "  WhiteSur-wallpapers installed successfully." \
+        || WHITESUR_ERRORS+=("WhiteSur-wallpapers: install failed")
+fi
+
+# WhiteSur Cursor Theme
+ws_install_theme \
+    "WhiteSur-cursors" \
+    "https://github.com/vinceliuice/WhiteSur-cursors.git" \
+    "$ICON_DEST" \
+    ""
+
+
+# GNOME theme + Wallpaper anwenden
+_dbus_addr="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}"
+gs() { DBUS_SESSION_BUS_ADDRESS="$_dbus_addr" gsettings "$@" 2>/dev/null || true; }
+
+if command -v gsettings &>/dev/null; then
+    gs set org.gnome.desktop.interface color-scheme 'prefer-dark'
+    gs set org.gnome.desktop.interface icon-theme   'WhiteSur-dark'
+    gs set org.gnome.desktop.interface cursor-theme 'WhiteSur-cursors'
+    wallpaper=$(find "${HOME}/.local/share/backgrounds/WhiteSur" -name "*.jpg" -o -name "*.png" 2>/dev/null | head -1)
+    [[ -n "$wallpaper" ]] && {
+        gs set org.gnome.desktop.background picture-uri      "file://${wallpaper}"
+        gs set org.gnome.desktop.background picture-uri-dark "file://${wallpaper}"
+        # dconf write als direktes Fallback — funktioniert ohne aktive GNOME-Session
+        if command -v dconf &>/dev/null; then
+            dconf write /org/gnome/desktop/background/picture-uri      "'file://${wallpaper}'" 2>/dev/null || true
+            dconf write /org/gnome/desktop/background/picture-uri-dark "'file://${wallpaper}'" 2>/dev/null || true
+        fi
+        log "Wallpaper gesetzt: $wallpaper"
+    }
+    log "GNOME theme applied: WhiteSur libadwaita + WhiteSur-dark icons + WhiteSur-cursors"
+
+    # ── GNOME/GTK display tweaks ──────────────────────────────────────────────
+    gs set org.gnome.desktop.interface font-antialiasing  'rgba'
+    gs set org.gnome.desktop.interface font-hinting       'slight'
+    gs set org.gnome.desktop.interface enable-animations  true
+    gs set org.gnome.desktop.interface clock-format       '24h'
+    gs set org.gnome.desktop.sound     event-sounds       false
+    log "GNOME tweaks applied: font-antialiasing=rgba, font-hinting=slight, clock=24h, bell=off."
+
+    # ── Night Light (Blaulichtfilter ab 20:00 bis 07:00) ─────────────────────
+    gs set org.gnome.settings-daemon.plugins.color night-light-enabled    true
+    gs set org.gnome.settings-daemon.plugins.color night-light-schedule-automatic false
+    gs set org.gnome.settings-daemon.plugins.color night-light-schedule-from 20.0
+    gs set org.gnome.settings-daemon.plugins.color night-light-schedule-to   7.0
+    gs set org.gnome.settings-daemon.plugins.color night-light-temperature  3500
+    log "Night Light aktiviert: 20:00–07:00, 3500K."
+fi
+
+# Repos nach Installation entfernen — Theme-Dateien sind in ~/.local/share/ installiert
+log "Theme-Repos gecacht: $THEMES_DIR (git pull bei nächstem Aufruf)"
+
+fi  # end: WhiteSur themes headless guard
+
+# ── 6. Oh My Bash ─────────────────────────────────────────────────────────────
+step "Oh My Bash"
+
+OMB_DIR="${HOME}/.oh-my-bash"
+if [[ -d "$OMB_DIR" ]]; then
+    log "Oh My Bash already installed."
+else
+    log "Installing Oh My Bash (unattended)..."
+    bash <(curl -fsSL https://raw.githubusercontent.com/ohmybash/oh-my-bash/master/tools/install.sh) \
+        --unattended \
+        || warn "Oh My Bash install script failed (non-fatal)."
+fi
+
+# Set / correct theme in ~/.bashrc
+if [[ -f "${HOME}/.bashrc" ]]; then
+    if grep -q 'OSH_THEME=' "${HOME}/.bashrc"; then
+        sed -i "s|^OSH_THEME=.*|OSH_THEME=\"${OMB_THEME}\"|" "${HOME}/.bashrc"
+        log "Updated OSH_THEME to '${OMB_THEME}' in ~/.bashrc"
+    else
+        echo "OSH_THEME=\"${OMB_THEME}\"" >> "${HOME}/.bashrc"
+        log "Appended OSH_THEME='${OMB_THEME}' to ~/.bashrc"
+    fi
+    # shellcheck source=/dev/null
+    source "${HOME}/.bashrc" 2>/dev/null || true
+fi
+
+# ── Profile: theme-bash stops after Oh-My-Bash ───────────────────────────────
+if [[ "$INSTALL_PROFILE" == "theme-bash" ]]; then
+    step "theme-bash profile — skipping AI/vLLM provisioning"
+    log "Steps 7-12 skipped (no GPU compute required for theme-bash)."
+    touch "$MARKER_FILE"
+    rm -f "${HOME}/.config/autostart/fedora-first-login.desktop"
+    log "First-login provisioning complete (theme-bash). Log: $LOG_FILE"
+    exit 0
+fi
+
+# ── Profile: headless-vllm / vllm-only — Multi-Model Router aktivieren ───────
+if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
+    step "vLLM Multi-Model Router"
+
+    QUADLET_TPL="${HOME}/.config/containers/systemd/vllm@.container"
+    ROUTER_UNIT="${HOME}/.config/systemd/user/vllm-router.service"
+    REPO_DIR="/usr/local/share/fedora-autoinstall"
+
+    if [[ ! -f "$QUADLET_TPL" || ! -f "$ROUTER_UNIT" ]]; then
+        warn "Quadlet-Template oder Router-Unit fehlt — first-boot.sh lief ggf. noch nicht."
+    else
+        # Image vorab pullen (Custom-Build bevorzugt, sonst Upstream)
+        VLLM_IMAGE="localhost/fedora-vllm:latest"
+        if ! podman image exists "$VLLM_IMAGE" 2>/dev/null; then
+            warn "Custom-Image '${VLLM_IMAGE}' fehlt — bauen mit:"
+            warn "  ./scripts/podman-pipeline.sh --build-vllm"
+        fi
+
+        # Router-venv + Wrapper
+        ROUTER_VENV="${HOME}/.venvs/vllm-router"
+        if [[ ! -d "$ROUTER_VENV" ]]; then
+            log "Erstelle Router-venv: $ROUTER_VENV"
+            python3 -m venv "$ROUTER_VENV"
+            "$ROUTER_VENV/bin/pip" install --quiet --upgrade pip
+            "$ROUTER_VENV/bin/pip" install --quiet fastapi uvicorn httpx \
+                || warn "Router-venv Pip-Install fehlgeschlagen."
+        fi
+
+        # Router-Script + Wrapper installieren
+        mkdir -p "${HOME}/.local/bin" "${HOME}/.local/share/vllm-router"
+        if [[ -f "${REPO_DIR}/scripts/vllm-router.py" ]]; then
+            install -m 0644 "${REPO_DIR}/scripts/vllm-router.py" \
+                "${HOME}/.local/share/vllm-router/vllm-router.py"
+        fi
+        cat > "${HOME}/.local/bin/vllm-router" <<WRAPEOF
+#!/usr/bin/env bash
+exec "${ROUTER_VENV}/bin/python" "${HOME}/.local/share/vllm-router/vllm-router.py"
+WRAPEOF
+        chmod 0755 "${HOME}/.local/bin/vllm-router"
+
+        # Linger aktivieren, damit User-Services ohne aktive Session laufen
+        if have_passwordless_sudo; then
+            sudo loginctl enable-linger "$USER" 2>/dev/null \
+                && log "Linger aktiviert (Services laufen ohne aktive Session)." \
+                || warn "loginctl enable-linger fehlgeschlagen."
+        fi
+
+        systemctl --user daemon-reload
+        systemctl --user enable --now vllm-router.service 2>/dev/null \
+            && log "vllm-router.service aktiviert (Port 8000)." \
+            || warn "vllm-router.service enable fehlgeschlagen."
+
+        log "OpenAI-API: http://localhost:8000/v1"
+        log "Registry:   ${HOME}/.config/vllm-router/models.json"
+        log "Modelle:    curl http://localhost:8000/v1/models"
+    fi
+fi
+
+# Entfernt: alte venv-basierte vLLM-Source-Builds (PyTorch, CUDA 13.2 toolchain,
+# vLLM-Omni source build, Model-Download). vLLM läuft im Podman-Container
+# (Containerfile.vllm), aktiviert via vllm-router.service + vllm@.container Template.
+
+# ── Final report ──────────────────────────────────────────────────────────────
+step "First-login provisioning complete"
+
+if [[ -v WHITESUR_ERRORS ]] && [[ "${#WHITESUR_ERRORS[@]}" -gt 0 ]]; then
+    warn "WhiteSur errors encountered:"
+    for e in "${WHITESUR_ERRORS[@]}"; do
+        warn "  - $e"
+    done
+fi
+
+touch "$MARKER_FILE"
+log "Marker written: $MARKER_FILE"
+
+# Remove autostart entry — we're done
+rm -f "${HOME}/.config/autostart/fedora-first-login.desktop"
+log "Autostart entry removed."
+log "First-login provisioning finished. Log: $LOG_FILE"
 
 FLEOF
 chmod 0755 /usr/local/bin/fedora-first-login.sh
 
 # ── Write systemd unit for first-boot ────────────────────────────────────────
 cat > /etc/systemd/system/fedora-first-boot.service <<'UNITEOF'
+[Unit]
+Description=Fedora First-Boot Provisioning (one-shot)
+Documentation=https://github.com/user/fedora-install
+After=network-online.target
+Wants=network-online.target
+# Ensure this runs only on first boot; marker file disables it on subsequent boots
+ConditionPathExists=!/var/lib/fedora-provision/first-boot.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/fedora-first-boot.sh
+EnvironmentFile=-/etc/fedora-provision.env
+StandardOutput=journal+console
+StandardError=journal+console
+TimeoutStartSec=3600
+RemainAfterExit=yes
+
+# Prevent privilege escalation
+NoNewPrivileges=no
+# Service runs as root (required for dnf, systemctl, akmods)
+User=root
+
+[Install]
+WantedBy=multi-user.target
 
 UNITEOF
 

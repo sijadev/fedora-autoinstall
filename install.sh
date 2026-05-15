@@ -120,7 +120,10 @@ if [[ "$CONFIG_MODE" == "xml" ]]; then
     log "XML: $XML_FILE"
     err_out=$(python3 "${SCRIPT_DIR}/lib/xml2ks.py" \
         --config "$XML_FILE" \
-        --output "${SCRIPT_DIR}/kickstart/fedora-full.ks" 2>&1) && {
+        --output "${SCRIPT_DIR}/kickstart/fedora-full.ks" \
+        --first-boot-script  "${SCRIPT_DIR}/scripts/first-boot.sh" \
+        --first-login-script "${SCRIPT_DIR}/scripts/first-login.sh" \
+        --systemd-unit       "${SCRIPT_DIR}/systemd/fedora-first-boot.service" 2>&1) && {
         log "Kickstart aus XML generiert: kickstart/fedora-full.ks"
     } || {
         warn "XML-Konfiguration konnte nicht angewendet werden — Kickstart bleibt unverändert."

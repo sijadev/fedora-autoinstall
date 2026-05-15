@@ -645,7 +645,7 @@ class GenerateKickstartTests(unittest.TestCase):
 
     def test_base_packages_present(self):
         ks = self._ks()
-        for pkg in ("@^fedora-desktop", "git", "curl", "python3", "flatpak"):
+        for pkg in ("@^workstation-product-environment", "git", "curl", "python3", "flatpak"):
             with self.subTest(pkg=pkg):
                 self.assertIn(pkg, ks)
 

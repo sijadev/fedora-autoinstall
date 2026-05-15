@@ -191,7 +191,7 @@ def generate_kickstart(
 
     # ── Package list ──────────────────────────────────────────────────────────
     base_packages = [
-        "@^fedora-desktop",
+        "@^workstation-product-environment",
         "git",
         "curl",
         "python3",
