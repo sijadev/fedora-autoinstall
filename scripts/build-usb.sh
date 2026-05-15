@@ -49,8 +49,8 @@ step() { echo -e "\n${CYAN}${BOLD}══ $* ══${RESET}"; }
 
 # ── Voraussetzungen ───────────────────────────────────────────────────────────
 step "Voraussetzungen"
-for cmd in sgdisk mkfs.fat grub2-install xorriso cpio zstd rpm2cpio; do
-    command -v "$cmd" &>/dev/null || die "'$cmd' fehlt. Installiere: dnf install gdisk dosfstools grub2-efi-x64 grub2-tools xorriso cpio zstd rpm-build"
+for cmd in sgdisk mkfs.fat grub2-install cpio file; do
+    command -v "$cmd" &>/dev/null || die "'$cmd' fehlt. Installiere: dnf install gdisk dosfstools grub2-efi-x64 grub2-tools cpio file"
 done
 log "Alle Tools vorhanden."
 
@@ -194,13 +194,13 @@ grub2-install \
 
 log "GRUB2 installiert."
 
-# grub.cfg auf die EFI-Partition schreiben (GRUB sucht dort)
+# grub.cfg auf die EFI-Partition schreiben (BOOTX64.EFI sucht dort zuerst)
 mkdir -p "${EFI_MNT}/EFI/BOOT"
 install -m 0644 "${PROJECT_DIR}/boot/grub.cfg" "${EFI_MNT}/EFI/BOOT/grub.cfg"
-# Zusätzlich in boot/grub/ (Boot-Verzeichnis) — GRUB sucht an beiden Orten
-mkdir -p "${DATA_MNT}/boot/grub"
-install -m 0644 "${PROJECT_DIR}/boot/grub.cfg" "${DATA_MNT}/boot/grub/grub.cfg"
-log "grub.cfg kopiert."
+# Auch in boot/grub2/ — grub2-install legt Module dort ab, GRUB sucht cfg dort
+mkdir -p "${DATA_MNT}/boot/grub2"
+install -m 0644 "${PROJECT_DIR}/boot/grub.cfg" "${DATA_MNT}/boot/grub2/grub.cfg"
+log "grub.cfg kopiert (EFI/BOOT/ + boot/grub2/)."
 
 # ── Fedora-Installer-Kernel + initrd kopieren ────────────────────────────────
 step "Kernel + initrd auf USB kopieren"
