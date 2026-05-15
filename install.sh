@@ -86,18 +86,17 @@ else
     fi
 fi
 
-# ── Konfiguration anwenden ────────────────────────────────────────────────────
-step "Konfiguration anwenden"
+# ── Konfiguration anwenden (optional) ────────────────────────────────────────
 CONFIG_FILE="${SCRIPT_DIR}/config/install.json"
 if [[ -f "$CONFIG_FILE" ]]; then
-    if python3 "${SCRIPT_DIR}/scripts/apply-config.py" --config "$CONFIG_FILE"; then
+    step "Konfiguration anwenden"
+    err_out=$(python3 "${SCRIPT_DIR}/scripts/apply-config.py" --config "$CONFIG_FILE" 2>&1) && {
         log "Kickstarts aktualisiert."
-    else
-        die "Konfiguration konnte nicht angewendet werden — install.json prüfen."
-    fi
-else
-    warn "config/install.json nicht gefunden — Kickstarts unverändert."
-    warn "Vorlage: config/install.json (aus config/install.json.example kopieren)"
+    } || {
+        warn "config/install.json konnte nicht angewendet werden — Kickstarts bleiben unverändert."
+        warn "Fehler: $err_out"
+        warn "Zum manuellen Anwenden: python3 scripts/apply-config.py --config config/install.json"
+    }
 fi
 
 # ── USB-Stick bauen ───────────────────────────────────────────────────────────
