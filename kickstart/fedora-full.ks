@@ -1250,3 +1250,42 @@ DESKTOPEOF
 chown -R sija:sija "$AUTOSTART_DIR"
 
 %end
+
+# ── %post --nochroot: Anaconda-Logs auf USB-Stick sichern ────────────────────
+# Läuft im Installer-Environment (nicht im chroot), daher haben wir Zugriff auf
+# /tmp/anaconda.log etc. und können den USB-Stick unter /run/install/repo finden.
+%post --nochroot --log=/tmp/ks-post-nochroot.log
+set -x
+
+LOG_DEST=""
+
+# Anaconda hängt den Install-USB i.d.R. unter /run/install/repo ein
+if mountpoint -q /run/install/repo 2>/dev/null; then
+    LOG_DEST="/run/install/repo/install-logs"
+fi
+
+# Fallback: USB per Label suchen und selbst einbinden
+if [[ -z "$LOG_DEST" ]]; then
+    USB_DEV=$(blkid -L "FEDORA-USB" 2>/dev/null || true)
+    if [[ -n "$USB_DEV" ]]; then
+        mkdir -p /mnt/fedora-usb-logs
+        mount "$USB_DEV" /mnt/fedora-usb-logs 2>/dev/null && LOG_DEST="/mnt/fedora-usb-logs/install-logs"
+    fi
+fi
+
+if [[ -n "$LOG_DEST" ]]; then
+    mkdir -p "$LOG_DEST"
+    for f in /tmp/anaconda.log /tmp/packaging.log /tmp/program.log \
+              /tmp/storage.log /tmp/syslog /tmp/ks-post-nochroot.log \
+              /root/ks-post.log; do
+        [[ -f "$f" ]] && cp "$f" "$LOG_DEST/" || true
+    done
+    sync
+    echo "Logs gesichert nach: $LOG_DEST"
+    ls -lh "$LOG_DEST/" || true
+    # Falls selbst gemountet: aushängen
+    mountpoint -q /mnt/fedora-usb-logs 2>/dev/null && umount /mnt/fedora-usb-logs || true
+else
+    echo "WARNUNG: USB-Stick (FEDORA-USB) nicht gefunden — Logs nicht gesichert."
+fi
+%end
