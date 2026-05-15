@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# sync-usb.sh — synchronisiert das Repo auf den FEDORA-USB-Stick.
-# - Kopiert kickstart/, scripts/, systemd/, boot/grub.cfg und fedora-provision.sh
-# - Entfernt veraltete Dateien
-# - Kernel (boot/vmlinuz, boot/initrd.img) wird NICHT aktualisiert — dafür build-usb.sh verwenden
-# - Wird von vm-test.sh aufgerufen, kann aber auch standalone laufen
+# sync-usb.sh — prüft ob der FEDORA-USB-Stick aktuell ist.
+#
+# WICHTIG: Kickstarts und Scripts sind in der initrd eingebettet.
+# Änderungen daran werden erst nach einem USB-Rebuild wirksam:
+#   sudo ./install.sh /dev/sdX
+#
+# sync-usb.sh ist nur noch nützlich für:
+#   - --check: Drift erkennen (wird von vm-test.sh als Gate genutzt)
+#   - grub.cfg und Dateien die nach der Installation vom USB gelesen werden
 #
 # Usage:
-#   scripts/sync-usb.sh                 # interaktiv, mit Diff-Anzeige
+#   scripts/sync-usb.sh                 # interaktiv, zeigt Drift + Hinweis auf install.sh
 #   scripts/sync-usb.sh --check         # nur prüfen (Exit 1 bei Drift), kein Schreiben
-#   scripts/sync-usb.sh --force         # ohne Rückfrage, ohne Diff
+#   scripts/sync-usb.sh --force         # Dateien kopieren (ohne initrd-Rebuild)
 
 set -euo pipefail
 
@@ -134,8 +138,11 @@ if [[ "$MODE" == "check" ]]; then
 fi
 
 if [[ "$MODE" == "interactive" ]]; then
-    read -r -t 15 -p "Jetzt synchronisieren? [J/n] " ans 2>/dev/tty || ans="J"
-    [[ "${ans,,}" == "n" ]] && die "Sync abgebrochen."
+    echo -e "${YELLOW}Hinweis:${RESET} Kickstarts und Scripts sind in der initrd eingebettet."
+    echo -e "         Für einen vollständigen Update: ${BOLD}sudo ./install.sh /dev/sdX${RESET}"
+    echo ""
+    read -r -t 15 -p "Trotzdem nur Dateien auf USB kopieren? [j/N] " ans 2>/dev/tty || ans="N"
+    [[ "${ans,,}" != "j" ]] && die "Abgebrochen — bitte sudo ./install.sh /dev/sdX ausführen."
 fi
 
 # ── Apply ─────────────────────────────────────────────────────────────────────
