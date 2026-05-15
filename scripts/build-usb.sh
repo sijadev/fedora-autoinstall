@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build-usb.sh — Erstellt einen bootbaren FEDORA-USB-Stick mit GRUB2 + Bazzite-Kernel.
+# build-usb.sh — Erstellt einen bootbaren FEDORA-USB-Stick mit GRUB2 + Kernel.
 #
 # Ersetzt Ventoy. Einmaliger Aufbau; danach sync-usb.sh für Updates verwenden.
 #
@@ -7,9 +7,9 @@
 #   Part 1: 256 MB  FAT32  LABEL=EFI         (EFI System Partition)
 #   Part 2: Rest    FAT32  LABEL=FEDORA-USB  (Kickstart, Scripts, Kernel)
 #
-# Kernel: Bazzite-COPR (kernel-bazzite-core + kernel-bazzite-modules)
-#   Bringt sm_120/Blackwell-Support für RTX 9070/50xx ohne iGPU-Workaround.
+# Kernel: Fedora 43 Mirror (kernel + kernel-modules + kernel-devel)
 #   RPMs werden in iso/kernel-cache/ gecacht.
+#   Später: Bazzite-Kernel für Blackwell-Support (RTX 9070/50xx) austauschbar.
 #
 # Stage2: Fedora Mirror (Netzwerk) — kein ISO auf USB nötig.
 #
@@ -89,8 +89,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# ── Bazzite-Kernel besorgen ───────────────────────────────────────────────────
-step "Bazzite-Kernel besorgen"
+# ── Kernel besorgen (Fedora 43 Mirror) ────────────────────────────────────────
+step "Kernel besorgen (Fedora 43 Mirror)"
 
 KERNEL_CACHE="${PROJECT_DIR}/iso/kernel-cache"
 mkdir -p "$KERNEL_CACHE"
@@ -100,21 +100,18 @@ if [[ -n "$KERNEL_RPM" ]]; then
     cp "$KERNEL_RPM" "$KERNEL_EXTRACT/"
 else
     # Cache: alle RPMs aus kernel-cache/ verwenden falls vorhanden
-    cached_core=$(ls -t "${KERNEL_CACHE}"/kernel-bazzite-core-*.rpm 2>/dev/null | head -1 || true)
-    cached_mods=$(ls -t "${KERNEL_CACHE}"/kernel-bazzite-modules-*.rpm 2>/dev/null | head -1 || true)
+    cached_kernel=$(ls -t "${KERNEL_CACHE}"/kernel-*.rpm 2>/dev/null | head -1 || true)
+    cached_mods=$(ls -t "${KERNEL_CACHE}"/kernel-modules-*.rpm 2>/dev/null | head -1 || true)
 
-    if [[ -n "$cached_core" && -n "$cached_mods" ]]; then
+    if [[ -n "$cached_kernel" && -n "$cached_mods" ]]; then
         log "Verwende gecachte RPMs:"
-        log "  Core:    $(basename "$cached_core")"
+        log "  Kernel:  $(basename "$cached_kernel")"
         log "  Modules: $(basename "$cached_mods")"
-        cp "$cached_core" "$cached_mods" "$KERNEL_EXTRACT/"
+        cp "$cached_kernel" "$cached_mods" "$KERNEL_EXTRACT/"
     else
-        log "Lade kernel-bazzite von COPR (Fedora 43)..."
-        dnf \
-            --repofrompath="bazzite-kernel,https://download.copr.fedorainfracloud.org/results/bazzite-org/kernel-bazzite/fedora-43-x86_64/" \
-            --disablerepo='*' --enablerepo=bazzite-kernel \
-            download --destdir="$KERNEL_EXTRACT" \
-            kernel-bazzite-core kernel-bazzite-modules \
+        log "Lade kernel von verfügbaren Repos..."
+        dnf download --destdir="$KERNEL_EXTRACT" \
+            kernel kernel-modules kernel-devel \
             || die "Kernel-RPM-Download fehlgeschlagen. Versuche --kernel-rpm <pfad>"
         # Cache für nächsten Durchlauf
         cp "${KERNEL_EXTRACT}"/*.rpm "$KERNEL_CACHE/" 2>/dev/null || true
@@ -129,9 +126,23 @@ for rpm in *.rpm; do
 done
 popd >/dev/null
 
-NEW_VMLINUZ=$(find "$KERNEL_EXTRACT/lib/modules" -name vmlinuz | head -1)
-[[ -z "$NEW_VMLINUZ" ]] && die "vmlinuz nicht in Kernel-RPM gefunden."
-NEW_KVER=$(basename "$(dirname "$NEW_VMLINUZ")")
+NEW_VMLINUZ=$(find "$KERNEL_EXTRACT" -path "*/boot/vmlinuz*" -o -path "*/lib/modules/*/vmlinuz*" 2>/dev/null | head -1 || true)
+
+# Fallback: Aktuellen System-Kernel verwenden
+if [[ -z "$NEW_VMLINUZ" ]]; then
+    warn "vmlinuz nicht in RPM gefunden — verwende System-Kernel als Fallback"
+    if [[ -f "/boot/vmlinuz-$(uname -r)" ]]; then
+        NEW_VMLINUZ="/boot/vmlinuz-$(uname -r)"
+        log "Verwende System-Kernel: $NEW_VMLINUZ"
+    else
+        NEW_VMLINUZ=$(ls -t /boot/vmlinuz* 2>/dev/null | head -1 || true)
+        [[ -z "$NEW_VMLINUZ" ]] && die "Kein vmlinuz gefunden — versuche --kernel-rpm <pfad>"
+        log "Verwende System-Kernel: $NEW_VMLINUZ"
+    fi
+fi
+
+[[ -f "$NEW_VMLINUZ" ]] || die "vmlinuz nicht gefunden: $NEW_VMLINUZ"
+NEW_KVER=$(basename "$NEW_VMLINUZ" | sed 's/vmlinuz-//')
 log "Bazzite-Kernel: $NEW_KVER"
 
 # ── Anaconda-initrd mit Bazzite-Modulen bauen ────────────────────────────────
@@ -213,6 +224,7 @@ grub2-install \
     --boot-directory="${DATA_MNT}/boot" \
     --removable \
     --no-nvram \
+    --force \
     || die "grub2-install fehlgeschlagen."
 
 log "GRUB2 installiert."

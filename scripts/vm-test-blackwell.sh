@@ -13,14 +13,31 @@
 # Was NICHT geprüft wird: echte NVIDIA-Driver-Hangs (braucht Hardware).
 #
 # Usage:
-#   scripts/vm-test-blackwell.sh
-#   scripts/vm-test-blackwell.sh --keep   # VM nach Test behalten
+#   scripts/vm-test-blackwell.sh              # embedded ks.cfg im ISO (default)
+#   scripts/vm-test-blackwell.sh --keep       # VM nach Test behalten
+#   scripts/vm-test-blackwell.sh --usb        # ks.cfg von USB (via /run/install/source)
+#   scripts/vm-test-blackwell.sh --http       # ks.cfg von HTTP-Server
 
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KEEP=0
-[[ "${1:-}" == "--keep" ]] && KEEP=1
+HTTP_MODE=0
+USB_MODE=0
+
+for arg in "$@"; do
+    case "$arg" in
+        --keep) KEEP=1 ;;
+        --http) HTTP_MODE=1 ;;
+        --usb)  USB_MODE=1 ;;
+        *)      echo "Unbekanntes Argument: $arg" >&2; exit 2 ;;
+    esac
+done
+
+# HTTP und USB sind Alternativen
+if (( HTTP_MODE && USB_MODE )); then
+    echo "Fehler: --http und --usb sind Alternativen, nicht kombinierbar" >&2; exit 2
+fi
 
 if [[ -t 1 ]]; then
     RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
@@ -54,7 +71,7 @@ BLACKWELL_ARGS="nomodeset rd.driver.blacklist=nouveau modprobe.blacklist=nouveau
 SERIAL_ARGS="console=tty0 console=ttyS0,115200 inst.text"
 TIMEOUT_BOOT_S=180     # Bis Anaconda startet
 TIMEOUT_TOTAL_S=1800   # Gesamt-Install max 30 Min
-HANG_DETECT_S=120      # Keine neue Serial-Zeile in 120 s = Hang
+HANG_DETECT_S=300      # Keine neue Serial-Zeile in 300 s = Hang
 
 # ── 1. Custom-ISO mit Blackwell-Args bauen ────────────────────────────────────
 step "Custom-ISO mit Blackwell-Boot-Args bauen"
@@ -77,14 +94,42 @@ chmod 0750 "$stage/fedora-provision.sh"
 
 rm -f "$out_iso"
 log "Baue ISO mit Args: ${BLACKWELL_ARGS} ${SERIAL_ARGS}"
-sudo mkksiso \
-    --ks "$stage/ks.cfg" \
-    -c "inst.ks=cdrom:/ks.cfg ${BLACKWELL_ARGS} ${SERIAL_ARGS}" \
-    --add "$stage/scripts" \
-    --add "$stage/kickstart" \
-    --add "$stage/fedora-provision.sh" \
-    "$src_iso" "$out_iso" \
-    || die "mkksiso fehlgeschlagen."
+
+# Boot-Argument basierend auf Modus
+if (( HTTP_MODE )); then
+    KS_ARG="inst.ks=http://192.168.122.1:8000/kickstart/fedora-vm.ks"
+    log "HTTP-Mode: Kickstart kommt vom Host-Server"
+    # Für HTTP: nicht in ISO einbauen
+    sudo mkksiso \
+        -c "${KS_ARG} ${BLACKWELL_ARGS} ${SERIAL_ARGS}" \
+        --add "$stage/scripts" \
+        --add "$stage/kickstart" \
+        --add "$stage/fedora-provision.sh" \
+        "$src_iso" "$out_iso" \
+        || die "mkksiso fehlgeschlagen."
+elif (( USB_MODE )); then
+    KS_ARG="inst.ks=file:///run/install/source/fedora-vm.ks"
+    log "USB-Mode: Kickstart kommt von USB /run/install/source"
+    # Für USB: auch in ISO falls USB nicht vorhanden
+    sudo mkksiso \
+        --ks "$stage/ks.cfg" \
+        -c "${KS_ARG} ${BLACKWELL_ARGS} ${SERIAL_ARGS}" \
+        --add "$stage/scripts" \
+        --add "$stage/kickstart" \
+        --add "$stage/fedora-provision.sh" \
+        "$src_iso" "$out_iso" \
+        || die "mkksiso fehlgeschlagen."
+else
+    # Default: embedded
+    sudo mkksiso \
+        --ks "$stage/ks.cfg" \
+        -c "inst.ks=cdrom:/ks.cfg ${BLACKWELL_ARGS} ${SERIAL_ARGS}" \
+        --add "$stage/scripts" \
+        --add "$stage/kickstart" \
+        --add "$stage/fedora-provision.sh" \
+        "$src_iso" "$out_iso" \
+        || die "mkksiso fehlgeschlagen."
+fi
 log "ISO: $out_iso ($(stat -c '%s' "$out_iso" | numfmt --to=iec))"
 
 # ── 2. Alte VM bereinigen + frische headless-VM anlegen ───────────────────────
@@ -122,15 +167,28 @@ log "Serial-Log: $SERIAL_LOG"
 
 # ── 3. Boot + Monitoring ──────────────────────────────────────────────────────
 step "VM starten und Serial-Console beobachten"
+
+# HTTP-Server für HTTP-Mode starten
+HTTP_PID=""
+if (( HTTP_MODE )); then
+    log "Starte HTTP-Server auf Port 8000 ..."
+    cd "$PROJECT_DIR"
+    python3 -m http.server 8000 &>/dev/null &
+    HTTP_PID=$!
+    trap "kill $HTTP_PID 2>/dev/null || true" EXIT
+    sleep 1
+    log "HTTP-Server aktiv (PID=$HTTP_PID)"
+fi
+
 virsh start "$VM_NAME"
 log "VM gestartet — beobachte Serial-Output (Hang-Erkennung: ${HANG_DETECT_S}s ohne neue Zeile)"
 
 declare -A markers=(
-    [boot]="Linux version"
-    [anaconda]="anaconda|Running pre-installation scripts|inst.ks"
-    [kickstart]="Running %pre|Parsing kickstart"
-    [packages]="Installing|Downloading"
-    [post]="Running %post|first-boot|fedora-provision"
+    [boot]="dracut-pre-udev|Booting|EFI"
+    [anaconda]="anaconda.*43.*started"
+    [kickstart]="anaconda-pre.service|anaconda-nm-config"
+    [packages]="Installing|Downloading|transaction|Processing|package|Installieren"
+    [post]="anaconda.target|anaconda.service"
     [done]="Reboot|reboot|Power down"
 )
 declare -A seen=()

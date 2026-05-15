@@ -462,9 +462,9 @@ SYSROOT="${ANA_INSTALL_PATH:-/mnt/sysroot}"
 [[ ! -d "$SYSROOT" ]] && SYSROOT="/mnt/sysimage"
 [[ ! -d "$SYSROOT" ]] && { echo "Kein sysroot gefunden — Abbruch."; exit 0; }
 
-# Quell-Verzeichnis ermitteln: Custom-ISO oder FEDORA-USB
+# Quell-Verzeichnis ermitteln: Custom-ISO oder FEDORA-USB oder externe Kickstart-Quelle
 SRC=""
-for candidate in /run/install/repo /run/install/sources/mount-* /mnt/install/repo; do
+for candidate in /run/install/source /run/install/repo /run/install/sources/mount-* /mnt/install/repo; do
     if [[ -f "${candidate}/fedora-provision.sh" || -d "${candidate}/scripts" ]]; then
         SRC="$candidate"; break
     fi
