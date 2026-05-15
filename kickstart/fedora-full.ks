@@ -17,7 +17,7 @@ DISK=$(grep -oP '(?<=inst\.disk=)\S+' /proc/cmdline || true)
 # $3!="usb" reicht — kein $3!="" da NVMe oft keinen TRAN-Wert hat
 if [[ -z "$DISK" ]]; then
     DISK=$(lsblk -bdno NAME,TYPE,TRAN,RM,SIZE \
-        | awk '$2=="disk" && $3!="usb" && $4=="0" {print $5+0, $1}' \
+        | awk '$2=="disk" && $3!="usb" && $4=="0" && $1!~/^zram/ {print $5+0, $1}' \
         | sort -rn | head -1 | awk '{print $2}')
 fi
 
