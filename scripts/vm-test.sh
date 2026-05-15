@@ -249,6 +249,13 @@ cmd_create() {
 }
 
 cmd_install() {
+    local ts; ts=$(date '+%Y%m%d-%H%M%S')
+    local log_dir="${TEST_RESULTS_DIR}/install"
+    mkdir -p "$log_dir"
+    local log_file="${log_dir}/${ts}-install.log"
+    exec > >(tee -a "$log_file") 2>&1
+    log "Install-Log: $log_file"
+
     step "Installations-Test: Custom-ISO → Anaconda → fedora-vm.ks"
 
     local install_vm="fedora-install-test"
@@ -407,10 +414,12 @@ cmd_install() {
         log "✓ Snapshot '${snap_name}' angelegt."
         log ""
         log "Nächster Schritt: ./scripts/vm-test.sh base"
+        log "Install-Log gespeichert: $log_file"
     else
         warn "✗ Installation nicht abgeschlossen nach ${install_timeout}s"
         log "Aktueller Status: $(LIBVIRT_DEFAULT_URI="qemu:///system" virsh domstate "$ACTIVE_VM" 2>/dev/null)"
         log "Prüfe virt-manager für Anaconda-Fehlermeldungen"
+        log "Install-Log gespeichert: $log_file"
     fi
 }
 
@@ -883,7 +892,7 @@ shift || true
 
 case "$COMMAND" in
     create)   cmd_create   ;;
-    install)  cmd_install  ;;
+    install)  cmd_smoke install; cmd_install  ;;
     base)     cmd_base     ;;
     snapshot) cmd_snapshot ;;
     test)     cmd_smoke test; cmd_test "$@" ;;
