@@ -115,6 +115,36 @@ log "Fedora-Installer-Kernel: ${KVER}"
 log "vmlinuz:   $(du -h "${WORK_DIR}/vmlinuz"    | cut -f1)"
 log "initrd.img: $(du -h "${WORK_DIR}/initrd.img" | cut -f1)"
 
+# ── Kickstart in initrd einbetten ─────────────────────────────────────────────
+# inst.ks=hd:LABEL=... schlägt fehl wenn USB-Stick gleichzeitig Boot-Medium ist.
+# Lösung: ks.cfg direkt in initrd packen → inst.ks=file:///ks.cfg
+step "Kickstart in initrd einbetten"
+
+KS_SRC="${PROJECT_DIR}/kickstart/fedora-full.ks"
+COMMON_SRC="${PROJECT_DIR}/kickstart/common-post.inc"
+[[ -f "$KS_SRC" ]]     || die "fedora-full.ks nicht gefunden: $KS_SRC"
+[[ -f "$COMMON_SRC" ]] || die "common-post.inc nicht gefunden: $COMMON_SRC"
+
+INITRD_APPEND="${WORK_DIR}/ks-append"
+mkdir -p "$INITRD_APPEND/kickstart"
+
+# Alle Kickstarts einbetten — grub.cfg referenziert sie per file:///kickstart/<name>
+cp "$COMMON_SRC" "$INITRD_APPEND/kickstart/common-post.inc"
+for ks in "${PROJECT_DIR}"/kickstart/*.ks; do
+    cp "$ks" "$INITRD_APPEND/kickstart/"
+done
+# Haupt-Kickstart für [f] als ks.cfg (Kurzform)
+cp "$KS_SRC" "$INITRD_APPEND/ks.cfg"
+
+# Als zweites initrd-Cpio anhängen (Anaconda mergt mehrere initrds)
+( cd "$INITRD_APPEND" && find . | cpio -o -H newc --quiet ) >> "${WORK_DIR}/initrd.img"
+
+log "Kickstarts in initrd eingebettet:"
+for ks in "$INITRD_APPEND"/kickstart/*.ks "$INITRD_APPEND/ks.cfg"; do
+    log "  $(basename "$ks")"
+done
+log "initrd.img (mit KS): $(du -h "${WORK_DIR}/initrd.img" | cut -f1)"
+
 # ── Partitionieren ────────────────────────────────────────────────────────────
 step "USB-Stick partitionieren: $USB_DEV"
 
