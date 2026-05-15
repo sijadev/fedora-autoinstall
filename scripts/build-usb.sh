@@ -164,7 +164,6 @@ done
 flatten_ks "$KS_SRC" "$INITRD_APPEND/ks.cfg"
 
 # Scripts + Provisioner einbetten — common-post.inc kopiert sie aus /run/install/source
-# (Anaconda-Standardpfad für initrd-Inhalte, auch ohne USB-Stick verfügbar)
 mkdir -p "$INITRD_APPEND/run/install/source/scripts"
 for f in first-boot.sh first-login.sh welcome-dialog.sh fedora-provision.desktop; do
     src="${PROJECT_DIR}/scripts/$f"
@@ -173,33 +172,46 @@ done
 cp "${PROJECT_DIR}/fedora-provision.sh" "$INITRD_APPEND/run/install/source/fedora-provision.sh" 2>/dev/null && \
     log "  Script eingebettet: fedora-provision.sh"
 
-# Komprimierungsformat des originalen initrd.img erkennen und gleiches Format verwenden.
-# Unkomprimiertes cpio an XZ/zstd-initrd zu hängen bricht dracut beim ersten Start.
-_detect_comp() {
-    local f="$1"
-    local magic
-    magic=$(file "$f")
-    case "$magic" in
-        *XZ*)       echo "xz" ;;
-        *Zstandard*) echo "zstd" ;;
-        *gzip*)     echo "gzip" ;;
-        *)          echo "gzip" ;;
-    esac
-}
+# ── initrd komplett entpacken → Dateien hinzufügen → neu packen ──────────────
+# Anhängen eines zweiten cpio-Archivs funktioniert nicht zuverlässig mit
+# Anaconda/dracut — ks.cfg wird nicht gefunden. Stattdessen: vollständiger Rebuild.
+step "initrd.img neu bauen (mit eingebetteten Kickstarts)"
 
-INITRD_COMP=$(_detect_comp "${WORK_DIR}/initrd.img")
-log "initrd.img Komprimierung: ${INITRD_COMP}"
+INITRD_UNPACK="${WORK_DIR}/initrd-unpack"
+mkdir -p "$INITRD_UNPACK"
 
-case "$INITRD_COMP" in
-    xz)    COMP_CMD="xz -9 -T0 -c" ;;
-    zstd)  COMP_CMD="zstd -19 -T0 -q -c" ;;
-    gzip)  COMP_CMD="gzip -9 -c" ;;
+# Komprimierungsformat erkennen
+INITRD_MAGIC=$(file "${WORK_DIR}/initrd.img")
+case "$INITRD_MAGIC" in
+    *XZ*)        DECOMP="xz -dc";  COMP_CMD="xz -9 -T0 -c" ;;
+    *Zstandard*) DECOMP="zstd -dc"; COMP_CMD="zstd -19 -T0 -q -c" ;;
+    *gzip*)      DECOMP="gzip -dc"; COMP_CMD="gzip -9 -c" ;;
+    *)           DECOMP="gzip -dc"; COMP_CMD="gzip -9 -c" ;;
 esac
+log "initrd Komprimierung erkannt: ${DECOMP%% *}"
 
-# Als zweites initrd-Cpio anhängen — im gleichen Komprimierungsformat
-( cd "$INITRD_APPEND" && find . | cpio -o -H newc --quiet | $COMP_CMD ) >> "${WORK_DIR}/initrd.img"
+# Entpacken
+pushd "$INITRD_UNPACK" >/dev/null
+$DECOMP "${WORK_DIR}/initrd.img" | cpio -idm --quiet 2>/dev/null
+popd >/dev/null
 
-log "initrd.img (mit KS + Scripts, %include aufgelöst): $(du -h "${WORK_DIR}/initrd.img" | cut -f1)"
+# Neue Dateien einfügen
+cp -a "$INITRD_APPEND/." "$INITRD_UNPACK/"
+
+# Neu packen
+log "Packe initrd.img neu..."
+NEW_INITRD="${WORK_DIR}/initrd-new.img"
+( cd "$INITRD_UNPACK" && find . | sort | cpio -o -H newc --quiet | $COMP_CMD ) > "$NEW_INITRD"
+mv "$NEW_INITRD" "${WORK_DIR}/initrd.img"
+
+log "initrd.img fertig (mit ks.cfg + Scripts): $(du -h "${WORK_DIR}/initrd.img" | cut -f1)"
+
+# Schnellprüfung: ks.cfg muss im initrd vorhanden sein
+if $DECOMP "${WORK_DIR}/initrd.img" | cpio -t --quiet 2>/dev/null | grep -q "^./ks.cfg$"; then
+    log "Prüfung: ks.cfg in initrd gefunden ✓"
+else
+    die "ks.cfg nicht im initrd — Einbettung fehlgeschlagen."
+fi
 
 # ── Partitionieren ────────────────────────────────────────────────────────────
 step "USB-Stick partitionieren: $USB_DEV"
