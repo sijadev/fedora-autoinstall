@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Minimale Test-Konfiguration — alle Pflichtfelder, keine Optionen -->
+<fedora-install>
+  <iso><url>https://example.com/fedora.iso</url></iso>
+  <disk>/dev/sda</disk>
+  <hostname>fedora-test</hostname>
+  <timezone>Europe/Berlin</timezone>
+  <locale>de_DE.UTF-8</locale>
+  <keyboard>de</keyboard>
+  <user>
+    <name>sija</name>
+    <password_hash>$6$salt$hashvalue</password_hash>
+  </user>
+</fedora-install>

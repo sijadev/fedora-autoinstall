@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fedora Auto-Install Configuration
+  ──────────────────────────────────
+  Generate password hash:
+    openssl passwd minus-six yourpassword
+  Validate this file:
+    python3 lib/xml2ks.py validate-only config/example.xml
+  Generate Kickstart:
+    python3 lib/xml2ks.py config config/example.xml output kickstart/fedora-autoinstall.ks
+-->
+<fedora-install>
+
+  <!-- ── ISO source ──────────────────────────────────────────────────────── -->
+  <iso>
+    <url>https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/iso/Fedora-Everything-netinst-x86_64-43-1.6.iso</url>
+    <!-- SHA256 checksum (optional but recommended) -->
+    <sha256>f4d06a40ce4fb4a84705e1a1f01ca1328f95a2120d422ba5f719af5df62d0099</sha256>
+  </iso>
+
+  <!-- ── Installation target ─────────────────────────────────────────────── -->
+  <!-- WARNING: this disk will be completely erased -->
+  <disk>/dev/sda</disk>
+
+  <partitioning>
+    <scheme>auto</scheme>
+  </partitioning>
+
+  <!-- ── System locale ───────────────────────────────────────────────────── -->
+  <hostname>fedora-workstation</hostname>
+  <timezone>Europe/Berlin</timezone>
+  <locale>de_DE.UTF-8</locale>
+  <keyboard>de</keyboard>
+
+  <!-- ── Target user ─────────────────────────────────────────────────────── -->
+  <user>
+    <name>sija</name>
+    <!-- Generate with: openssl passwd -6 yourpassword -->
+    <password_hash>$6$rounds=4096$exampleSalt$A2xI1.hfVf4M8bJH3uQ6Q7fKJ3QYgAnfYQPc0dyY8aTJiD9f8Lh3EEcKB6DzQ9s9lfhYf6Q2xv.YO1f4Yv4eY0</password_hash>
+    <groups>wheel,libvirt,video,audio</groups>
+    <gecos>sija</gecos>
+  </user>
+
+  <!-- ── Extra packages (optional) ───────────────────────────────────────── -->
+  <packages>
+    <package>git</package>
+    <package>curl</package>
+    <package>python3</package>
+    <package>python3-pip</package>
+    <package>python3-virtualenv</package>
+    <package>gnome-shell-extension-user-theme</package>
+    <package>gnome-shell-extension-dash-to-panel</package>
+    <package>flatpak</package>
+    <package>virt-manager</package>
+    <package>qemu-kvm</package>
+    <package>libvirt</package>
+  </packages>
+
+  <!-- ── First-boot provisioning (runs as root, exactly once) ───────────── -->
+  <first-boot>
+    <!-- System-Update via dnf upgrade -->
+    <dnf-upgrade enabled="true"/>
+
+    <!-- Install/update NVIDIA Open Kernel Module driver -->
+    <!-- Supported: Turing (RTX 20xx), Ampere (RTX 30xx), Ada (RTX 40xx), Blackwell (RTX 50xx) -->
+    <!-- On failure: hard error, no proprietary fallback -->
+    <nvidia-open enabled="true"/>
+
+    <!-- Install CUDA toolkit -->
+    <cuda enabled="true" source="fedora"/>
+    <!-- source="fedora"  → use Fedora/Fedora dnf repos (preferred)  -->
+    <!-- source="nvidia"  → use official NVIDIA CUDA repo             -->
+  </first-boot>
+
+  <!-- ── First-login provisioning (runs as user sija, exactly once) ─────── -->
+  <first-login>
+
+    <!-- GNOME extensions: installed via dnf in %post, enabled at first login -->
+    <gnome-extensions enabled="true">
+      <extension>user-theme@gnome-shell-extensions.gcampax.github.com</extension>
+      <extension>dash-to-panel@jderose9.github.com</extension>
+    </gnome-extensions>
+
+    <!-- WhiteSur GTK/Icon/Wallpaper themes, installed to ~/.local/share/ -->
+    <!-- Missing args will be prompted interactively; errors are non-fatal -->
+    <whitesur enabled="true">
+      <!-- Appended to: ./install.sh -d ~/.local/share/themes <gtk-args> -->
+      <gtk-args>-l -c Dark</gtk-args>
+      <!-- Appended to: ./install.sh -d ~/.local/share/icons <icon-args> -->
+      <icon-args>-dark</icon-args>
+      <!-- Appended to: ./install.sh <wallpaper-args> -->
+      <wallpaper-args></wallpaper-args>
+    </whitesur>
+
+    <!-- Oh My Bash with "modern" theme -->
+    <ohmybash enabled="true" theme="modern"/>
+
+    <!-- PyTorch venv at ~/.venvs/ai (CUDA-aware, latest stable) -->
+    <pytorch-venv enabled="true" path="~/.venvs/ai"/>
+
+    <!-- vLLM: isolated venv, built against CUDA 13.0, sm120 (RTX 5070 Ti) -->
+    <vllm-omni enabled="true" venv="~/.venvs/bitwig-omni">
+      <cuda-version>13.0</cuda-version>
+      <!-- TORCH_CUDA_ARCH_LIST — sm120 = Blackwell (RTX 5070 Ti) -->
+      <arch-list>12.0</arch-list>
+      <!-- Audio analysis model (Kimi-Audio-7B) — loaded in separate venv -->
+      <audio-model venv="~/.venvs/kimi-audio">moonshotai/Kimi-Audio-7B-Instruct</audio-model>
+      <!-- Bitwig agent model (Qwen3-14B-AWQ) — loaded in vLLM venv -->
+      <agent-model>Qwen/Qwen3-14B-AWQ</agent-model>
+    </vllm-omni>
+
+    <!-- Neo4j music theory DB for Bitwig agent -->
+    <neo4j enabled="true">
+      <uri>bolt://localhost:7687</uri>
+      <user>neo4j</user>
+      <!-- Change before deploying: -->
+      <password>bitwig-agent</password>
+    </neo4j>
+
+  </first-login>
+
+</fedora-install>

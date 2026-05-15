@@ -9,36 +9,32 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import xml2ks  # noqa: E402  # type: ignore
 
+# ── Fixture-Dateien ────────────────────────────────────────────────────────────
+# tests/fixtures/minimal.xml — Pflichtfelder, keine Optionen
+# tests/fixtures/full.xml    — vollständige Konfiguration (= config/example.xml)
+FIXTURES = Path(__file__).parent / "fixtures"
 
-# ── Fixtures ──────────────────────────────────────────────────────────────────
+
+def load_fixture(name: str) -> ET.Element:
+    """Lädt eine XML-Fixture-Datei aus tests/fixtures/."""
+    path = FIXTURES / name
+    if not path.exists():
+        raise FileNotFoundError(f"Fixture nicht gefunden: {path}")
+    return ET.parse(str(path)).getroot()
+
 
 def parse_xml(text: str) -> ET.Element:
+    """Inline-XML parsen — nur für Tests mit spezifischen Sonderfällen."""
     return ET.fromstring(text)
 
 
-MINIMAL_VALID_XML = """
-<fedora-install>
-  <iso><url>https://example.com/fedora.iso</url></iso>
-  <disk>/dev/sda</disk>
-  <hostname>fedora-test</hostname>
-  <timezone>Europe/Berlin</timezone>
-  <locale>de_DE.UTF-8</locale>
-  <keyboard>de</keyboard>
-  <user>
-    <name>sija</name>
-    <password_hash>$6$salt$hashvalue</password_hash>
-  </user>
-</fedora-install>
-"""
-
-
 def minimal_root(**overrides) -> ET.Element:
-    """Return a minimal valid root with optional field overrides (xpath → text)."""
-    root = parse_xml(MINIMAL_VALID_XML)
+    """Lädt minimal.xml und wendet optionale Feldüberschreibungen an (xpath → text)."""
+    root = load_fixture("minimal.xml")
     for xpath, value in overrides.items():
         el = root.find(xpath)
         if el is None:
-            raise ValueError(f"xpath not found: {xpath}")
+            raise ValueError(f"xpath nicht gefunden in minimal.xml: {xpath}")
         el.text = value
     return root
 
@@ -418,7 +414,7 @@ class GenerateKickstartTests(unittest.TestCase):
     """Tests for generate_kickstart(). Uses minimal valid XML as baseline."""
 
     def _ks(self, xml_text=None, **script_kwargs) -> str:
-        root = parse_xml(xml_text) if xml_text else parse_xml(MINIMAL_VALID_XML)
+        root = parse_xml(xml_text) if xml_text else load_fixture("minimal.xml")
         return xml2ks.generate_kickstart(root, **script_kwargs)
 
     # ── Structure ─────────────────────────────────────────────────────────────
@@ -807,7 +803,7 @@ class GenerateKickstartTests(unittest.TestCase):
             unit.write_text("[Unit]\nDescription=Test", encoding="utf-8")
 
             ks = xml2ks.generate_kickstart(
-                parse_xml(MINIMAL_VALID_XML),
+                load_fixture("minimal.xml"),
                 first_boot_script=fb,
                 first_login_script=fl,
                 systemd_unit=unit,
@@ -820,7 +816,7 @@ class GenerateKickstartTests(unittest.TestCase):
 
     def test_missing_script_files_produce_empty_heredoc(self):
         ks = xml2ks.generate_kickstart(
-            parse_xml(MINIMAL_VALID_XML),
+            load_fixture("minimal.xml"),
             first_boot_script=Path("/nonexistent/first-boot.sh"),
             first_login_script=None,
         )
@@ -896,13 +892,64 @@ class GenerateKickstartTests(unittest.TestCase):
         self.assertIn('FEDORA_WS_GTK_ARGS="-l -c Dark"', ks)
 
 
+# ── Fixture-basierte End-to-End Tests ────────────────────────────────────────
+
+class FixtureTests(unittest.TestCase):
+    """Tests die echte Fixture-Dateien aus tests/fixtures/ verwenden."""
+
+    def test_minimal_xml_fixture_is_valid(self):
+        root = load_fixture("minimal.xml")
+        errors = xml2ks.validate(root, FIXTURES / "minimal.xml")
+        self.assertEqual(errors, [], f"minimal.xml Validierungsfehler: {errors}")
+
+    def test_full_xml_fixture_is_valid(self):
+        root = load_fixture("full.xml")
+        errors = xml2ks.validate(root, FIXTURES / "full.xml")
+        self.assertEqual(errors, [], f"full.xml Validierungsfehler: {errors}")
+
+    def test_full_xml_generates_kickstart(self):
+        root = load_fixture("full.xml")
+        ks = xml2ks.generate_kickstart(root)
+        self.assertIn("#version=RHEL9", ks)
+        self.assertIn("%packages", ks)
+        self.assertIn("%post", ks)
+        self.assertNotIn("--location=mbr", ks)
+
+    def test_full_xml_has_pre_disk_detection(self):
+        root = load_fixture("full.xml")
+        ks = xml2ks.generate_kickstart(root)
+        self.assertIn("%pre", ks)
+        self.assertIn("%include /tmp/disk-setup.cfg", ks)
+        self.assertIn("lsblk", ks)
+
+    def test_full_xml_env_vars_present(self):
+        root = load_fixture("full.xml")
+        ks = xml2ks.generate_kickstart(root)
+        self.assertIn("FEDORA_TARGET_USER=", ks)
+        self.assertIn("FEDORA_OMB_THEME=", ks)
+        self.assertIn("FEDORA_WS_GTK_ARGS=", ks)
+
+    def test_minimal_xml_generates_kickstart(self):
+        root = load_fixture("minimal.xml")
+        ks = xml2ks.generate_kickstart(root)
+        self.assertIn("#version=RHEL9", ks)
+        self.assertIn("%pre", ks)
+        self.assertNotIn("--location=mbr", ks)
+
+    def test_fixtures_dir_exists(self):
+        self.assertTrue(FIXTURES.is_dir(), f"fixtures/ Verzeichnis fehlt: {FIXTURES}")
+        self.assertTrue((FIXTURES / "minimal.xml").exists())
+        self.assertTrue((FIXTURES / "full.xml").exists())
+
+
 # ── CLI / main() tests ────────────────────────────────────────────────────────
 
 class MainCLITests(unittest.TestCase):
 
     def _write_minimal_xml(self, td: Path, disk="/dev/sda") -> Path:
         p = td / "config.xml"
-        p.write_text(MINIMAL_VALID_XML.replace("/dev/sda", disk), encoding="utf-8")
+        content = (FIXTURES / "minimal.xml").read_text(encoding="utf-8")
+        p.write_text(content.replace("/dev/sda", disk), encoding="utf-8")
         return p
 
     def test_validate_only_ok(self):
@@ -925,7 +972,8 @@ class MainCLITests(unittest.TestCase):
     def test_validate_only_fails_on_invalid_config(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "bad.xml"
-            p.write_text(MINIMAL_VALID_XML.replace("/dev/sda", "/dev/sr0"), encoding="utf-8")
+            content = (FIXTURES / "minimal.xml").read_text(encoding="utf-8")
+            p.write_text(content.replace("/dev/sda", "/dev/sr0"), encoding="utf-8")
             with patch("sys.argv", ["xml2ks.py", "--validate-only", str(p)]):
                 with patch("sys.stderr", StringIO()):
                     rc = xml2ks.main()
