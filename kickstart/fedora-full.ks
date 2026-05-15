@@ -25,6 +25,56 @@ autopart --type=lvm
 DEOF
 %end
 
+# ── %pre: Kontinuierliches Log-Sync auf USB-Stick (läuft auch bei Fehler) ─────
+%pre --log=/tmp/ks-pre-logsync.log
+#!/bin/bash
+# Startet einen Hintergrund-Daemon der alle 30s Anaconda-Logs auf den USB synct.
+# Läuft während der gesamten Installation — auch wenn %post nie erreicht wird.
+
+USB_MOUNT="/mnt/usb-log-sync"
+LOG_DEST="$USB_MOUNT/install-logs"
+SYNC_INTERVAL=30
+
+# USB per Label suchen
+USB_DEV=$(blkid -L "FEDORA-USB" 2>/dev/null || true)
+if [[ -z "$USB_DEV" ]]; then
+    echo "USB-Stick FEDORA-USB nicht gefunden — Log-Sync deaktiviert." >&2
+    exit 0
+fi
+
+mkdir -p "$USB_MOUNT"
+# USB ggf. bereits von Anaconda gemountet → read-only remount für Schreiben nicht nötig,
+# aber wir probieren eigenen Mount auf dem selben Device
+mount "$USB_DEV" "$USB_MOUNT" 2>/dev/null || {
+    # Fallback: ist schon unter /run/install/repo gemountet?
+    if mountpoint -q /run/install/repo 2>/dev/null; then
+        LOG_DEST="/run/install/repo/install-logs"
+        USB_MOUNT=""
+    else
+        echo "Konnte USB nicht mounten — Log-Sync deaktiviert." >&2
+        exit 0
+    fi
+}
+
+mkdir -p "$LOG_DEST"
+
+# Hintergrund-Loop
+(
+    while true; do
+        sleep "$SYNC_INTERVAL"
+        for f in /tmp/anaconda.log /tmp/packaging.log /tmp/program.log \
+                  /tmp/storage.log /tmp/syslog /tmp/ks-post.log \
+                  /tmp/ks-pre-logsync.log; do
+            [[ -f "$f" ]] && cp -f "$f" "$LOG_DEST/" 2>/dev/null || true
+        done
+        sync 2>/dev/null || true
+    done
+) &
+disown $!
+
+echo "Log-Sync gestartet → $LOG_DEST (alle ${SYNC_INTERVAL}s)"
+%end
+
 # ── Locale / keyboard / timezone ─────────────────────────────────────────────
 keyboard --xlayouts='de'
 lang de_DE.UTF-8
