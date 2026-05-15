@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import apply_config as ac
+import apply_config as ac  # type: ignore[import-untyped]
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -233,7 +233,7 @@ class PatchKickstartTests(unittest.TestCase):
 class IntegrationTests(unittest.TestCase):
 
     def _run_main(self, config: dict, ks_content: str = SAMPLE_KS,
-                  extra_args: list = None) -> tuple[list[str], int]:
+                  extra_args: list[str] | None = None) -> tuple[list[str], int]:
         """Führt main() mit config aus, gibt (ks_zeilen, exit_code) zurück."""
         with tempfile.TemporaryDirectory() as td:
             td_path = Path(td)
@@ -250,9 +250,9 @@ class IntegrationTests(unittest.TestCase):
                  patch.object(ac, "PROJECT", td_path):
                 try:
                     ac.main()
-                    rc = 0
+                    rc: int = 0
                 except SystemExit as e:
-                    rc = e.code or 0
+                    rc = int(e.code) if e.code is not None else 0
 
             result_lines = ks_path.read_text().splitlines()
         return result_lines, rc
