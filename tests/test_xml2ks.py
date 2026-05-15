@@ -513,40 +513,106 @@ class GenerateKickstartTests(unittest.TestCase):
 
     # ── Disk / Partitioning ───────────────────────────────────────────────────
 
+    def test_auto_partition_generates_pre_block(self):
+        # ignoredisk/bootloader/autopart stehen jetzt im %pre-generierten disk-setup.cfg
+        ks = self._ks()
+        self.assertIn("%pre", ks)
+        self.assertIn("%include /tmp/disk-setup.cfg", ks)
+
     def test_auto_partition_generates_lvm(self):
+        # autopart steht im %pre Block (disk-setup.cfg), nicht direkt im KS
         ks = self._ks()
         self.assertIn("autopart --type=lvm", ks)
 
-    def test_auto_partition_ignoredisk_uses_short_name(self):
+    def test_auto_partition_ignoredisk_in_pre(self):
+        # ignoredisk steht im %pre Block, nicht direkt im KS-Body
         ks = self._ks()
-        self.assertIn("ignoredisk --only-use=sda", ks)
+        self.assertIn("ignoredisk --only-use=$DISK", ks)
+        self.assertIn("%pre", ks)
+
+    def test_auto_partition_no_hardcoded_disk_outside_pre(self):
+        # Kein hardcodierter Disk-Name außerhalb des %pre Blocks
+        ks = self._ks()
+        # %pre endet mit %end — alles danach darf kein ignoredisk mit festem Namen haben
+        after_pre = ks.split("%end", 1)[-1] if "%end" in ks else ks
+        self.assertNotIn("ignoredisk --only-use=sda", after_pre)
+
+    def test_bootloader_no_location_mbr(self):
+        # --location=mbr ist bei UEFI ungültig — darf nicht im Output stehen
+        ks = self._ks()
+        self.assertNotIn("--location=mbr", ks)
 
     def test_bootloader_uses_short_disk_name(self):
+        # bootloader steht im %pre Block (disk-setup.cfg)
         ks = self._ks()
-        self.assertIn("bootloader --location=mbr --boot-drive=sda", ks)
+        self.assertIn("bootloader --boot-drive=$DISK", ks)
+        self.assertNotIn("bootloader --location=mbr", ks)
 
-    def test_nvme_disk_short_name_in_bootloader(self):
+    def test_nvme_disk_name_in_pre_block(self):
+        # %pre Block erkennt Disk automatisch — kein hardcodierter nvme-Name
         root = minimal_root(**{"disk": "/dev/nvme0n1"})
         ks = xml2ks.generate_kickstart(root)
-        self.assertIn("--boot-drive=nvme0n1", ks)
+        self.assertIn("%pre", ks)
+        self.assertIn("%include /tmp/disk-setup.cfg", ks)
 
-    def test_nvme1n1_disk_short_name_in_bootloader(self):
+    def test_nvme1n1_pre_block_present(self):
         root = minimal_root(**{"disk": "/dev/nvme1n1"})
         ks = xml2ks.generate_kickstart(root)
-        self.assertIn("--boot-drive=nvme1n1", ks)
-        self.assertIn("ignoredisk --only-use=nvme1n1", ks)
+        self.assertIn("%pre", ks)
+        self.assertIn("autopart --type=lvm", ks)
 
-    def test_sdb_short_name_in_bootloader(self):
+    def test_sdb_pre_block_present(self):
         root = minimal_root(**{"disk": "/dev/sdb"})
         ks = xml2ks.generate_kickstart(root)
-        self.assertIn("--boot-drive=sdb", ks)
-        self.assertIn("ignoredisk --only-use=sdb", ks)
+        self.assertIn("%pre", ks)
+        self.assertIn("%include /tmp/disk-setup.cfg", ks)
 
-    def test_mmcblk0_short_name_in_bootloader(self):
+    def test_mmcblk0_pre_block_present(self):
         root = minimal_root(**{"disk": "/dev/mmcblk0"})
         ks = xml2ks.generate_kickstart(root)
-        self.assertIn("--boot-drive=mmcblk0", ks)
-        self.assertIn("ignoredisk --only-use=mmcblk0", ks)
+        self.assertIn("%pre", ks)
+        self.assertIn("%include /tmp/disk-setup.cfg", ks)
+
+    def test_pre_block_contains_disk_autodetection(self):
+        # %pre Block muss NVMe, USB und zram ausschließen
+        ks = self._ks()
+        self.assertIn("$3!=\"usb\"", ks)
+        self.assertIn("!~/^zram/", ks)
+        self.assertIn("lsblk", ks)
+
+    def test_pre_block_supports_inst_disk_override(self):
+        # Kernel-Parameter inst.disk= muss Vorrang haben
+        ks = self._ks()
+        self.assertIn("inst\\.disk=", ks)
+
+    def test_duplicate_packages_not_emitted(self):
+        # Pakete die in base und extra-packages stehen dürfen nicht doppelt erscheinen
+        root = parse_xml("""
+            <fedora-install>
+              <iso><url>https://example.com/fedora.iso</url></iso>
+              <disk>/dev/sda</disk>
+              <hostname>h</hostname>
+              <timezone>UTC</timezone>
+              <locale>en_US.UTF-8</locale>
+              <keyboard>us</keyboard>
+              <user>
+                <name>sija</name>
+                <password_hash>$6$x$y</password_hash>
+              </user>
+              <packages>
+                <package>git</package>
+                <package>curl</package>
+                <package>git</package>
+              </packages>
+            </fedora-install>
+        """)
+        ks = xml2ks.generate_kickstart(root)
+        # %packages Block isolieren — endet beim nächsten %end
+        start = ks.index("%packages\n") + len("%packages\n")
+        end   = ks.index("\n%end", start)
+        pkg_lines = ks[start:end].splitlines()
+        self.assertEqual(pkg_lines.count("git"), 1,
+                         "git darf nur einmal im %packages Block stehen")
 
     def test_custom_partition_is_emitted_verbatim(self):
         root = parse_xml("""
@@ -814,9 +880,11 @@ class GenerateKickstartTests(unittest.TestCase):
             with self.subTest(section=section):
                 self.assertIn(section, ks)
 
-        # Disk
-        self.assertIn("--boot-drive=vda", ks)
+        # Disk — bootloader + autopart stehen im %pre Block (disk-setup.cfg)
+        self.assertIn("%pre", ks)
+        self.assertIn("%include /tmp/disk-setup.cfg", ks)
         self.assertIn("autopart --type=lvm", ks)
+        self.assertNotIn("--location=mbr", ks)
 
         # Packages
         self.assertIn("podman", ks)
