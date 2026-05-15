@@ -1,4 +1,3 @@
-import sys
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -6,8 +5,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
-import xml2ks  # noqa: E402  # type: ignore
+import xml2ks  # type: ignore
 
 # ── Fixture-Dateien ────────────────────────────────────────────────────────────
 # tests/fixtures/minimal.xml — Pflichtfelder, keine Optionen

@@ -1,14 +1,12 @@
 import json
 import re
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import apply_config as ac  # noqa: E402
+import apply_config as ac
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
