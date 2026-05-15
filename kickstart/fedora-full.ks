@@ -10,19 +10,9 @@ reboot
 #!/bin/bash
 DISK=$(grep -oP '(?<=inst\.disk=)\S+' /proc/cmdline || true)
 if [[ -z "$DISK" ]]; then
-    # udev Zeit geben, alle Blockgeräte zu registrieren
-    udevadm settle --timeout=30 2>/dev/null || sleep 5
-
-    # Retry-Loop: bis zu 60s warten bis mind. eine interne Disk auftaucht
-    for i in $(seq 1 12); do
-        DISK=$(lsblk -bdno NAME,TYPE,TRAN,RM,SIZE \
-            | awk '$2=="disk" && $3!="usb" && $3!="sdio" && $4=="0" && $1!~/^zram/ \
-                  {print $5+0, $1}' \
-            | sort -rn | head -1 | awk '{print $2}')
-        [[ -n "$DISK" ]] && break
-        echo "Warte auf Blockgerät (Versuch $i/12) ..." >&2
-        sleep 5
-    done
+    DISK=$(lsblk -bdno NAME,TYPE,TRAN,RM,SIZE \
+        | awk '$2=="disk" && $3!="usb" && $4=="0" && $1!~/^zram/ {print $5+0, $1}' \
+        | sort -rn | head -1 | awk '{print $2}')
 fi
 [[ -z "$DISK" ]] && { echo "ERROR: Keine Installations-Disk gefunden" >&2; exit 1; }
 echo "Ziel-Disk: $DISK" >&2
