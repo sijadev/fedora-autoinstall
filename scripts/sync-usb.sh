@@ -17,6 +17,7 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HOST_OS="$(uname -s)"
 MODE="interactive"
 case "${1:-}" in
     --check) MODE="check" ;;
@@ -36,22 +37,38 @@ warn() { echo -e "${YELLOW}[sync-usb]${RESET} $*" >&2; }
 die()  { echo -e "${RED}[sync-usb] $*${RESET}" >&2; exit 1; }
 
 # ── FEDORA-USB-Stick mounten ──────────────────────────────────────────────────
-USB_MNT="/run/media/$(whoami)/FEDORA-USB"
 self_mounted=0
+USB_DEV=""
 
-if ! findmnt "$USB_MNT" &>/dev/null; then
-    dev=$(lsblk -o NAME,LABEL -rn | awk '$2=="FEDORA-USB"{print "/dev/"$1}' | head -1)
-    [[ -n "$dev" ]] || die "FEDORA-USB-Stick nicht gefunden. Stick einstecken oder mit build-usb.sh einrichten."
-    udisksctl mount -b "$dev" &>/dev/null || die "Kann ${dev} nicht mounten."
-    self_mounted=1
+if [[ "$HOST_OS" == "Darwin" ]]; then
+    USB_MNT="/Volumes/FEDORA-USB"
+    if ! mount | grep -q "$USB_MNT"; then
+        USB_DEV=$(diskutil list | awk '/FEDORA-USB/{print $NF}' | head -1)
+        [[ -n "$USB_DEV" ]] || die "FEDORA-USB-Stick nicht gefunden. Stick einstecken oder mit build-usb.sh einrichten."
+        diskutil mount "/dev/${USB_DEV}" &>/dev/null || die "Kann /dev/${USB_DEV} nicht mounten."
+        self_mounted=1
+    fi
+    mount | grep -q "$USB_MNT" || die "FEDORA-USB nicht erreichbar: ${USB_MNT}"
+else
+    USB_MNT="/run/media/$(whoami)/FEDORA-USB"
+    if ! findmnt "$USB_MNT" &>/dev/null; then
+        USB_DEV=$(lsblk -o NAME,LABEL -rn | awk '$2=="FEDORA-USB"{print "/dev/"$1}' | head -1)
+        [[ -n "$USB_DEV" ]] || die "FEDORA-USB-Stick nicht gefunden. Stick einstecken oder mit build-usb.sh einrichten."
+        udisksctl mount -b "$USB_DEV" &>/dev/null || die "Kann ${USB_DEV} nicht mounten."
+        self_mounted=1
+    fi
+    findmnt "$USB_MNT" &>/dev/null || die "FEDORA-USB nicht erreichbar: ${USB_MNT}"
 fi
-findmnt "$USB_MNT" &>/dev/null || die "FEDORA-USB nicht erreichbar: ${USB_MNT}"
 
 cleanup() {
     local rc=$?
     if (( self_mounted )); then
         sync
-        udisksctl unmount -b "$(findmnt -n -o SOURCE "$USB_MNT")" &>/dev/null || true
+        if [[ "$HOST_OS" == "Darwin" ]]; then
+            diskutil unmount "$USB_MNT" &>/dev/null || true
+        else
+            udisksctl unmount -b "$(findmnt -n -o SOURCE "$USB_MNT")" &>/dev/null || true
+        fi
     fi
     return "$rc"
 }
@@ -148,7 +165,7 @@ if [[ "$MODE" == "interactive" ]]; then
     echo -e "         Für einen vollständigen Update: ${BOLD}sudo ./install.sh /dev/sdX${RESET}"
     echo ""
     read -r -t 15 -p "Trotzdem nur Dateien auf USB kopieren? [j/N] " ans 2>/dev/tty || ans="N"
-    [[ "${ans,,}" != "j" ]] && die "Abgebrochen — bitte sudo ./install.sh /dev/sdX ausführen."
+    [[ "$(echo "$ans" | tr '[:upper:]' '[:lower:]')" != "j" ]] && die "Abgebrochen — bitte sudo ./install.sh /dev/sdX ausführen."
 fi
 
 # ── Apply ─────────────────────────────────────────────────────────────────────
