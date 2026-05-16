@@ -56,7 +56,8 @@ log "Install profile: ${INSTALL_PROFILE}"
 
 # ── 1. System-Update ──────────────────────────────────────────────────────────
 step "System-Update"
-dnf upgrade -y || die "dnf upgrade failed."
+# Kernel vom Upgrade ausschließen — akmod-nvidia muss gegen den installierten Kernel gebaut werden
+dnf upgrade -y --exclude='kernel*' || die "dnf upgrade failed."
 
 # ── RPM Fusion einbinden ──────────────────────────────────────────────────────
 step "RPM Fusion Repos"
@@ -68,7 +69,7 @@ dnf install -y \
 log "RPM Fusion free + nonfree aktiviert (Fedora ${FEDORA_VER})."
 
 # ── 2. NVIDIA Open Driver ─────────────────────────────────────────────────────
-step "NVIDIA Open Driver update"
+step "NVIDIA Open Driver"
 
 check_nvidia_open_compat() {
     if ! command -v lspci &>/dev/null; then warn "lspci not available."; return 0; fi
@@ -85,7 +86,11 @@ check_nvidia_open_compat() {
 }
 
 if check_nvidia_open_compat; then
-    dnf install -y kernel-devel kernel-headers akmod-nvidia xorg-x11-drv-nvidia-cuda \
+    # kernel-devel exakt für den laufenden Kernel installieren
+    dnf install -y "kernel-devel-uname-r == $(uname -r)" \
+        || dnf install -y kernel-devel kernel-headers \
+        || warn "kernel-devel install fehlgeschlagen."
+    dnf install -y akmod-nvidia xorg-x11-drv-nvidia-cuda \
         || die "NVIDIA Open Driver installation failed."
     if command -v akmods &>/dev/null; then
         akmods --force || warn "akmods build fehlgeschlagen — Treiber wird beim ersten Boot gebaut."
