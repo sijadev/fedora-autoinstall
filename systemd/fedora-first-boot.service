@@ -16,7 +16,7 @@ TimeoutStartSec=3600
 RemainAfterExit=yes
 
 # Prevent privilege escalation
-NoNewPrivileges=no
+NoNewPrivileges=yes
 # Service runs as root (required for dnf, systemctl, akmods)
 User=root
 

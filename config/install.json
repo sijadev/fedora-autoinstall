@@ -18,7 +18,7 @@
 
   "gpu": {
     "cuda_source": "fedora",
-    "cuda_version": "13.2",
+    "cuda_version": "13.0",
     "arch_list": "12.0"
   },
 

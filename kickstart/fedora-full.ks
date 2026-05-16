@@ -104,7 +104,7 @@ cat > /usr/local/sbin/fedora-first-boot.sh <<'FBEOF'
 # Tasks:
 #   1. System-Update (dnf upgrade)
 #   2. NVIDIA Open Driver update
-#   3. CUDA installation (Fedora/Fedora or NVIDIA repo)
+#   3. CUDA installation (NVIDIA repo only)
 #   4. Set system-wide CUDA environment variables
 
 set -euo pipefail
@@ -182,11 +182,23 @@ fi
 
 # ── 1. System-Update ──────────────────────────────────────────────────────────
 step "System-Update"
-log "Running dnf upgrade..."
-dnf upgrade -y || die "dnf upgrade failed."
+log "Running dnf upgrade (excluding kernel to avoid akmod version mismatch)..."
+dnf upgrade -y --exclude='kernel*' || die "dnf upgrade failed."
 log "dnf upgrade completed."
 
-# ── 1b. Bazzite Kernel (Blackwell-Support + Gaming Patches) ───────────────────
+# ── 1b. RPM Fusion (benötigt für akmod-nvidia) ───────────────────────────────
+step "RPM Fusion Repos"
+FEDORA_VER=$(rpm -E %fedora)
+if ! rpm -q rpmfusion-free-release &>/dev/null; then
+    dnf install -y \
+        "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VER}.noarch.rpm" \
+        "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VER}.noarch.rpm" \
+        && log "RPM Fusion free + nonfree installiert." \
+        || die "RPM Fusion install fehlgeschlagen."
+else
+    log "RPM Fusion bereits installiert."
+fi
+
 # ── 2. NVIDIA Open Driver ─────────────────────────────────────────────────────
 step "NVIDIA Open Driver update"
 
@@ -225,11 +237,11 @@ if check_nvidia_open_compat; then
     if nvidia-smi &>/dev/null; then
         log "NVIDIA-Treiber bereits aktiv ($(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null)) — Installation übersprungen."
     else
-        log "Installing/updating NVIDIA Open Kernel Module driver..."
+        log "Installing/updating NVIDIA driver (akmod)..."
         dnf install -y \
-            kernel-devel \
+            "kernel-devel-uname-r == $(uname -r)" \
             kernel-headers \
-            akmod-nvidia-open \
+            akmod-nvidia \
             xorg-x11-drv-nvidia-cuda \
             || warn "NVIDIA Open Driver installation fehlgeschlagen (non-fatal — ggf. bereits via DKMS/Nobara installiert)."
 
@@ -340,23 +352,32 @@ elif ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
 else
 
 install_cuda_nvidia_repo() {
-    log "Installing CUDA from official NVIDIA repo..."
+    log "Installing CUDA toolkit from official NVIDIA repo..."
     local arch; arch=$(uname -m)
     local fedora_ver; fedora_ver=$(rpm -E %fedora)
     local repo_url="https://developer.download.nvidia.com/compute/cuda/repos/fedora${fedora_ver}/${arch}/cuda-fedora${fedora_ver}.repo"
-    if ! curl -sf --max-time 10 "$repo_url" >/dev/null 2>&1; then
+    if ! curl -sf --max-time 15 "$repo_url" >/dev/null 2>&1; then
         repo_url="https://developer.download.nvidia.com/compute/cuda/repos/rhel9/${arch}/cuda-rhel9.repo"
         warn "Kein Fedora${fedora_ver} CUDA Repo — verwende RHEL9-Fallback."
     fi
-    if ! dnf config-manager --add-repo "$repo_url" 2>/dev/null; then
-        dnf config-manager addrepo --from-repofile="$repo_url" \
-            || die "Failed to add NVIDIA CUDA repo."
+    # dnf5 (Fedora 42+) syntax differs from dnf4
+    if ! dnf config-manager addrepo --from-repofile="$repo_url" 2>/dev/null; then
+        dnf config-manager --add-repo "$repo_url" 2>/dev/null \
+            || { warn "NVIDIA CUDA Repo konnte nicht hinzugefügt werden — CUDA übersprungen."; return 1; }
     fi
-    dnf install -y --nogpgcheck cuda cuda-toolkit \
-        || die "CUDA installation from NVIDIA repo failed."
+    # Nur cuda-toolkit installieren (NICHT cuda-Metapackage — zieht eigene Treiber rein,
+    # die mit akmod-nvidia aus RPM Fusion kollidieren würden)
+    dnf install -y --nogpgcheck \
+        cuda-toolkit \
+        cuda-cudart \
+        cuda-libraries \
+        cuda-compiler \
+        || { warn "CUDA toolkit installation fehlgeschlagen (non-fatal)."; return 1; }
 }
 
-install_cuda_nvidia_repo
+if ! install_cuda_nvidia_repo; then
+    warn "CUDA installation fehlgeschlagen — first-boot läuft weiter."
+else
 
 # Discover installed CUDA path
 CUDA_HOME_DETECTED=""
@@ -368,7 +389,9 @@ for candidate in /usr/local/cuda /usr/local/cuda-* /usr; do
         break
     fi
 done
-[[ -n "$CUDA_HOME_DETECTED" ]] || die "nvcc not found after CUDA installation."
+[[ -n "$CUDA_HOME_DETECTED" ]] || { warn "nvcc nicht gefunden nach CUDA installation — env wird nicht gesetzt."; }
+
+if [[ -n "$CUDA_HOME_DETECTED" ]]; then
 log "CUDA installed at: $CUDA_HOME_DETECTED"
 
 CUDA_VERSION_INSTALLED=$("${CUDA_HOME_DETECTED}/bin/nvcc" --version \
@@ -396,6 +419,8 @@ DefaultEnvironment=CUDA_HOME=${CUDA_HOME_DETECTED}
 SYSENVEOF
 systemctl daemon-reload
 
+fi  # end: nvcc found
+fi  # end: CUDA install success
 fi  # end: CUDA (GPU present + profile requires CUDA)
 
 # ── 5. Kernel/Sysctl performance tuning ──────────────────────────────────────
@@ -1178,7 +1203,7 @@ TimeoutStartSec=3600
 RemainAfterExit=yes
 
 # Prevent privilege escalation
-NoNewPrivileges=no
+NoNewPrivileges=yes
 # Service runs as root (required for dnf, systemctl, akmods)
 User=root
 
