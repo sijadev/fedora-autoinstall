@@ -88,10 +88,23 @@ if check_nvidia_open_compat; then
     dnf install -y kernel-devel kernel-headers akmod-nvidia xorg-x11-drv-nvidia-cuda \
         || die "NVIDIA Open Driver installation failed."
     if command -v akmods &>/dev/null; then
-        akmods --force || die "akmods failed."
+        akmods --force || warn "akmods build fehlgeschlagen — Treiber wird beim ersten Boot gebaut."
     fi
-    log "NVIDIA Open Driver installed."
+    # Nouveau blacklisten damit GDM nicht blockiert wird
+    echo "blacklist nouveau" > /etc/modprobe.d/blacklist-nouveau.conf
+    echo 'omit_drivers+=" nouveau "' >> /etc/dracut.conf.d/99-nvidia.conf
+    dracut --force 2>/dev/null || true
+    log "NVIDIA Open Driver installed, nouveau blacklisted."
 fi  # end: check_nvidia_open_compat
+
+# GDM / graphical.target sicherstellen
+step "Display Manager sicherstellen"
+systemctl set-default graphical.target 2>/dev/null || true
+# GDM Wayland aktivieren (Standard bei NVIDIA Open Driver ab 530+)
+if [[ -f /etc/gdm/custom.conf ]]; then
+    sed -i 's/^#\?WaylandEnable=.*/WaylandEnable=true/' /etc/gdm/custom.conf || true
+fi
+log "graphical.target gesetzt, GDM Wayland aktiv."
 
 # ── 3. CUDA installation ──────────────────────────────────────────────────────
 step "CUDA installation"
