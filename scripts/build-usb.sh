@@ -116,7 +116,7 @@ build_on_macos() {
     echo -e "  Inhalt: wird gelöscht und neu partitioniert"
     echo ""
     read -r -p "Wirklich fortfahren? [j/N] " ans
-    [[ "${ans,,}" == "j" ]] || die "Abgebrochen."
+    [[ "$(echo "$ans" | tr '[:upper:]' '[:lower:]')" == "j" ]] || die "Abgebrochen."
 
     WORK_DIR=$(mktemp -d -t build-usb-XXXXXX)
     EFI_MNT="${WORK_DIR}/efi"
@@ -139,8 +139,10 @@ build_on_macos() {
     [[ -z "$src_iso" ]] && die "Keine Fedora-Netinst-ISO unter iso/ — z.B. Fedora-Everything-netinst-x86_64-43-1.6.iso"
     log "Source-ISO: $src_iso"
 
-    ISO_DEV=$(hdiutil attach -readonly -nobrowse -mountpoint "$ISO_MNT" "$src_iso" | awk 'NR==1{print $1}')
-    [[ -n "$ISO_DEV" ]] || die "ISO konnte nicht gemountet werden: $src_iso"
+    ISO_DEV=$(hdiutil attach -readonly -nobrowse \
+        -imagekey diskimage-class=CRawDiskImage \
+        -mountpoint "$ISO_MNT" "$src_iso" 2>&1 | awk 'NR==1{print $1}')
+    [[ "$ISO_DEV" == /dev/* ]] || die "ISO konnte nicht gemountet werden: $src_iso (hdiutil Ausgabe: $ISO_DEV)"
 
     [[ -f "${ISO_MNT}/images/pxeboot/vmlinuz" ]]    || die "vmlinuz nicht in ISO gefunden."
     [[ -f "${ISO_MNT}/images/pxeboot/initrd.img" ]] || die "initrd.img nicht in ISO gefunden."
@@ -173,18 +175,27 @@ build_on_macos() {
     log "EFI-Partition:  $EFI_PART"
     log "Daten-Partition: $DATA_PART"
 
-    step "GRUB2 EFI installieren"
-    "$GRUB_INSTALL_CMD" \
-        --target=x86_64-efi \
-        --efi-directory="$EFI_MNT" \
-        --boot-directory="${DATA_MNT}/boot" \
-        --removable \
-        --no-nvram \
-        --force \
-        || die "${GRUB_INSTALL_CMD} fehlgeschlagen."
-    log "GRUB2 installiert."
+    step "GRUB2 EFI-Image bauen (grub-mkimage)"
+    local grub_mkimage grub_moddir
+    grub_mkimage="$(find_tool x86_64-elf-grub-mkimage grub-mkimage grub2-mkimage)" \
+        || die "Kein grub-mkimage gefunden. Installieren: brew install x86_64-elf-grub"
+    grub_moddir="$(find /opt/homebrew/Cellar/x86_64-elf-grub -type d -name "x86_64-efi" 2>/dev/null | head -1 || true)"
+    [[ -n "$grub_moddir" ]] || die "GRUB2 Modul-Verzeichnis (x86_64-efi) nicht gefunden."
+    log "grub-mkimage: $grub_mkimage"
+    log "Moddir:       $grub_moddir"
 
     mkdir -p "${EFI_MNT}/EFI/BOOT"
+    "$grub_mkimage" \
+        --output="${EFI_MNT}/EFI/BOOT/BOOTX64.EFI" \
+        --format=x86_64-efi \
+        --directory="$grub_moddir" \
+        --prefix="(hd0,gpt2)/boot/grub2" \
+        part_gpt fat normal chain boot linux configfile \
+        search search_label search_fs_uuid echo help test true \
+        || die "grub-mkimage fehlgeschlagen."
+    log "BOOTX64.EFI erstellt: $(du -h "${EFI_MNT}/EFI/BOOT/BOOTX64.EFI" | cut -f1)"
+
+    # grub.cfg auf beide Partitionen
     install -m 0644 "${PROJECT_DIR}/boot/grub.cfg" "${EFI_MNT}/EFI/BOOT/grub.cfg"
     mkdir -p "${DATA_MNT}/boot/grub2"
     install -m 0644 "${PROJECT_DIR}/boot/grub.cfg" "${DATA_MNT}/boot/grub2/grub.cfg"
@@ -230,7 +241,7 @@ build_on_macos() {
 step "Voraussetzungen"
 missing=()
 if [[ "$HOST_OS" == "Darwin" ]]; then
-    for cmd in diskutil hdiutil cpio file xz zstd; do
+    for cmd in diskutil hdiutil x86_64-elf-grub-mkimage; do
         command -v "$cmd" &>/dev/null || missing+=("$cmd")
     done
 else
@@ -238,9 +249,11 @@ else
         command -v "$cmd" &>/dev/null || missing+=("$cmd")
     done
 fi
-GRUB_INSTALL_CMD="$(find_tool grub2-install grub-install || true)"
-if [[ -z "$GRUB_INSTALL_CMD" ]]; then
-    missing+=("grub2-install/grub-install")
+if [[ "$HOST_OS" != "Darwin" ]]; then
+    GRUB_INSTALL_CMD="$(find_tool grub2-install grub-install || true)"
+    if [[ -z "$GRUB_INSTALL_CMD" ]]; then
+        missing+=("grub2-install/grub-install")
+    fi
 fi
 if [[ ${#missing[@]} -gt 0 ]]; then
     if [[ "$HOST_OS" == "Darwin" ]]; then
@@ -248,7 +261,7 @@ if [[ ${#missing[@]} -gt 0 ]]; then
     else
         die "Fehlende Tools: ${missing[*]}. Installieren: sudo dnf install gdisk dosfstools grub2-efi-x64 grub2-tools cpio file xz zstd"
     fi
-done
+fi
 log "Alle Tools vorhanden."
 
 if [[ "$HOST_OS" == "Darwin" ]]; then
@@ -273,7 +286,7 @@ echo -e "  Gerät:  $USB_DEV  (${USB_SIZE_GB} GB)"
 echo -e "  Inhalt: wird gelöscht und neu partitioniert"
 echo ""
 read -r -p "Wirklich fortfahren? [j/N] " ans
-[[ "${ans,,}" == "j" ]] || die "Abgebrochen."
+[[ "$(echo "$ans" | tr '[:upper:]' '[:lower:]')" == "j" ]] || die "Abgebrochen."
 
 # ── Temp-Dirs + Cleanup ───────────────────────────────────────────────────────
 WORK_DIR=$(mktemp -d -t build-usb-XXXXXX)

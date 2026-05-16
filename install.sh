@@ -133,7 +133,7 @@ else
 fi
 
 # ── Konfiguration anwenden ────────────────────────────────────────────────────
-step "Konfiguration anwenden (${CONFIG_MODE^^})"
+step "Konfiguration anwenden ($(echo "$CONFIG_MODE" | tr '[:lower:]' '[:upper:]'))"
 
 if [[ "$CONFIG_MODE" == "xml" ]]; then
     [[ -f "$XML_FILE" ]] || die "XML-Konfiguration nicht gefunden: $XML_FILE"

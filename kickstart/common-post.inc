@@ -58,6 +58,15 @@ log "Install profile: ${INSTALL_PROFILE}"
 step "System-Update"
 dnf upgrade -y || die "dnf upgrade failed."
 
+# ── RPM Fusion einbinden ──────────────────────────────────────────────────────
+step "RPM Fusion Repos"
+FEDORA_VER=$(rpm -E %fedora)
+dnf install -y \
+    "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VER}.noarch.rpm" \
+    "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VER}.noarch.rpm" \
+    || die "RPM Fusion konnte nicht eingebunden werden."
+log "RPM Fusion free + nonfree aktiviert (Fedora ${FEDORA_VER})."
+
 # ── 2. NVIDIA Open Driver ─────────────────────────────────────────────────────
 step "NVIDIA Open Driver update"
 
