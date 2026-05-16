@@ -193,7 +193,7 @@ log "dnf upgrade completed."
 # installiert werden, damit Module gegen den richtigen Kernel gebaut werden.
 step "Bazzite Kernel installieren"
 
-if [[ "${FEDORA_KERNEL_SOURCE:-fedora}" != "fedora" ]]; then
+if [[ "${FEDORA_KERNEL_SOURCE:-bazzite}" != "fedora" ]]; then
     if dnf copr enable -y bazzite-org/kernel-bazzite 2>/dev/null; then
         if dnf install -y \
             kernel-bazzite \

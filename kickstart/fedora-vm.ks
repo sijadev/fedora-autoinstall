@@ -183,7 +183,7 @@ check_nvidia_open_compat() {
 
 if check_nvidia_open_compat; then
     log "Installing/updating NVIDIA Open Kernel Module driver..."
-    dnf install -y  kernel-devel  kernel-headers  akmod-nvidia-open  xorg-x11-drv-nvidia-cuda  || die "NVIDIA Open Driver installation failed. No proprietary fallback."
+    dnf install -y  kernel-devel  kernel-headers  akmod-nvidia  xorg-x11-drv-nvidia-cuda  || die "NVIDIA Open Driver installation failed. No proprietary fallback."
 
     # Wait for the kmod to be built (akmods)
     if command -v akmods &>/dev/null; then
@@ -200,7 +200,7 @@ if ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
     log "No NVIDIA GPU — skipping CUDA installation."
 else
 
-CUDA_SOURCE="${FEDORA_CUDA_SOURCE:-fedora}"
+CUDA_SOURCE="${FEDORA_CUDA_SOURCE:-nvidia}"
 
 install_cuda_fedora() {
     log "Installing CUDA from Fedora/Fedora repos..."
@@ -222,7 +222,7 @@ install_cuda_nvidia_repo() {
 }
 
 case "$CUDA_SOURCE" in
-    fedora|fedora) install_cuda_fedora   ;;
+    fedora) install_cuda_fedora   ;;
     nvidia)        install_cuda_nvidia_repo ;;
     *)             die "Unknown cuda source: $CUDA_SOURCE" ;;
 esac

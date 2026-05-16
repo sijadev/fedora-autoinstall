@@ -85,7 +85,7 @@ check_nvidia_open_compat() {
 }
 
 if check_nvidia_open_compat; then
-    dnf install -y kernel-devel kernel-headers akmod-nvidia-open xorg-x11-drv-nvidia-cuda \
+    dnf install -y kernel-devel kernel-headers akmod-nvidia xorg-x11-drv-nvidia-cuda \
         || die "NVIDIA Open Driver installation failed."
     if command -v akmods &>/dev/null; then
         akmods --force || die "akmods failed."
@@ -100,28 +100,24 @@ if [[ "$INSTALL_PROFILE" == "theme-bash" ]]; then
     log "Profile '${INSTALL_PROFILE}' — CUDA not required. Skipping."
 else
 
-CUDA_SOURCE="${FEDORA_CUDA_SOURCE:-fedora}"
-
-install_cuda_fedora() {
-    dnf install -y cuda cuda-toolkit cuda-devel \
-        || die "CUDA from Fedora/Fedora repos failed."
-}
+CUDA_SOURCE="${FEDORA_CUDA_SOURCE:-nvidia}"
 
 install_cuda_nvidia_repo() {
     local arch; arch=$(uname -m)
-    local repo_url="https://developer.download.nvidia.com/compute/cuda/repos/rhel9/${arch}/cuda-rhel9.repo"
+    local fedora_ver; fedora_ver=$(rpm -E %fedora)
+    local repo_url="https://developer.download.nvidia.com/compute/cuda/repos/fedora${fedora_ver}/${arch}/cuda-fedora${fedora_ver}.repo"
+    if ! curl -sf --max-time 10 "$repo_url" >/dev/null 2>&1; then
+        repo_url="https://developer.download.nvidia.com/compute/cuda/repos/rhel9/${arch}/cuda-rhel9.repo"
+        warn "Kein Fedora${fedora_ver} CUDA Repo gefunden — verwende RHEL9-Repo als Fallback."
+    fi
     if ! dnf config-manager --add-repo "$repo_url" 2>/dev/null; then
         dnf config-manager addrepo --from-repofile="$repo_url" \
             || die "Failed to add NVIDIA CUDA repo."
     fi
-    dnf install -y cuda-toolkit cuda-devel || die "CUDA from NVIDIA repo failed."
+    dnf install -y --nogpgcheck cuda cuda-toolkit || die "CUDA from NVIDIA repo failed."
 }
 
-case "$CUDA_SOURCE" in
-    fedora|fedora) install_cuda_fedora   ;;
-    nvidia)        install_cuda_nvidia_repo ;;
-    *)             die "Unknown CUDA source: $CUDA_SOURCE" ;;
-esac
+install_cuda_nvidia_repo
 
 CUDA_HOME_DETECTED=""
 for candidate in /usr/local/cuda /usr/local/cuda-*; do
