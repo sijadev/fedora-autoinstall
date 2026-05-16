@@ -21,7 +21,7 @@ ignoredisk --only-use=$DISK
 zerombr
 clearpart --all --initlabel --drives=$DISK
 bootloader --boot-drive=$DISK
-autopart --type=lvm
+autopart --type=btrfs
 DEOF
 %end
 
@@ -42,7 +42,7 @@ network --hostname=fedora-workstation
 
 # ── Authentication ────────────────────────────────────────────────────────────
 rootpw --lock
-user --groups=wheel,libvirt,video,audio --name=sija --password=$6$rounds=4096$exampleSalt$A2xI1.hfVf4M8bJH3uQ6Q7fKJ3QYgAnfYQPc0dyY8aTJiD9f8Lh3EEcKB6DzQ9s9lfhYf6Q2xv.YO1f4Yv4eY0 --iscrypted --gecos="sija"
+user --groups=wheel,libvirt,video,audio --name=sija --password=$6$vIQuz3HLrh0EkSj6$KmIvhP/zN/NQfwRAiSOyl0H8mGmwrOYtwJXk0cBM98eONcgTU867DeR8NWIeRYJwGYQVCBxlkb2Sxt4dDfMKY. --iscrypted --gecos="sija"
 
 # ── Packages ──────────────────────────────────────────────────────────────────
 %packages
@@ -81,7 +81,8 @@ systemctl enable sshd.service
 # ── Write provisioning environment ───────────────────────────────────────────
 cat > /etc/fedora-provision.env <<'ENVEOF'
 FEDORA_TARGET_USER="sija"
-FEDORA_CUDA_SOURCE="fedora"
+FEDORA_KERNEL_SOURCE="cachyos"
+FEDORA_CUDA_SOURCE="nvidia"
 FEDORA_VLLM_CUDA_VERSION="13.0"
 FEDORA_VLLM_ARCH_LIST="12.0"
 FEDORA_VLLM_ROUTER_PORT="8000"
@@ -194,37 +195,34 @@ log "Running dnf upgrade..."
 dnf upgrade -y || die "dnf upgrade failed."
 log "dnf upgrade completed."
 
-# ── 1b. Bazzite Kernel (Blackwell-Support + Gaming Patches) ───────────────────
-# Bazzite-Kernel ist konzeptuell verwandt mit Nobara-Kernel und wird aktiv für
-# Fedora 43 + Blackwell GPUs (RTX 50/9070) gepflegt. Muss VOR akmod-nvidia-open
-# installiert werden, damit Module gegen den richtigen Kernel gebaut werden.
-step "Bazzite Kernel installieren"
+# ── 1b. CachyOS Kernel (BORE-Scheduler + Performance-Patches) ─────────────────
+# CachyOS-Kernel bietet BORE-Scheduler, io_uring-Optimierungen und
+# Blackwell-Kompatibilität. Muss VOR akmod-nvidia-open installiert werden,
+# damit Module gegen den richtigen Kernel gebaut werden.
+step "CachyOS Kernel installieren"
 
-if [[ "${FEDORA_KERNEL_SOURCE:-bazzite}" != "fedora" ]]; then
-    if dnf copr enable -y bazzite-org/kernel-bazzite 2>/dev/null; then
+if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" != "fedora" ]]; then  # default: cachyos (aus XML)
+    if dnf copr enable -y bieszczaders/kernel-cachyos 2>/dev/null; then
         if dnf install -y \
-            kernel-bazzite \
-            kernel-bazzite-core \
-            kernel-bazzite-modules \
-            kernel-bazzite-modules-extra \
-            kernel-bazzite-devel 2>/dev/null; then
-            log "Bazzite-Kernel installiert."
+            kernel-cachyos \
+            kernel-cachyos-devel 2>/dev/null; then
+            log "CachyOS-Kernel installiert."
             if command -v grubby &>/dev/null; then
-                NEW_KERNEL=$(ls /boot/vmlinuz-*bazzite* 2>/dev/null | sort -V | tail -1)
+                NEW_KERNEL=$(ls /boot/vmlinuz-*cachyos* 2>/dev/null | sort -V | tail -1)
                 if [[ -n "$NEW_KERNEL" ]]; then
                     grubby --set-default "$NEW_KERNEL" \
-                        && log "Bazzite-Kernel als Default gesetzt: $(basename "$NEW_KERNEL")" \
+                        && log "CachyOS-Kernel als Default gesetzt: $(basename "$NEW_KERNEL")" \
                         || warn "grubby --set-default fehlgeschlagen."
                 fi
             fi
         else
-            warn "Bazzite-Kernel install fehlgeschlagen — Standard-Kernel bleibt aktiv."
+            warn "CachyOS-Kernel install fehlgeschlagen — Standard-Kernel bleibt aktiv."
         fi
     else
-        warn "COPR bazzite-org/kernel-bazzite nicht verfügbar — Standard-Kernel bleibt aktiv."
+        warn "COPR bieszczaders/kernel-cachyos nicht verfügbar — Standard-Kernel bleibt aktiv."
     fi
 else
-    log "FEDORA_KERNEL_SOURCE=fedora — Bazzite-Kernel übersprungen."
+    log "FEDORA_KERNEL_SOURCE=fedora — CachyOS-Kernel übersprungen."
 fi
 
 # ── 2. NVIDIA Open Driver ─────────────────────────────────────────────────────
@@ -266,12 +264,22 @@ if check_nvidia_open_compat; then
         log "NVIDIA-Treiber bereits aktiv ($(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null)) — Installation übersprungen."
     else
         log "Installing/updating NVIDIA Open Kernel Module driver..."
-        dnf install -y \
-            kernel-devel \
-            kernel-headers \
-            akmod-nvidia-open \
-            xorg-x11-drv-nvidia-cuda \
-            || warn "NVIDIA Open Driver installation fehlgeschlagen (non-fatal — ggf. bereits via DKMS/Nobara installiert)."
+        if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" == "fedora" ]]; then
+            dnf install -y \
+                kernel-devel \
+                kernel-headers \
+                akmod-nvidia-open \
+                xorg-x11-drv-nvidia-cuda \
+                || warn "NVIDIA Open Driver installation fehlgeschlagen (non-fatal)."
+        else
+            # Bei CachyOS keine Fedora kernel-devel/kernel-headers erzwingen,
+            # sonst kann es zu Devel-Mismatch-Fehlern kommen.
+            dnf install -y \
+                kernel-cachyos-devel \
+                akmod-nvidia-open \
+                xorg-x11-drv-nvidia-cuda \
+                || warn "NVIDIA Open Driver installation (CachyOS) fehlgeschlagen (non-fatal)."
+        fi
 
         if command -v akmods &>/dev/null; then
             log "Building kernel modules (akmods)..."
@@ -394,7 +402,9 @@ install_cuda_fedora() {
 install_cuda_nvidia_repo() {
     log "Installing CUDA from official NVIDIA repo..."
     local arch; arch=$(uname -m)
-    local distro="rhel9"
+    local fedora_version
+    fedora_version=$(. /etc/os-release && echo "$VERSION_ID")
+    local distro="fedora${fedora_version}"
     local repo_url="https://developer.download.nvidia.com/compute/cuda/repos/${distro}/${arch}/cuda-${distro}.repo"
 
     if ! dnf config-manager --add-repo "$repo_url" 2>/dev/null; then

@@ -180,6 +180,9 @@ def generate_kickstart(
     cuda_el        = root.find("first-boot/cuda")
     cuda_source    = _attr(cuda_el, "source", "fedora")
 
+    kernel_el      = root.find("first-boot/kernel")
+    kernel_source  = _attr(kernel_el, "source", "cachyos")
+
     vllm_omni_el   = root.find("first-login/vllm-omni")
     vllm_venv      = _attr(vllm_omni_el, "venv", "~/.venvs/bitwig-omni")
     cuda_version   = _get(root, "first-login/vllm-omni/cuda-version", "13.2")
@@ -246,6 +249,7 @@ def generate_kickstart(
     # ── Env vars for first-login service ─────────────────────────────────────
     env_block = "\n".join([
         f'FEDORA_TARGET_USER="{username}"',
+        f'FEDORA_KERNEL_SOURCE="{kernel_source}"',
         f'FEDORA_CUDA_SOURCE="{cuda_source}"',
         f'FEDORA_VLLM_CUDA_VERSION="{cuda_version}"',
         f'FEDORA_VLLM_ARCH_LIST="{arch_list}"',
@@ -285,7 +289,7 @@ ignoredisk --only-use=$DISK
 zerombr
 clearpart --all --initlabel --drives=$DISK
 bootloader --boot-drive=$DISK
-autopart --type=lvm
+autopart --type=btrfs
 DEOF
 %end
 """

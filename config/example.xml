@@ -36,7 +36,7 @@
   <user>
     <name>sija</name>
     <!-- Generate with: openssl passwd -6 yourpassword -->
-    <password_hash>$6$rounds=4096$exampleSalt$A2xI1.hfVf4M8bJH3uQ6Q7fKJ3QYgAnfYQPc0dyY8aTJiD9f8Lh3EEcKB6DzQ9s9lfhYf6Q2xv.YO1f4Yv4eY0</password_hash>
+    <password_hash>$6$vIQuz3HLrh0EkSj6$KmIvhP/zN/NQfwRAiSOyl0H8mGmwrOYtwJXk0cBM98eONcgTU867DeR8NWIeRYJwGYQVCBxlkb2Sxt4dDfMKY.</password_hash>
     <groups>wheel,libvirt,video,audio</groups>
     <gecos>sija</gecos>
   </user>
@@ -66,8 +66,13 @@
     <!-- On failure: hard error, no proprietary fallback -->
     <nvidia-open enabled="true"/>
 
+    <!-- Custom kernel (optional) -->
+    <kernel source="cachyos"/>
+    <!-- source="cachyos" → CachyOS kernel (BORE-Scheduler, Blackwell-Support) -->
+    <!-- source="fedora"  → Stock Fedora kernel                                -->
+
     <!-- Install CUDA toolkit -->
-    <cuda enabled="true" source="fedora"/>
+    <cuda enabled="true" source="nvidia"/>
     <!-- source="fedora"  → use Fedora/Fedora dnf repos (preferred)  -->
     <!-- source="nvidia"  → use official NVIDIA CUDA repo             -->
   </first-boot>

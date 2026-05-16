@@ -515,10 +515,10 @@ class GenerateKickstartTests(unittest.TestCase):
         self.assertIn("%pre", ks)
         self.assertIn("%include /tmp/disk-setup.cfg", ks)
 
-    def test_auto_partition_generates_lvm(self):
+    def test_auto_partition_generates_btrfs(self):
         # autopart steht im %pre Block (disk-setup.cfg), nicht direkt im KS
         ks = self._ks()
-        self.assertIn("autopart --type=lvm", ks)
+        self.assertIn("autopart --type=btrfs", ks)
 
     def test_auto_partition_ignoredisk_in_pre(self):
         # ignoredisk steht im %pre Block, nicht direkt im KS-Body
@@ -555,7 +555,7 @@ class GenerateKickstartTests(unittest.TestCase):
         root = minimal_root(**{"disk": "/dev/nvme1n1"})
         ks = xml2ks.generate_kickstart(root)
         self.assertIn("%pre", ks)
-        self.assertIn("autopart --type=lvm", ks)
+        self.assertIn("autopart --type=btrfs", ks)
 
     def test_sdb_pre_block_present(self):
         root = minimal_root(**{"disk": "/dev/sdb"})
@@ -905,6 +905,139 @@ class GenerateKickstartTests(unittest.TestCase):
             ks,
         )
 
+    def test_regression_kernel_devel_branching_for_cachyos(self):
+        """Regression guard: NVIDIA deps must branch by FEDORA_KERNEL_SOURCE."""
+        project = Path(__file__).parent.parent
+        fb = project / "scripts" / "first-boot.sh"
+        fl = project / "scripts" / "first-login.sh"
+        unit = project / "systemd" / "fedora-first-boot.service"
+        if not fb.exists() or not fl.exists() or not unit.exists():
+            self.skipTest("Projekt-Scripts nicht gefunden")
+
+        ks = xml2ks.generate_kickstart(
+            load_fixture("minimal.xml"),
+            first_boot_script=fb,
+            first_login_script=fl,
+            systemd_unit=unit,
+        )
+
+        self.assertIn('if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" == "fedora" ]]; then', ks)
+        self.assertIn("kernel-cachyos-devel", ks)
+        self.assertIn("kernel-devel", ks)
+        self.assertIn("kernel-headers", ks)
+        self.assertNotIn("via DKMS/Nobara installiert", ks)
+
+    def test_regression_btrfs_subvolume_syntax(self):
+        """Regression guard: the synced Btrfs subvolume rename syntax must stay correct."""
+        project = Path(__file__).parent.parent
+        common_post = project / "kickstart" / "common-post.inc"
+        if not common_post.exists():
+            self.skipTest("kickstart/common-post.inc nicht gefunden")
+
+        text = common_post.read_text(encoding="utf-8")
+
+        expected_snippets = [
+            "%post --nochroot --log=/root/ks-post-btrfs-rename.log",
+            "mount -o subvolid=5",
+            "btrfs subvolume snapshot \"${MOUNT_TMP}/root\" \"${MOUNT_TMP}/@\"",
+            "btrfs subvolume snapshot \"${MOUNT_TMP}/home\" \"${MOUNT_TMP}/@home\"",
+            "sed -i 's/subvol=root\\b/subvol=@/g'",
+            "sed -i 's/subvol=home\\b/subvol=@home/g'",
+        ]
+        for snippet in expected_snippets:
+            with self.subTest(snippet=snippet):
+                self.assertIn(snippet, text)
+
+        self.assertNotIn("subvol=@homehome", text)
+
+    # ── Repo-Erreichbarkeit (generiert aus XML) ───────────────────────────────
+
+    def _generate_ks_from_project(self) -> str:
+        """Generiert KS aus config/example.xml + echten Projekt-Scripts."""
+        project = Path(__file__).parent.parent
+        fb   = project / "scripts" / "first-boot.sh"
+        fl   = project / "scripts" / "first-login.sh"
+        unit = project / "systemd" / "fedora-first-boot.service"
+        cfg  = project / "config" / "example.xml"
+        if not all(p.exists() for p in [fb, fl, unit, cfg]):
+            self.skipTest("Projektdateien nicht gefunden")
+        root = ET.parse(str(cfg)).getroot()
+        return xml2ks.generate_kickstart(root, first_boot_script=fb,
+                                         first_login_script=fl, systemd_unit=unit)
+
+    def test_repo_urls_reachable(self):
+        """
+        Extracts all repo URLs embedded in the generated KS (from XML config)
+        and checks that each returns HTTP 200/301/302 (HEAD request).
+        Requires network access — skipped automatically if offline.
+        """
+        import re
+        import urllib.request
+        import urllib.error
+
+        ks = self._generate_ks_from_project()
+
+        # Extrahiere URLs aus typischen Repo-Zeilen im eingebetteten Script:
+        #   dnf copr enable -y bieszczaders/kernel-cachyos
+        #   --add-repo "https://..."   /  --from-repofile="https://..."
+        url_patterns = [
+            # explizite https:// URLs
+            re.compile(r'https://[^\s\'"\\]+\.repo'),
+            re.compile(r'https://[^\s\'"\\]+/repodata/repomd\.xml'),
+        ]
+        copr_patterns = [
+            # COPR-Bezeichner → kanonische API-URL
+            re.compile(r'dnf copr enable\s+-y\s+([\w/-]+)'),
+        ]
+
+        urls: dict[str, str] = {}  # url → herkunft
+
+        for pat in url_patterns:
+            for m in pat.finditer(ks):
+                url = m.group(0)
+                # Shell-Variablen wie ${distro} überspringen — nur konkrete URLs prüfen
+                if "${" not in url:
+                    urls[url] = "repo-url"
+
+        for pat in copr_patterns:
+            for m in pat.finditer(ks):
+                copr_id = m.group(1).strip()
+                owner, _, project_name = copr_id.partition("/")
+                url = (f"https://copr.fedorainfracloud.org/coprs/{owner}/"
+                       f"{project_name}/")
+                urls[url] = f"copr:{copr_id}"
+
+        if not urls:
+            self.skipTest("Keine Repo-URLs im generierten KS gefunden")
+
+        # Netzwerk-Check: erreichbar?
+        try:
+            urllib.request.urlopen(
+                urllib.request.Request("https://copr.fedorainfracloud.org",
+                                       method="HEAD"),
+                timeout=5,
+            )
+        except (urllib.error.URLError, OSError):
+            self.skipTest("Kein Netzwerk — Repo-Erreichbarkeitstest übersprungen")
+
+        failures = []
+        for url, origin in urls.items():
+            try:
+                req = urllib.request.Request(url, method="HEAD")
+                req.add_header("User-Agent", "fedora-autoinstall-test/1.0")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    code = resp.status
+                if code not in (200, 301, 302, 303):
+                    failures.append(f"{origin}: HTTP {code} — {url}")
+            except urllib.error.HTTPError as e:
+                if e.code not in (200, 301, 302, 303, 405):
+                    failures.append(f"{origin}: HTTP {e.code} — {url}")
+            except (urllib.error.URLError, OSError) as e:
+                failures.append(f"{origin}: Nicht erreichbar — {url} ({e})")
+
+        if failures:
+            self.fail("Nicht erreichbare Repos:\n" + "\n".join(failures))
+
     # ── Full generation integration ───────────────────────────────────────────
 
     def test_full_xml_generates_valid_ks_structure(self):
@@ -946,7 +1079,7 @@ class GenerateKickstartTests(unittest.TestCase):
         # Disk — bootloader + autopart stehen im %pre Block (disk-setup.cfg)
         self.assertIn("%pre", ks)
         self.assertIn("%include /tmp/disk-setup.cfg", ks)
-        self.assertIn("autopart --type=lvm", ks)
+        self.assertIn("autopart --type=btrfs", ks)
         self.assertNotIn("--location=mbr", ks)
 
         # Packages

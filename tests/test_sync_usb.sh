@@ -126,6 +126,7 @@ sed \
 
 export FAKE_PROJECT="${FAKE_PROJECT}"
 export FAKE_USB="${FAKE_USB}"
+export FEDORA_SYNC_SKIP_PREFLIGHT=1
 
 bash "\$PATCHED" "\$@"
 rc=\$?

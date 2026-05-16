@@ -80,6 +80,19 @@ if [[ ! -f "${USB_MNT}/boot/vmlinuz" ]]; then
     warn "Einmalig ausführen: sudo scripts/build-usb.sh /dev/sdX"
 fi
 
+run_preflight_tests() {
+    if [[ "${FEDORA_SYNC_SKIP_PREFLIGHT:-0}" == "1" ]]; then
+        return 0
+    fi
+
+    local tests_runner="${PROJECT_DIR}/tests/run-all.sh"
+    [[ -f "$tests_runner" ]] || die "Test-Runner nicht gefunden: ${tests_runner}"
+
+    log "Führe Vorab-Tests aus (tests/run-all.sh --full)..."
+    bash "$tests_runner" --full || die "Vorab-Tests fehlgeschlagen — Sync abgebrochen."
+    log "Vorab-Tests erfolgreich."
+}
+
 # ── Plan: SRC → DST ───────────────────────────────────────────────────────────
 # Format: "src_rel|dst_rel"
 PLAN=(
@@ -167,6 +180,8 @@ if [[ "$MODE" == "interactive" ]]; then
     read -r -t 15 -p "Trotzdem nur Dateien auf USB kopieren? [j/N] " ans 2>/dev/tty || ans="N"
     [[ "$(echo "$ans" | tr '[:upper:]' '[:lower:]')" != "j" ]] && die "Abgebrochen — bitte sudo ./install.sh /dev/sdX ausführen."
 fi
+
+run_preflight_tests
 
 # ── Apply ─────────────────────────────────────────────────────────────────────
 if [[ ${#to_copy[@]} -gt 0 ]]; then
