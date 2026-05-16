@@ -21,7 +21,7 @@ ignoredisk --only-use=$DISK
 zerombr
 clearpart --all --initlabel --drives=$DISK
 bootloader --boot-drive=$DISK
-autopart --type=btrfs
+autopart --type=lvm
 DEOF
 %end
 
@@ -39,7 +39,7 @@ network --hostname=fedora-workstation
 
 # ── Authentication ────────────────────────────────────────────────────────────
 rootpw --lock
-user --groups=wheel,libvirt,video,audio --name=sija --password=$6$44c989d29609f973$7QBIfg7sNEWDBZjMc9zqD57buujYlXEBwSNnXFTIQz6lZJiEVQ25T9Nsw76HIRiKeiPHOwhdg2FAQVXa18gMA1 --iscrypted --gecos="sija"
+user --groups=wheel,libvirt,video,audio --name=sija --password=$6$rounds=4096$exampleSalt$A2xI1.hfVf4M8bJH3uQ6Q7fKJ3QYgAnfYQPc0dyY8aTJiD9f8Lh3EEcKB6DzQ9s9lfhYf6Q2xv.YO1f4Yv4eY0 --iscrypted --gecos="sija"
 
 # ── Packages ──────────────────────────────────────────────────────────────────
 %packages
@@ -74,6 +74,7 @@ set -euo pipefail
 # ── Write provisioning environment ───────────────────────────────────────────
 cat > /etc/fedora-provision.env <<'ENVEOF'
 FEDORA_TARGET_USER="sija"
+FEDORA_CUDA_SOURCE="fedora"
 FEDORA_VLLM_CUDA_VERSION="13.0"
 FEDORA_VLLM_ARCH_LIST="12.0"
 FEDORA_VLLM_ROUTER_PORT="8000"
@@ -187,6 +188,38 @@ dnf upgrade -y || die "dnf upgrade failed."
 log "dnf upgrade completed."
 
 # ── 1b. Bazzite Kernel (Blackwell-Support + Gaming Patches) ───────────────────
+# Bazzite-Kernel ist konzeptuell verwandt mit Nobara-Kernel und wird aktiv für
+# Fedora 43 + Blackwell GPUs (RTX 50/9070) gepflegt. Muss VOR akmod-nvidia-open
+# installiert werden, damit Module gegen den richtigen Kernel gebaut werden.
+step "Bazzite Kernel installieren"
+
+if [[ "${FEDORA_KERNEL_SOURCE:-bazzite}" != "fedora" ]]; then
+    if dnf copr enable -y bazzite-org/kernel-bazzite 2>/dev/null; then
+        if dnf install -y \
+            kernel-bazzite \
+            kernel-bazzite-core \
+            kernel-bazzite-modules \
+            kernel-bazzite-modules-extra \
+            kernel-bazzite-devel 2>/dev/null; then
+            log "Bazzite-Kernel installiert."
+            if command -v grubby &>/dev/null; then
+                NEW_KERNEL=$(ls /boot/vmlinuz-*bazzite* 2>/dev/null | sort -V | tail -1)
+                if [[ -n "$NEW_KERNEL" ]]; then
+                    grubby --set-default "$NEW_KERNEL" \
+                        && log "Bazzite-Kernel als Default gesetzt: $(basename "$NEW_KERNEL")" \
+                        || warn "grubby --set-default fehlgeschlagen."
+                fi
+            fi
+        else
+            warn "Bazzite-Kernel install fehlgeschlagen — Standard-Kernel bleibt aktiv."
+        fi
+    else
+        warn "COPR bazzite-org/kernel-bazzite nicht verfügbar — Standard-Kernel bleibt aktiv."
+    fi
+else
+    log "FEDORA_KERNEL_SOURCE=fedora — Bazzite-Kernel übersprungen."
+fi
+
 # ── 2. NVIDIA Open Driver ─────────────────────────────────────────────────────
 step "NVIDIA Open Driver update"
 
@@ -339,24 +372,41 @@ elif ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
     warn "No NVIDIA GPU detected — skipping CUDA installation (VM or non-NVIDIA system)."
 else
 
+CUDA_SOURCE="${FEDORA_CUDA_SOURCE:-fedora}"
+
+install_cuda_fedora() {
+    log "Installing CUDA from Fedora/Fedora repos..."
+    # Fedora packages: 'cuda' (toolkit), 'cuda-cudart-devel' (dev headers)
+    # Note: 'cuda-toolkit' does not exist in Fedora repos (use 'cuda' instead)
+    dnf install -y \
+        cuda \
+        cuda-cudart-devel \
+        || die "CUDA installation from Fedora/Fedora repos failed."
+}
+
 install_cuda_nvidia_repo() {
     log "Installing CUDA from official NVIDIA repo..."
     local arch; arch=$(uname -m)
-    local fedora_ver; fedora_ver=$(rpm -E %fedora)
-    local repo_url="https://developer.download.nvidia.com/compute/cuda/repos/fedora${fedora_ver}/${arch}/cuda-fedora${fedora_ver}.repo"
-    if ! curl -sf --max-time 10 "$repo_url" >/dev/null 2>&1; then
-        repo_url="https://developer.download.nvidia.com/compute/cuda/repos/rhel9/${arch}/cuda-rhel9.repo"
-        warn "Kein Fedora${fedora_ver} CUDA Repo — verwende RHEL9-Fallback."
-    fi
+    local distro="rhel9"
+    local repo_url="https://developer.download.nvidia.com/compute/cuda/repos/${distro}/${arch}/cuda-${distro}.repo"
+
     if ! dnf config-manager --add-repo "$repo_url" 2>/dev/null; then
+        # Try with dnf5 syntax
         dnf config-manager addrepo --from-repofile="$repo_url" \
             || die "Failed to add NVIDIA CUDA repo."
     fi
-    dnf install -y --nogpgcheck cuda cuda-toolkit \
+
+    dnf install -y \
+        cuda-toolkit \
+        cuda-devel \
         || die "CUDA installation from NVIDIA repo failed."
 }
 
-install_cuda_nvidia_repo
+case "$CUDA_SOURCE" in
+    fedora|fedora) install_cuda_fedora   ;;
+    nvidia)        install_cuda_nvidia_repo ;;
+    *)             die "Unknown cuda source: $CUDA_SOURCE" ;;
+esac
 
 # Discover installed CUDA path
 CUDA_HOME_DETECTED=""
