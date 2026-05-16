@@ -705,12 +705,13 @@ class GenerateKickstartTests(unittest.TestCase):
         self.assertIn('FEDORA_AGENT_MODEL="Qwen/Qwen3-14B-AWQ"', ks)
         self.assertIn('FEDORA_AUDIO_MODEL="moonshotai/Kimi-Audio-7B-Instruct"', ks)
 
-    def test_old_vllm_venv_vars_absent(self):
+    def test_venv_and_cuda_vars_in_env_block(self):
         ks = self._ks()
-        self.assertNotIn("FEDORA_VLLM_VENV", ks)
-        self.assertNotIn("FEDORA_VLLM_CUDA_VERSION", ks)
-        self.assertNotIn("FEDORA_VLLM_ARCH_LIST", ks)
-        self.assertNotIn("FEDORA_PYTORCH_VENV", ks)
+        self.assertIn('FEDORA_PYTORCH_VENV="~/.venvs/ai"', ks)
+        self.assertIn('FEDORA_VLLM_VENV="~/.venvs/bitwig-omni"', ks)
+        self.assertIn('FEDORA_AUDIO_VENV="~/.venvs/kimi-audio"', ks)
+        self.assertIn("FEDORA_VLLM_CUDA_VERSION=", ks)
+        self.assertIn("FEDORA_VLLM_ARCH_LIST=", ks)
 
     def test_omb_theme_default(self):
         self.assertIn('FEDORA_OMB_THEME="modern"', self._ks())
