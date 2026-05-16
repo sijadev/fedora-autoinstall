@@ -17,7 +17,7 @@ network --hostname=fedora-workstation
 
 # ── Authentication ────────────────────────────────────────────────────────────
 rootpw --lock
-user --groups=wheel,video,audio --name=sija  --password=$6$rounds=4096$BgH86YMKr6lH6yOf$djMfEJ/BUmgeqRFLhj3StKh4OLYfZmpGcIP.0nmTWRreYz6TuQ8js7R5XVrK6HiDWUpeCN.YY7SoxW9EQ9anF1  --iscrypted
+user --groups=wheel,video,audio --name=sija  --password=$6$44c989d29609f973$7QBIfg7sNEWDBZjMc9zqD57buujYlXEBwSNnXFTIQz6lZJiEVQ25T9Nsw76HIRiKeiPHOwhdg2FAQVXa18gMA1  --iscrypted
 
 # ── Services ──────────────────────────────────────────────────────────────────
 services --enabled=sshd

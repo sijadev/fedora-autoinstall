@@ -39,7 +39,7 @@ network --hostname=fedora-workstation
 
 # ── Authentication ────────────────────────────────────────────────────────────
 rootpw --lock
-user --groups=wheel,libvirt,video,audio --name=sija --password=$6$rounds=4096$exampleSalt$A2xI1.hfVf4M8bJH3uQ6Q7fKJ3QYgAnfYQPc0dyY8aTJiD9f8Lh3EEcKB6DzQ9s9lfhYf6Q2xv.YO1f4Yv4eY0 --iscrypted --gecos="sija"
+user --groups=wheel,libvirt,video,audio --name=sija --password=$6$44c989d29609f973$7QBIfg7sNEWDBZjMc9zqD57buujYlXEBwSNnXFTIQz6lZJiEVQ25T9Nsw76HIRiKeiPHOwhdg2FAQVXa18gMA1 --iscrypted --gecos="sija"
 
 # ── Packages ──────────────────────────────────────────────────────────────────
 %packages
