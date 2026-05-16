@@ -11,6 +11,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HOST_OS="$(uname -s)"
 
 FEDORA_VERSION="43"
 FEDORA_ISO_URL="https://dl.fedoraproject.org/pub/fedora/linux/releases/${FEDORA_VERSION}/Everything/x86_64/iso/Fedora-Everything-netinst-x86_64-${FEDORA_VERSION}-1.6.iso"
@@ -60,10 +61,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$USB_DEV" ]]; then
+    DEVICE_EXAMPLE="/dev/sdX"
+    [[ "$HOST_OS" == "Darwin" ]] && DEVICE_EXAMPLE="/dev/diskN"
     echo ""
     echo -e "${BOLD}Fedora Autoinstall — USB-Stick erstellen${RESET}"
     echo ""
-    echo "Usage: sudo $0 /dev/sdX [OPTIONEN]"
+    echo "Usage: sudo $0 ${DEVICE_EXAMPLE} [OPTIONEN]"
     echo ""
     echo "  (Standard)  XML-Konfiguration: config/example.xml"
     echo "  --config F  Eigene XML-Datei"
@@ -72,7 +75,11 @@ if [[ -z "$USB_DEV" ]]; then
     echo "  --iso F     Lokale Fedora-ISO statt Download"
     echo ""
     echo "Verfügbare Geräte:"
-    lsblk -o NAME,SIZE,TRAN,LABEL,MOUNTPOINT | grep -v "^loop"
+    if [[ "$HOST_OS" == "Darwin" ]]; then
+        diskutil list external || true
+    else
+        lsblk -o NAME,SIZE,TRAN,LABEL,MOUNTPOINT | grep -v "^loop"
+    fi
     echo ""
     exit 1
 fi
@@ -91,12 +98,17 @@ fi
 # ── Voraussetzungen ───────────────────────────────────────────────────────────
 step "Voraussetzungen prüfen"
 missing=()
-for cmd in sgdisk mkfs.fat grub2-install cpio file curl python3; do
+for cmd in cpio file curl python3; do
     command -v "$cmd" &>/dev/null || missing+=("$cmd")
 done
 if [[ ${#missing[@]} -gt 0 ]]; then
-    die "Fehlende Tools: ${missing[*]}
-  Installieren: sudo dnf install gdisk dosfstools grub2-efi-x64 grub2-tools cpio file curl python3"
+    if [[ "$HOST_OS" == "Darwin" ]]; then
+        die "Fehlende Tools: ${missing[*]}
+  Installieren (macOS): brew install cpio file-formula curl python"
+    else
+        die "Fehlende Tools: ${missing[*]}
+  Installieren (Fedora): sudo dnf install cpio file curl python3"
+    fi
 fi
 log "Alle Voraussetzungen erfüllt."
 
