@@ -174,6 +174,10 @@ fi
 log "EFI-Partition:  $EFI_PART"
 log "Daten-Partition: $DATA_PART"
 
+# Neu erstellte Partitionen aushängen (udisks2/Automounter kann sie sofort mounten)
+ensure_unmounted_part "$EFI_PART"
+ensure_unmounted_part "$DATA_PART"
+
 mkfs.fat -F 32 -n "EFI"       "$EFI_PART"  >/dev/null
 mkfs.fat -F 32 -n "FEDORA-USB" "$DATA_PART" >/dev/null
 log "Partitionen formatiert."
