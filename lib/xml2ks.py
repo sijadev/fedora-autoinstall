@@ -313,8 +313,7 @@ network --hostname={hostname}
 
 # ── Authentication ────────────────────────────────────────────────────────────
 rootpw --lock
-user --groups={groups} --name={username} --password={pw_hash} \\
-     --iscrypted --gecos="{gecos}"
+user --groups={groups} --name={username} --password={pw_hash} --iscrypted --gecos="{gecos}"
 
 # ── Packages ──────────────────────────────────────────────────────────────────
 %packages
