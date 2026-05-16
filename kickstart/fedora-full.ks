@@ -6,9 +6,9 @@
 text
 reboot
 
-%pre --interpreter=/bin/bash --log=/tmp/ks-pre-disk.log
-DISK=$(grep -oP '(?<=inst\.disk=)\S+' /proc/cmdline 2>/dev/null \
-    || grep -o 'inst\.disk=[^ ]*' /proc/cmdline | cut -d= -f2 || true)
+%pre
+#!/bin/bash
+DISK=$(grep -oP '(?<=inst\.disk=)\S+' /proc/cmdline || true)
 if [[ -z "$DISK" ]]; then
     DISK=$(lsblk -bdno NAME,TYPE,TRAN,RM,SIZE \
         | awk '$2=="disk" && $3!="usb" && $4=="0" && $1!~/^zram/ {print $5+0, $1}' \
@@ -25,48 +25,6 @@ autopart --type=lvm
 DEOF
 %end
 
-# ── %pre: Kontinuierliches Log-Sync auf USB-Stick (läuft auch bei Fehler) ─────
-%pre --interpreter=/bin/bash --log=/tmp/ks-pre-logsync.log
-USB_MOUNT="/mnt/usb-log-sync"
-LOG_DEST="$USB_MOUNT/install-logs"
-SYNC_INTERVAL=30
-
-USB_DEV=$(blkid -L "FEDORA-USB" 2>/dev/null || true)
-if [[ -z "$USB_DEV" ]]; then
-    echo "USB-Stick FEDORA-USB nicht gefunden — Log-Sync deaktiviert." >&2
-    exit 0
-fi
-
-mkdir -p "$USB_MOUNT"
-mount "$USB_DEV" "$USB_MOUNT" 2>/dev/null || {
-    if mountpoint -q /run/install/repo 2>/dev/null; then
-        LOG_DEST="/run/install/repo/install-logs"
-        USB_MOUNT=""
-    else
-        echo "Konnte USB nicht mounten — Log-Sync deaktiviert." >&2
-        exit 0
-    fi
-}
-
-mkdir -p "$LOG_DEST"
-
-# stdout/stderr schließen, sonst wartet Anaconda auf EOF des Hintergrundprozesses
-(
-    while true; do
-        sleep "$SYNC_INTERVAL"
-        for f in /tmp/anaconda.log /tmp/packaging.log /tmp/program.log \
-                  /tmp/storage.log /tmp/syslog /tmp/ks-post.log \
-                  /tmp/ks-pre-disk.log /tmp/ks-pre-logsync.log; do
-            [[ -f "$f" ]] && cp -f "$f" "$LOG_DEST/" 2>/dev/null || true
-        done
-        sync 2>/dev/null || true
-    done
-) </dev/null >/dev/null 2>&1 &
-disown $!
-
-echo "Log-Sync gestartet → $LOG_DEST (alle ${SYNC_INTERVAL}s)"
-%end
-
 # ── Locale / keyboard / timezone ─────────────────────────────────────────────
 keyboard --xlayouts='de'
 lang de_DE.UTF-8
@@ -81,7 +39,8 @@ network --hostname=fedora-workstation
 
 # ── Authentication ────────────────────────────────────────────────────────────
 rootpw --lock
-user --groups=wheel,libvirt,video,audio --name=sija --password=$6$rounds=4096$exampleSalt$A2xI1.hfVf4M8bJH3uQ6Q7fKJ3QYgAnfYQPc0dyY8aTJiD9f8Lh3EEcKB6DzQ9s9lfhYf6Q2xv.YO1f4Yv4eY0 --iscrypted --gecos="sija"
+user --groups=wheel,libvirt,video,audio --name=sija --password=$6$rounds=4096$exampleSalt$A2xI1.hfVf4M8bJH3uQ6Q7fKJ3QYgAnfYQPc0dyY8aTJiD9f8Lh3EEcKB6DzQ9s9lfhYf6Q2xv.YO1f4Yv4eY0 \
+     --iscrypted --gecos="sija"
 
 # ── Packages ──────────────────────────────────────────────────────────────────
 %packages
@@ -116,19 +75,10 @@ set -euo pipefail
 # ── Write provisioning environment ───────────────────────────────────────────
 cat > /etc/fedora-provision.env <<'ENVEOF'
 FEDORA_TARGET_USER="sija"
-FEDORA_CUDA_SOURCE="fedora"
-FEDORA_VLLM_CUDA_VERSION="13.2"
-FEDORA_VLLM_ARCH_LIST="12.0"
-FEDORA_PYTORCH_VENV="~/.venvs/ai"
-FEDORA_VLLM_VENV="~/.venvs/bitwig-omni"
-FEDORA_AUDIO_VENV="~/.venvs/kimi-audio"
-FEDORA_AUDIO_MODEL="moonshotai/Kimi-Audio-7B-Instruct"
-FEDORA_AGENT_MODEL="Qwen/Qwen3-14B-AWQ"
 FEDORA_VLLM_ROUTER_PORT="8000"
 FEDORA_VLLM_REGISTRY="~/.config/vllm-router/models.json"
-FEDORA_NEO4J_URI="bolt://localhost:7687"
-FEDORA_NEO4J_USER="neo4j"
-FEDORA_NEO4J_PASSWORD="changeme"
+FEDORA_AGENT_MODEL="Qwen/Qwen3-14B-AWQ"
+FEDORA_AUDIO_MODEL="moonshotai/Kimi-Audio-7B-Instruct"
 FEDORA_WS_GTK_ARGS="-l -c Dark"
 FEDORA_WS_ICON_ARGS="-dark"
 FEDORA_WS_WALL_ARGS=""
@@ -1299,43 +1249,4 @@ X-GNOME-Autostart-enabled=true
 DESKTOPEOF
 chown -R sija:sija "$AUTOSTART_DIR"
 
-%end
-
-# ── %post --nochroot: Anaconda-Logs auf USB-Stick sichern ────────────────────
-# Läuft im Installer-Environment (nicht im chroot), daher haben wir Zugriff auf
-# /tmp/anaconda.log etc. und können den USB-Stick unter /run/install/repo finden.
-%post --nochroot --log=/tmp/ks-post-nochroot.log
-set -x
-
-LOG_DEST=""
-
-# Anaconda hängt den Install-USB i.d.R. unter /run/install/repo ein
-if mountpoint -q /run/install/repo 2>/dev/null; then
-    LOG_DEST="/run/install/repo/install-logs"
-fi
-
-# Fallback: USB per Label suchen und selbst einbinden
-if [[ -z "$LOG_DEST" ]]; then
-    USB_DEV=$(blkid -L "FEDORA-USB" 2>/dev/null || true)
-    if [[ -n "$USB_DEV" ]]; then
-        mkdir -p /mnt/fedora-usb-logs
-        mount "$USB_DEV" /mnt/fedora-usb-logs 2>/dev/null && LOG_DEST="/mnt/fedora-usb-logs/install-logs"
-    fi
-fi
-
-if [[ -n "$LOG_DEST" ]]; then
-    mkdir -p "$LOG_DEST"
-    for f in /tmp/anaconda.log /tmp/packaging.log /tmp/program.log \
-              /tmp/storage.log /tmp/syslog /tmp/ks-post-nochroot.log \
-              /root/ks-post.log; do
-        [[ -f "$f" ]] && cp "$f" "$LOG_DEST/" || true
-    done
-    sync
-    echo "Logs gesichert nach: $LOG_DEST"
-    ls -lh "$LOG_DEST/" || true
-    # Falls selbst gemountet: aushängen
-    mountpoint -q /mnt/fedora-usb-logs 2>/dev/null && umount /mnt/fedora-usb-logs || true
-else
-    echo "WARNUNG: USB-Stick (FEDORA-USB) nicht gefunden — Logs nicht gesichert."
-fi
 %end

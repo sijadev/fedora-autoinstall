@@ -2,6 +2,7 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
+from typing import cast
 
 
 PROJECT = Path(__file__).parent.parent
@@ -15,7 +16,7 @@ class KickstartValidatorTests(unittest.TestCase):
 
     def _validate(self, filename: str) -> None:
         proc = subprocess.run(
-            [KSVALIDATOR, filename],
+            [cast(str, KSVALIDATOR), filename],
             cwd=KICKSTART_DIR,
             text=True,
             capture_output=True,
