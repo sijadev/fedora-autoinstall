@@ -30,6 +30,9 @@ keyboard --xlayouts='de'
 lang de_DE.UTF-8
 timezone Europe/Berlin --utc
 
+# ── Firewall ──────────────────────────────────────────────────────────────────
+firewall --enabled --service=ssh
+
 # ── Network ───────────────────────────────────────────────────────────────────
 network --bootproto=dhcp --device=link --activate
 network --hostname=fedora-workstation
@@ -60,6 +63,7 @@ ninja-build
 virt-manager
 qemu-kvm
 libvirt
+openssh-server
 %end
 
 # ── %addon kdump ──────────────────────────────────────────────────────────────
@@ -70,6 +74,9 @@ libvirt
 %post --log=/root/ks-post.log
 
 set -euo pipefail
+
+# ── SSH aktivieren ────────────────────────────────────────────────────────────
+systemctl enable sshd.service
 
 # ── Write provisioning environment ───────────────────────────────────────────
 cat > /etc/fedora-provision.env <<'ENVEOF'
