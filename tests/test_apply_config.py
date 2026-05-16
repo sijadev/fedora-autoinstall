@@ -388,8 +388,7 @@ class IntegrationTests(unittest.TestCase):
                       "FEDORA_VLLM_VENV nicht korrekt ersetzt")
         self.assertIn('FEDORA_NEO4J_PASSWORD="bitwig-agent"', joined,
                       "FEDORA_NEO4J_PASSWORD nicht korrekt ersetzt")
-        self.assertIn('FEDORA_CUDA_SOURCE="fedora"', joined,
-                      "FEDORA_CUDA_SOURCE nicht korrekt ersetzt")
+        # FEDORA_CUDA_SOURCE wurde aus fedora-full.ks entfernt (CUDA kommt immer von NVIDIA-Repo)
 
 
 if __name__ == "__main__":
