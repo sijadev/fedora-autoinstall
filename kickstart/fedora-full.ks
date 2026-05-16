@@ -21,7 +21,7 @@ ignoredisk --only-use=$DISK
 zerombr
 clearpart --all --initlabel --drives=$DISK
 bootloader --boot-drive=$DISK
-autopart --type=lvm
+autopart --type=btrfs
 DEOF
 %end
 
