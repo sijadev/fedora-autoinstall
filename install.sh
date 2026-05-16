@@ -80,6 +80,14 @@ fi
 [[ "$EUID" -ne 0 ]] && die "Bitte als root ausführen: sudo $0 $*"
 [[ -b "$USB_DEV" ]] || die "Kein Blockgerät: $USB_DEV"
 
+# ── Tests ─────────────────────────────────────────────────────────────────────
+step "Selbsttests (Shell + Python)"
+if bash "${SCRIPT_DIR}/tests/run-all.sh" --full; then
+    log "Alle Tests bestanden — Installation wird fortgesetzt."
+else
+    die "Tests fehlgeschlagen — Installation abgebrochen. Bitte Fehler beheben."
+fi
+
 # ── Voraussetzungen ───────────────────────────────────────────────────────────
 step "Voraussetzungen prüfen"
 missing=()
