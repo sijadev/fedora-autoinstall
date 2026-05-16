@@ -75,14 +75,23 @@ set -euo pipefail
 # ── Write provisioning environment ───────────────────────────────────────────
 cat > /etc/fedora-provision.env <<'ENVEOF'
 FEDORA_TARGET_USER="sija"
+FEDORA_CUDA_SOURCE="fedora"
+FEDORA_VLLM_CUDA_VERSION="13.0"
+FEDORA_VLLM_ARCH_LIST="12.0"
 FEDORA_VLLM_ROUTER_PORT="8000"
 FEDORA_VLLM_REGISTRY="~/.config/vllm-router/models.json"
 FEDORA_AGENT_MODEL="Qwen/Qwen3-14B-AWQ"
 FEDORA_AUDIO_MODEL="moonshotai/Kimi-Audio-7B-Instruct"
+FEDORA_PYTORCH_VENV="~/.venvs/ai"
+FEDORA_VLLM_VENV="~/.venvs/bitwig-omni"
+FEDORA_AUDIO_VENV="~/.venvs/kimi-audio"
 FEDORA_WS_GTK_ARGS="-l -c Dark"
 FEDORA_WS_ICON_ARGS="-dark"
 FEDORA_WS_WALL_ARGS=""
 FEDORA_OMB_THEME="modern"
+FEDORA_NEO4J_URI="bolt://localhost:7687"
+FEDORA_NEO4J_USER="neo4j"
+FEDORA_NEO4J_PASSWORD="bitwig-agent"
 ENVEOF
 chmod 0644 /etc/fedora-provision.env
 

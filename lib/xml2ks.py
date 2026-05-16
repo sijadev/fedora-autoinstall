@@ -177,6 +177,21 @@ def generate_kickstart(
     pytorch_el     = root.find("first-login/pytorch-venv")
     pytorch_venv   = _attr(pytorch_el, "path", "~/.venvs/ai")
 
+    cuda_el        = root.find("first-boot/cuda")
+    cuda_source    = _attr(cuda_el, "source", "fedora")
+
+    vllm_omni_el   = root.find("first-login/vllm-omni")
+    vllm_venv      = _attr(vllm_omni_el, "venv", "~/.venvs/bitwig-omni")
+    cuda_version   = _get(root, "first-login/vllm-omni/cuda-version", "13.2")
+    arch_list      = _get(root, "first-login/vllm-omni/arch-list", "12.0")
+
+    audio_model_el = root.find("first-login/vllm-omni/audio-model")
+    audio_venv     = _attr(audio_model_el, "venv", "~/.venvs/kimi-audio")
+
+    neo4j_uri      = _get(root, "first-login/neo4j/uri", "bolt://localhost:7687")
+    neo4j_user     = _get(root, "first-login/neo4j/user", "neo4j")
+    neo4j_password = _get(root, "first-login/neo4j/password", "")
+
     ws_gtk_args    = _get(root, "first-login/whitesur/gtk-args", "")
     ws_icon_args   = _get(root, "first-login/whitesur/icon-args", "")
     ws_wall_args   = _get(root, "first-login/whitesur/wallpaper-args", "")
@@ -227,18 +242,26 @@ def generate_kickstart(
 
     packages_block = "\n".join(all_packages)
 
-    # ── Extension enable commands for %post ───────────────────────────────────
     # ── Env vars for first-login service ─────────────────────────────────────
     env_block = "\n".join([
         f'FEDORA_TARGET_USER="{username}"',
+        f'FEDORA_CUDA_SOURCE="{cuda_source}"',
+        f'FEDORA_VLLM_CUDA_VERSION="{cuda_version}"',
+        f'FEDORA_VLLM_ARCH_LIST="{arch_list}"',
         f'FEDORA_VLLM_ROUTER_PORT="{vllm_router_port}"',
         f'FEDORA_VLLM_REGISTRY="{vllm_registry}"',
         f'FEDORA_AGENT_MODEL="{agent_model}"',
         f'FEDORA_AUDIO_MODEL="{audio_model}"',
+        f'FEDORA_PYTORCH_VENV="{pytorch_venv}"',
+        f'FEDORA_VLLM_VENV="{vllm_venv}"',
+        f'FEDORA_AUDIO_VENV="{audio_venv}"',
         f'FEDORA_WS_GTK_ARGS="{ws_gtk_args}"',
         f'FEDORA_WS_ICON_ARGS="{ws_icon_args}"',
         f'FEDORA_WS_WALL_ARGS="{ws_wall_args}"',
         f'FEDORA_OMB_THEME="{omb_theme}"',
+        f'FEDORA_NEO4J_URI="{neo4j_uri}"',
+        f'FEDORA_NEO4J_USER="{neo4j_user}"',
+        f'FEDORA_NEO4J_PASSWORD="{neo4j_password}"',
     ])
 
     # ── Compose the Kickstart ─────────────────────────────────────────────────
