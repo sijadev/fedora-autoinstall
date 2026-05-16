@@ -45,13 +45,13 @@ echo "== Standard-Testlauf =="
 echo ""
 
 echo "[1/5] Shell: install.sh"
-bash tests/test_install_sh.sh "${vflag[@]}"
+bash tests/test_install_sh.sh "${vflag[@]+"${vflag[@]}"}"
 
 echo "[2/5] Shell: sync-usb.sh"
-bash tests/test_sync_usb.sh "${vflag[@]}"
+bash tests/test_sync_usb.sh "${vflag[@]+"${vflag[@]}"}"
 
 echo "[3/5] Shell: systemd units"
-bash tests/test_systemd_units.sh "${vflag[@]}"
+bash tests/test_systemd_units.sh "${vflag[@]+"${vflag[@]}"}"
 
 if [[ $FULL -eq 1 ]]; then
 	echo "[4/5] Python: apply_config + xml2ks"

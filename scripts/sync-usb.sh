@@ -48,10 +48,12 @@ fi
 findmnt "$USB_MNT" &>/dev/null || die "FEDORA-USB nicht erreichbar: ${USB_MNT}"
 
 cleanup() {
+    local rc=$?
     if (( self_mounted )); then
         sync
         udisksctl unmount -b "$(findmnt -n -o SOURCE "$USB_MNT")" &>/dev/null || true
     fi
+    return "$rc"
 }
 trap cleanup EXIT
 
@@ -119,18 +121,22 @@ if [[ ${#to_copy[@]} -eq 0 && ${#to_remove[@]} -eq 0 ]]; then
 fi
 
 echo -e "\n${BOLD}USB-Stick Drift:${RESET}"
-for entry in "${to_copy[@]}"; do
-    IFS='|' read -r src_rel dst_rel <<<"$entry"
-    dst="${USB_MNT}/${dst_rel}"
-    if [[ -f "$dst" ]]; then
-        echo -e "  ${YELLOW}~${RESET} ${src_rel} → ${dst_rel}"
-    else
-        echo -e "  ${GREEN}+${RESET} ${src_rel} → ${dst_rel}  (neu)"
-    fi
-done
-for f in "${to_remove[@]}"; do
-    echo -e "  ${RED}-${RESET} ${f}  (veraltet, wird entfernt)"
-done
+if [[ ${#to_copy[@]} -gt 0 ]]; then
+    for entry in "${to_copy[@]}"; do
+        IFS='|' read -r src_rel dst_rel <<<"$entry"
+        dst="${USB_MNT}/${dst_rel}"
+        if [[ -f "$dst" ]]; then
+            echo -e "  ${YELLOW}~${RESET} ${src_rel} → ${dst_rel}"
+        else
+            echo -e "  ${GREEN}+${RESET} ${src_rel} → ${dst_rel}  (neu)"
+        fi
+    done
+fi
+if [[ ${#to_remove[@]} -gt 0 ]]; then
+    for f in "${to_remove[@]}"; do
+        echo -e "  ${RED}-${RESET} ${f}  (veraltet, wird entfernt)"
+    done
+fi
 echo ""
 
 if [[ "$MODE" == "check" ]]; then
@@ -146,19 +152,23 @@ if [[ "$MODE" == "interactive" ]]; then
 fi
 
 # ── Apply ─────────────────────────────────────────────────────────────────────
-for entry in "${to_copy[@]}"; do
-    IFS='|' read -r src_rel dst_rel <<<"$entry"
-    src="${PROJECT_DIR}/${src_rel}"
-    dst="${USB_MNT}/${dst_rel}"
-    mkdir -p "$(dirname "$dst")"
-    cp "$src" "$dst"
-    log "Kopiert: ${dst_rel}"
-done
+if [[ ${#to_copy[@]} -gt 0 ]]; then
+    for entry in "${to_copy[@]}"; do
+        IFS='|' read -r src_rel dst_rel <<<"$entry"
+        src="${PROJECT_DIR}/${src_rel}"
+        dst="${USB_MNT}/${dst_rel}"
+        mkdir -p "$(dirname "$dst")"
+        cp "$src" "$dst"
+        log "Kopiert: ${dst_rel}"
+    done
+fi
 
-for f in "${to_remove[@]}"; do
-    rm -f "${USB_MNT}/${f}"
-    log "Entfernt: ${f}"
-done
+if [[ ${#to_remove[@]} -gt 0 ]]; then
+    for f in "${to_remove[@]}"; do
+        rm -f "${USB_MNT}/${f}"
+        log "Entfernt: ${f}"
+    done
+fi
 
 sync
 log "USB-Stick synchronisiert ✓"
