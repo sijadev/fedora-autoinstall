@@ -6,9 +6,9 @@
 text
 reboot
 
-%pre
-#!/bin/bash
-DISK=$(grep -oP '(?<=inst\.disk=)\S+' /proc/cmdline || true)
+%pre --interpreter=/bin/bash --log=/tmp/ks-pre-disk.log
+DISK=$(grep -oP '(?<=inst\.disk=)\S+' /proc/cmdline 2>/dev/null \
+    || grep -o 'inst\.disk=[^ ]*' /proc/cmdline | cut -d= -f2 || true)
 if [[ -z "$DISK" ]]; then
     DISK=$(lsblk -bdno NAME,TYPE,TRAN,RM,SIZE \
         | awk '$2=="disk" && $3!="usb" && $4=="0" && $1!~/^zram/ {print $5+0, $1}' \
@@ -26,16 +26,11 @@ DEOF
 %end
 
 # ── %pre: Kontinuierliches Log-Sync auf USB-Stick (läuft auch bei Fehler) ─────
-%pre --log=/tmp/ks-pre-logsync.log
-#!/bin/bash
-# Startet einen Hintergrund-Daemon der alle 30s Anaconda-Logs auf den USB synct.
-# Läuft während der gesamten Installation — auch wenn %post nie erreicht wird.
-
+%pre --interpreter=/bin/bash --log=/tmp/ks-pre-logsync.log
 USB_MOUNT="/mnt/usb-log-sync"
 LOG_DEST="$USB_MOUNT/install-logs"
 SYNC_INTERVAL=30
 
-# USB per Label suchen
 USB_DEV=$(blkid -L "FEDORA-USB" 2>/dev/null || true)
 if [[ -z "$USB_DEV" ]]; then
     echo "USB-Stick FEDORA-USB nicht gefunden — Log-Sync deaktiviert." >&2
@@ -43,10 +38,7 @@ if [[ -z "$USB_DEV" ]]; then
 fi
 
 mkdir -p "$USB_MOUNT"
-# USB ggf. bereits von Anaconda gemountet → read-only remount für Schreiben nicht nötig,
-# aber wir probieren eigenen Mount auf dem selben Device
 mount "$USB_DEV" "$USB_MOUNT" 2>/dev/null || {
-    # Fallback: ist schon unter /run/install/repo gemountet?
     if mountpoint -q /run/install/repo 2>/dev/null; then
         LOG_DEST="/run/install/repo/install-logs"
         USB_MOUNT=""
@@ -58,18 +50,18 @@ mount "$USB_DEV" "$USB_MOUNT" 2>/dev/null || {
 
 mkdir -p "$LOG_DEST"
 
-# Hintergrund-Loop
+# stdout/stderr schließen, sonst wartet Anaconda auf EOF des Hintergrundprozesses
 (
     while true; do
         sleep "$SYNC_INTERVAL"
         for f in /tmp/anaconda.log /tmp/packaging.log /tmp/program.log \
                   /tmp/storage.log /tmp/syslog /tmp/ks-post.log \
-                  /tmp/ks-pre-logsync.log; do
+                  /tmp/ks-pre-disk.log /tmp/ks-pre-logsync.log; do
             [[ -f "$f" ]] && cp -f "$f" "$LOG_DEST/" 2>/dev/null || true
         done
         sync 2>/dev/null || true
     done
-) &
+) </dev/null >/dev/null 2>&1 &
 disown $!
 
 echo "Log-Sync gestartet → $LOG_DEST (alle ${SYNC_INTERVAL}s)"
