@@ -93,14 +93,19 @@ setup() {
         "${FAKE_PROJECT}/boot/grub.cfg" \
         "${FAKE_USB}/boot/vmlinuz"
 
-    # Fake-Binaries: findmnt meldet USB als gemountet
+    # Fake-Binaries: findmnt + mount melden USB als gemountet
     cat > "${FAKE_BIN}/findmnt" <<'EOF'
 #!/bin/bash
-# Gibt immer "gemountet" zurück für unseren Test-Mountpunkt
 exit 0
 EOF
-    # lsblk, udisksctl, sync: no-ops
-    for cmd in lsblk udisksctl sync; do
+    cat > "${FAKE_BIN}/mount" <<'EOF'
+#!/bin/bash
+# Simuliert gemounteten USB für macOS-Pfad
+echo "fake on /Volumes/FEDORA-USB type msdos"
+exit 0
+EOF
+    # lsblk, udisksctl, diskutil, sync: no-ops
+    for cmd in lsblk udisksctl diskutil sync; do
         printf '#!/bin/bash\nexit 0\n' > "${FAKE_BIN}/${cmd}"
     done
     chmod +x "${FAKE_BIN}"/*
@@ -111,16 +116,14 @@ EOF
 #!/usr/bin/env bash
 export PATH="${FAKE_BIN}:\$PATH"
 
-# Script sourcen mit überschriebenen Variablen
-# Da sync-usb.sh PROJECT_DIR selbst setzt, patchen wir es via sed in eine Kopie
 PATCHED="\$(mktemp)"
 sed \
     -e 's|PROJECT_DIR=.*|PROJECT_DIR="${FAKE_PROJECT}"|' \
-    -e 's|USB_MNT=.*|USB_MNT="${FAKE_USB}"|' \
+    -e 's|HOST_OS=.*|HOST_OS="Linux"|' \
+    -e 's|USB_MNT="/run/media.*|USB_MNT="${FAKE_USB}"|' \
     -e 's|self_mounted=0|self_mounted=0 # test|' \
     "${SYNC_USB}" > "\$PATCHED"
 
-# Variablen für sed-Expansion in Patched verfügbar machen
 export FAKE_PROJECT="${FAKE_PROJECT}"
 export FAKE_USB="${FAKE_USB}"
 
