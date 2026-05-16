@@ -305,7 +305,7 @@ install_cuda_nvidia_repo() {
 }
 
 case "$CUDA_SOURCE" in
-    fedora|fedora) install_cuda_fedora   ;;
+    fedora)        install_cuda_fedora   ;;
     nvidia)        install_cuda_nvidia_repo ;;
     *)             die "Unknown cuda source: $CUDA_SOURCE" ;;
 esac
@@ -320,33 +320,36 @@ for candidate in /usr/local/cuda /usr/local/cuda-* /usr; do
         break
     fi
 done
-[[ -n "$CUDA_HOME_DETECTED" ]] || die "nvcc not found after CUDA installation."
-log "CUDA installed at: $CUDA_HOME_DETECTED"
+if [[ -z "$CUDA_HOME_DETECTED" ]]; then
+    warn "nvcc not found after CUDA installation — skipping CUDA environment setup."
+else
+    log "CUDA installed at: $CUDA_HOME_DETECTED"
 
-CUDA_VERSION_INSTALLED=$("${CUDA_HOME_DETECTED}/bin/nvcc" --version \
-    | grep -oP 'release \K[\d.]+' | head -1)
-log "CUDA version: $CUDA_VERSION_INSTALLED"
+    CUDA_VERSION_INSTALLED=$("${CUDA_HOME_DETECTED}/bin/nvcc" --version \
+        | grep -oP 'release \K[\d.]+' | head -1)
+    log "CUDA version: $CUDA_VERSION_INSTALLED"
 
-# ── 4. System-wide CUDA environment variables ─────────────────────────────────
-step "CUDA environment variables"
+    # ── 4. System-wide CUDA environment variables ─────────────────────────────
+    step "CUDA environment variables"
 
-cat > "$CUDA_ENV_FILE" <<ENVEOF
+    cat > "$CUDA_ENV_FILE" <<ENVEOF
 # Fedora Auto-Install: CUDA environment — managed by fedora-first-boot.sh
 export CUDA_HOME="${CUDA_HOME_DETECTED}"
 export PATH="\${CUDA_HOME}/bin\${PATH:+:\$PATH}"
 export LD_LIBRARY_PATH="\${CUDA_HOME}/lib64\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 ENVEOF
-chmod 0644 "$CUDA_ENV_FILE"
-log "CUDA env written to $CUDA_ENV_FILE"
+    chmod 0644 "$CUDA_ENV_FILE"
+    log "CUDA env written to $CUDA_ENV_FILE"
 
-# Also write a systemd-compatible EnvironmentFile entry
-mkdir -p /etc/systemd/system.conf.d
-cat > /etc/systemd/system.conf.d/cuda-env.conf <<SYSENVEOF
+    # Also write a systemd-compatible EnvironmentFile entry
+    mkdir -p /etc/systemd/system.conf.d
+    cat > /etc/systemd/system.conf.d/cuda-env.conf <<SYSENVEOF
 # CUDA environment for systemd services
 [Manager]
 DefaultEnvironment=CUDA_HOME=${CUDA_HOME_DETECTED}
 SYSENVEOF
-systemctl daemon-reload
+    systemctl daemon-reload
+fi
 
 fi  # end: CUDA (GPU present + profile requires CUDA)
 
@@ -561,12 +564,19 @@ TIMESHIFTEOF
         log "Timeshift konfiguriert: BTRFS-Modus, UUID=${BTRFS_UUID}."
     fi
 
-    # BLS-Entries auf subvol=@ aktualisieren (grubby patcht alle Kernel-Einträge)
-    # grub2-mkconfig liest sonst das laufende Subvolume → wäre falsch beim ersten Boot
+    # BLS-Entries auf das aktuell gemountete Btrfs-Subvolume aktualisieren.
+    # Fedora-Autopart nutzt nicht zwingend "@"; falsche rootflags führen zu
+    # "failed to mount sysroot.mount" beim nächsten Boot.
     if command -v grubby &>/dev/null; then
-        grubby --update-kernel=ALL --remove-args='rootflags' --args='rootflags=subvol=@' \
-            && log "grubby: BLS-Entries auf rootflags=subvol=@ gesetzt." \
-            || warn "grubby update fehlgeschlagen (non-fatal)."
+        ROOT_SOURCE=$(findmnt -n -o SOURCE / 2>/dev/null || true)
+        ROOT_SUBVOL=$(printf '%s' "$ROOT_SOURCE" | sed -n 's/.*\[\([^]]\+\)\]$/\1/p')
+        if [[ -n "$ROOT_SUBVOL" ]]; then
+            grubby --update-kernel=ALL --remove-args='rootflags' --args="rootflags=subvol=${ROOT_SUBVOL}" \
+                && log "grubby: BLS-Entries auf rootflags=subvol=${ROOT_SUBVOL} gesetzt." \
+                || warn "grubby update fehlgeschlagen (non-fatal)."
+        else
+            warn "Btrfs-Subvolume konnte nicht erkannt werden; rootflags bleiben unverändert."
+        fi
     fi
 
     # grub-btrfs: Snapshots automatisch im GRUB-Menü registrieren

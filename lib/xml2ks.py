@@ -227,6 +227,7 @@ def generate_kickstart(
         "gcc",
         "gcc-c++",
         "cmake",
+        "openssh-server",
         "ninja-build",
     ]
     seen = set(base_packages)
@@ -304,6 +305,9 @@ keyboard --xlayouts='{keyboard}'
 lang {locale}
 timezone {timezone} --utc
 
+# ── Firewall ──────────────────────────────────────────────────────────────────
+firewall --enabled --service=ssh
+
 # ── Network ───────────────────────────────────────────────────────────────────
 network --bootproto=dhcp --device=link --activate
 network --hostname={hostname}
@@ -328,6 +332,9 @@ user --groups={groups} --name={username} --password={pw_hash} --iscrypted --geco
 %post --log=/root/ks-post.log
 
 set -euo pipefail
+
+# ── SSH aktivieren ────────────────────────────────────────────────────────────
+systemctl enable sshd.service
 
 # ── Write provisioning environment ───────────────────────────────────────────
 cat > /etc/fedora-provision.env <<'ENVEOF'

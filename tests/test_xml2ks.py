@@ -876,6 +876,35 @@ class GenerateKickstartTests(unittest.TestCase):
     def test_systemd_enable_first_boot(self):
         self.assertIn("systemctl enable fedora-first-boot.service", self._ks())
 
+    def test_regression_ks_defaults_keep_ssh_access(self):
+        """Regression guard: generated KS must keep SSH reachable by default."""
+        ks = self._ks()
+        self.assertIn("firewall --enabled --service=ssh", ks)
+        self.assertIn("openssh-server", ks)
+        self.assertIn("systemctl enable sshd.service", ks)
+
+    def test_regression_embedded_first_boot_cuda_guards(self):
+        """Regression guard for previously broken CUDA branch in embedded first-boot.sh."""
+        project = Path(__file__).parent.parent
+        fb = project / "scripts" / "first-boot.sh"
+        fl = project / "scripts" / "first-login.sh"
+        unit = project / "systemd" / "fedora-first-boot.service"
+        if not fb.exists() or not fl.exists() or not unit.exists():
+            self.skipTest("Projekt-Scripts nicht gefunden")
+
+        ks = xml2ks.generate_kickstart(
+            load_fixture("minimal.xml"),
+            first_boot_script=fb,
+            first_login_script=fl,
+            systemd_unit=unit,
+        )
+        self.assertNotIn("fedora|fedora)", ks)
+        self.assertNotIn('die "nvcc not found after CUDA installation."', ks)
+        self.assertIn(
+            'warn "nvcc not found after CUDA installation — skipping CUDA environment setup."',
+            ks,
+        )
+
     # ── Full generation integration ───────────────────────────────────────────
 
     def test_full_xml_generates_valid_ks_structure(self):

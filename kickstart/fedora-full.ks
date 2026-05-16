@@ -21,7 +21,7 @@ ignoredisk --only-use=$DISK
 zerombr
 clearpart --all --initlabel --drives=$DISK
 bootloader --boot-drive=$DISK
-autopart --type=btrfs
+autopart --type=lvm
 DEOF
 %end
 
@@ -42,7 +42,7 @@ network --hostname=fedora-workstation
 
 # ── Authentication ────────────────────────────────────────────────────────────
 rootpw --lock
-user --groups=wheel,libvirt,video,audio --name=sija --password=$6$44c989d29609f973$7QBIfg7sNEWDBZjMc9zqD57buujYlXEBwSNnXFTIQz6lZJiEVQ25T9Nsw76HIRiKeiPHOwhdg2FAQVXa18gMA1 --iscrypted --gecos="sija"
+user --groups=wheel,libvirt,video,audio --name=sija --password=$6$rounds=4096$exampleSalt$A2xI1.hfVf4M8bJH3uQ6Q7fKJ3QYgAnfYQPc0dyY8aTJiD9f8Lh3EEcKB6DzQ9s9lfhYf6Q2xv.YO1f4Yv4eY0 --iscrypted --gecos="sija"
 
 # ── Packages ──────────────────────────────────────────────────────────────────
 %packages
@@ -59,11 +59,11 @@ make
 gcc
 gcc-c++
 cmake
+openssh-server
 ninja-build
 virt-manager
 qemu-kvm
 libvirt
-openssh-server
 %end
 
 # ── %addon kdump ──────────────────────────────────────────────────────────────
@@ -81,6 +81,7 @@ systemctl enable sshd.service
 # ── Write provisioning environment ───────────────────────────────────────────
 cat > /etc/fedora-provision.env <<'ENVEOF'
 FEDORA_TARGET_USER="sija"
+FEDORA_CUDA_SOURCE="fedora"
 FEDORA_VLLM_CUDA_VERSION="13.0"
 FEDORA_VLLM_ARCH_LIST="12.0"
 FEDORA_VLLM_ROUTER_PORT="8000"
@@ -111,7 +112,7 @@ cat > /usr/local/sbin/fedora-first-boot.sh <<'FBEOF'
 # Tasks:
 #   1. System-Update (dnf upgrade)
 #   2. NVIDIA Open Driver update
-#   3. CUDA installation (NVIDIA repo only)
+#   3. CUDA installation (Fedora/Fedora or NVIDIA repo)
 #   4. Set system-wide CUDA environment variables
 
 set -euo pipefail
@@ -189,21 +190,41 @@ fi
 
 # ── 1. System-Update ──────────────────────────────────────────────────────────
 step "System-Update"
-log "Running dnf upgrade (excluding kernel to avoid akmod version mismatch)..."
-dnf upgrade -y --exclude='kernel*' || die "dnf upgrade failed."
+log "Running dnf upgrade..."
+dnf upgrade -y || die "dnf upgrade failed."
 log "dnf upgrade completed."
 
-# ── 1b. RPM Fusion (benötigt für akmod-nvidia) ───────────────────────────────
-step "RPM Fusion Repos"
-FEDORA_VER=$(rpm -E %fedora)
-if ! rpm -q rpmfusion-free-release &>/dev/null; then
-    dnf install -y \
-        "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VER}.noarch.rpm" \
-        "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VER}.noarch.rpm" \
-        && log "RPM Fusion free + nonfree installiert." \
-        || die "RPM Fusion install fehlgeschlagen."
+# ── 1b. Bazzite Kernel (Blackwell-Support + Gaming Patches) ───────────────────
+# Bazzite-Kernel ist konzeptuell verwandt mit Nobara-Kernel und wird aktiv für
+# Fedora 43 + Blackwell GPUs (RTX 50/9070) gepflegt. Muss VOR akmod-nvidia-open
+# installiert werden, damit Module gegen den richtigen Kernel gebaut werden.
+step "Bazzite Kernel installieren"
+
+if [[ "${FEDORA_KERNEL_SOURCE:-bazzite}" != "fedora" ]]; then
+    if dnf copr enable -y bazzite-org/kernel-bazzite 2>/dev/null; then
+        if dnf install -y \
+            kernel-bazzite \
+            kernel-bazzite-core \
+            kernel-bazzite-modules \
+            kernel-bazzite-modules-extra \
+            kernel-bazzite-devel 2>/dev/null; then
+            log "Bazzite-Kernel installiert."
+            if command -v grubby &>/dev/null; then
+                NEW_KERNEL=$(ls /boot/vmlinuz-*bazzite* 2>/dev/null | sort -V | tail -1)
+                if [[ -n "$NEW_KERNEL" ]]; then
+                    grubby --set-default "$NEW_KERNEL" \
+                        && log "Bazzite-Kernel als Default gesetzt: $(basename "$NEW_KERNEL")" \
+                        || warn "grubby --set-default fehlgeschlagen."
+                fi
+            fi
+        else
+            warn "Bazzite-Kernel install fehlgeschlagen — Standard-Kernel bleibt aktiv."
+        fi
+    else
+        warn "COPR bazzite-org/kernel-bazzite nicht verfügbar — Standard-Kernel bleibt aktiv."
+    fi
 else
-    log "RPM Fusion bereits installiert."
+    log "FEDORA_KERNEL_SOURCE=fedora — Bazzite-Kernel übersprungen."
 fi
 
 # ── 2. NVIDIA Open Driver ─────────────────────────────────────────────────────
@@ -244,11 +265,11 @@ if check_nvidia_open_compat; then
     if nvidia-smi &>/dev/null; then
         log "NVIDIA-Treiber bereits aktiv ($(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null)) — Installation übersprungen."
     else
-        log "Installing/updating NVIDIA driver (akmod)..."
+        log "Installing/updating NVIDIA Open Kernel Module driver..."
         dnf install -y \
-            "kernel-devel-uname-r == $(uname -r)" \
+            kernel-devel \
             kernel-headers \
-            akmod-nvidia \
+            akmod-nvidia-open \
             xorg-x11-drv-nvidia-cuda \
             || warn "NVIDIA Open Driver installation fehlgeschlagen (non-fatal — ggf. bereits via DKMS/Nobara installiert)."
 
@@ -358,33 +379,41 @@ elif ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
     warn "No NVIDIA GPU detected — skipping CUDA installation (VM or non-NVIDIA system)."
 else
 
-install_cuda_nvidia_repo() {
-    log "Installing CUDA toolkit from official NVIDIA repo..."
-    local arch; arch=$(uname -m)
-    local fedora_ver; fedora_ver=$(rpm -E %fedora)
-    local repo_url="https://developer.download.nvidia.com/compute/cuda/repos/fedora${fedora_ver}/${arch}/cuda-fedora${fedora_ver}.repo"
-    if ! curl -sf --max-time 15 "$repo_url" >/dev/null 2>&1; then
-        repo_url="https://developer.download.nvidia.com/compute/cuda/repos/rhel9/${arch}/cuda-rhel9.repo"
-        warn "Kein Fedora${fedora_ver} CUDA Repo — verwende RHEL9-Fallback."
-    fi
-    # dnf5 (Fedora 42+) syntax differs from dnf4
-    if ! dnf config-manager addrepo --from-repofile="$repo_url" 2>/dev/null; then
-        dnf config-manager --add-repo "$repo_url" 2>/dev/null \
-            || { warn "NVIDIA CUDA Repo konnte nicht hinzugefügt werden — CUDA übersprungen."; return 1; }
-    fi
-    # Nur cuda-toolkit installieren (NICHT cuda-Metapackage — zieht eigene Treiber rein,
-    # die mit akmod-nvidia aus RPM Fusion kollidieren würden)
-    dnf install -y --nogpgcheck \
-        cuda-toolkit \
-        cuda-cudart \
-        cuda-libraries \
-        cuda-compiler \
-        || { warn "CUDA toolkit installation fehlgeschlagen (non-fatal)."; return 1; }
+CUDA_SOURCE="${FEDORA_CUDA_SOURCE:-fedora}"
+
+install_cuda_fedora() {
+    log "Installing CUDA from Fedora/Fedora repos..."
+    # Fedora packages: 'cuda' (toolkit), 'cuda-cudart-devel' (dev headers)
+    # Note: 'cuda-toolkit' does not exist in Fedora repos (use 'cuda' instead)
+    dnf install -y \
+        cuda \
+        cuda-cudart-devel \
+        || die "CUDA installation from Fedora/Fedora repos failed."
 }
 
-if ! install_cuda_nvidia_repo; then
-    warn "CUDA installation fehlgeschlagen — first-boot läuft weiter."
-else
+install_cuda_nvidia_repo() {
+    log "Installing CUDA from official NVIDIA repo..."
+    local arch; arch=$(uname -m)
+    local distro="rhel9"
+    local repo_url="https://developer.download.nvidia.com/compute/cuda/repos/${distro}/${arch}/cuda-${distro}.repo"
+
+    if ! dnf config-manager --add-repo "$repo_url" 2>/dev/null; then
+        # Try with dnf5 syntax
+        dnf config-manager addrepo --from-repofile="$repo_url" \
+            || die "Failed to add NVIDIA CUDA repo."
+    fi
+
+    dnf install -y \
+        cuda-toolkit \
+        cuda-devel \
+        || die "CUDA installation from NVIDIA repo failed."
+}
+
+case "$CUDA_SOURCE" in
+    fedora)        install_cuda_fedora   ;;
+    nvidia)        install_cuda_nvidia_repo ;;
+    *)             die "Unknown cuda source: $CUDA_SOURCE" ;;
+esac
 
 # Discover installed CUDA path
 CUDA_HOME_DETECTED=""
@@ -396,38 +425,37 @@ for candidate in /usr/local/cuda /usr/local/cuda-* /usr; do
         break
     fi
 done
-[[ -n "$CUDA_HOME_DETECTED" ]] || { warn "nvcc nicht gefunden nach CUDA installation — env wird nicht gesetzt."; }
+if [[ -z "$CUDA_HOME_DETECTED" ]]; then
+    warn "nvcc not found after CUDA installation — skipping CUDA environment setup."
+else
+    log "CUDA installed at: $CUDA_HOME_DETECTED"
 
-if [[ -n "$CUDA_HOME_DETECTED" ]]; then
-log "CUDA installed at: $CUDA_HOME_DETECTED"
+    CUDA_VERSION_INSTALLED=$("${CUDA_HOME_DETECTED}/bin/nvcc" --version \
+        | grep -oP 'release \K[\d.]+' | head -1)
+    log "CUDA version: $CUDA_VERSION_INSTALLED"
 
-CUDA_VERSION_INSTALLED=$("${CUDA_HOME_DETECTED}/bin/nvcc" --version \
-    | grep -oP 'release \K[\d.]+' | head -1)
-log "CUDA version: $CUDA_VERSION_INSTALLED"
+    # ── 4. System-wide CUDA environment variables ─────────────────────────────
+    step "CUDA environment variables"
 
-# ── 4. System-wide CUDA environment variables ─────────────────────────────────
-step "CUDA environment variables"
-
-cat > "$CUDA_ENV_FILE" <<ENVEOF
+    cat > "$CUDA_ENV_FILE" <<ENVEOF
 # Fedora Auto-Install: CUDA environment — managed by fedora-first-boot.sh
 export CUDA_HOME="${CUDA_HOME_DETECTED}"
 export PATH="\${CUDA_HOME}/bin\${PATH:+:\$PATH}"
 export LD_LIBRARY_PATH="\${CUDA_HOME}/lib64\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 ENVEOF
-chmod 0644 "$CUDA_ENV_FILE"
-log "CUDA env written to $CUDA_ENV_FILE"
+    chmod 0644 "$CUDA_ENV_FILE"
+    log "CUDA env written to $CUDA_ENV_FILE"
 
-# Also write a systemd-compatible EnvironmentFile entry
-mkdir -p /etc/systemd/system.conf.d
-cat > /etc/systemd/system.conf.d/cuda-env.conf <<SYSENVEOF
+    # Also write a systemd-compatible EnvironmentFile entry
+    mkdir -p /etc/systemd/system.conf.d
+    cat > /etc/systemd/system.conf.d/cuda-env.conf <<SYSENVEOF
 # CUDA environment for systemd services
 [Manager]
 DefaultEnvironment=CUDA_HOME=${CUDA_HOME_DETECTED}
 SYSENVEOF
-systemctl daemon-reload
+    systemctl daemon-reload
+fi
 
-fi  # end: nvcc found
-fi  # end: CUDA install success
 fi  # end: CUDA (GPU present + profile requires CUDA)
 
 # ── 5. Kernel/Sysctl performance tuning ──────────────────────────────────────
@@ -641,12 +669,19 @@ TIMESHIFTEOF
         log "Timeshift konfiguriert: BTRFS-Modus, UUID=${BTRFS_UUID}."
     fi
 
-    # BLS-Entries auf subvol=@ aktualisieren (grubby patcht alle Kernel-Einträge)
-    # grub2-mkconfig liest sonst das laufende Subvolume → wäre falsch beim ersten Boot
+    # BLS-Entries auf das aktuell gemountete Btrfs-Subvolume aktualisieren.
+    # Fedora-Autopart nutzt nicht zwingend "@"; falsche rootflags führen zu
+    # "failed to mount sysroot.mount" beim nächsten Boot.
     if command -v grubby &>/dev/null; then
-        grubby --update-kernel=ALL --remove-args='rootflags' --args='rootflags=subvol=@' \
-            && log "grubby: BLS-Entries auf rootflags=subvol=@ gesetzt." \
-            || warn "grubby update fehlgeschlagen (non-fatal)."
+        ROOT_SOURCE=$(findmnt -n -o SOURCE / 2>/dev/null || true)
+        ROOT_SUBVOL=$(printf '%s' "$ROOT_SOURCE" | sed -n 's/.*\[\([^]]\+\)\]$/\1/p')
+        if [[ -n "$ROOT_SUBVOL" ]]; then
+            grubby --update-kernel=ALL --remove-args='rootflags' --args="rootflags=subvol=${ROOT_SUBVOL}" \
+                && log "grubby: BLS-Entries auf rootflags=subvol=${ROOT_SUBVOL} gesetzt." \
+                || warn "grubby update fehlgeschlagen (non-fatal)."
+        else
+            warn "Btrfs-Subvolume konnte nicht erkannt werden; rootflags bleiben unverändert."
+        fi
     fi
 
     # grub-btrfs: Snapshots automatisch im GRUB-Menü registrieren
