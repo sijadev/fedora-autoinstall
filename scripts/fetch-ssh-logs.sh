@@ -189,6 +189,9 @@ if [[ -z "$IDENTITY_FILE" && -f "$KEY_FILE" ]]; then
     IDENTITY_FILE="$KEY_FILE"
 fi
 
+
+# Always remove old host key to avoid SSH key mismatch after reinstall
+ssh-keygen -R "$HOST" >/dev/null 2>&1 || true
 ensure_known_host
 
 SSH_OPTS=(-o ConnectTimeout=10 -o IdentitiesOnly=yes -p "$PORT")

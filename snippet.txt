@@ -1,0 +1,26 @@
+   160	
+   161	if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" != "fedora" ]]; then
+   162	    if dnf copr enable -y bieszczaders/kernel-cachyos 2>/dev/null; then
+   163	        if run_dnf_retry dnf install -y \
+   164	            kernel-cachyos \
+   165	            kernel-cachyos-devel 2>/dev/null; then
+   166	            log "CachyOS-Kernel installiert."
+   167	            if command -v grubby &>/dev/null; then
+   168	                NEW_KERNEL=$(ls /boot/vmlinuz-*cachyos* 2>/dev/null | sort -V | tail -1)
+   169	                if [[ -n "$NEW_KERNEL" ]]; then
+   170	                    grubby --set-default "$NEW_KERNEL" \
+   171	                        && log "CachyOS-Kernel als Default gesetzt: $(basename "$NEW_KERNEL")" \
+   172	                        || warn "grubby --set-default fehlgeschlagen."
+   173	                fi
+   174	
+   175	    install_cuda_nvidia_repo
+   176	
+   177	    fi
+   178	else
+   179	    log "FEDORA_KERNEL_SOURCE=fedora — CachyOS-Kernel übersprungen."
+   180	fi
+   181	
+   182	# ── 2. NVIDIA Open Driver ─────────────────────────────────────────────────────
+   183	step "NVIDIA Open Driver update"
+   184	
+   185	if [[ "$INSTALL_PROFILE" == "cachyos-kernel" ]]; then

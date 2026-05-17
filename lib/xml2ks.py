@@ -178,7 +178,7 @@ def generate_kickstart(
     pytorch_venv   = _attr(pytorch_el, "path", "~/.venvs/ai")
 
     cuda_el        = root.find("first-boot/cuda")
-    cuda_source    = _attr(cuda_el, "source", "fedora")
+    # CUDA always from NVIDIA repo; source attribute is ignored
 
     kernel_el      = root.find("first-boot/kernel")
     kernel_source  = _attr(kernel_el, "source", "cachyos")
@@ -250,7 +250,7 @@ def generate_kickstart(
     env_block = "\n".join([
         f'FEDORA_TARGET_USER="{username}"',
         f'FEDORA_KERNEL_SOURCE="{kernel_source}"',
-        f'FEDORA_CUDA_SOURCE="{cuda_source}"',
+        'FEDORA_CUDA_SOURCE="nvidia"',
         f'FEDORA_VLLM_CUDA_VERSION="{cuda_version}"',
         f'FEDORA_VLLM_ARCH_LIST="{arch_list}"',
         f'FEDORA_VLLM_ROUTER_PORT="{vllm_router_port}"',

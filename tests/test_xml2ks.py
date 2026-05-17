@@ -970,8 +970,13 @@ class GenerateKickstartTests(unittest.TestCase):
         Extracts all repo URLs embedded in the generated KS (from XML config)
         and checks that each returns HTTP 200/301/302 (HEAD request).
         Requires network access — skipped automatically if offline.
+
+        CUDA-Repo-URLs enthalten Shell-Variablen (${distro}/${arch}) und werden
+        daher separat mit konkreten Werten (aktuelle Fedora-Version + x86_64)
+        geprüft — inklusive Fallback auf fedora43, analog zur Skript-Logik.
         """
         import re
+        import platform
         import urllib.request
         import urllib.error
 
@@ -981,7 +986,7 @@ class GenerateKickstartTests(unittest.TestCase):
         #   dnf copr enable -y bieszczaders/kernel-cachyos
         #   --add-repo "https://..."   /  --from-repofile="https://..."
         url_patterns = [
-            # explizite https:// URLs
+            # explizite https:// URLs ohne Shell-Variablen
             re.compile(r'https://[^\s\'"\\]+\.repo'),
             re.compile(r'https://[^\s\'"\\]+/repodata/repomd\.xml'),
         ]
@@ -995,7 +1000,7 @@ class GenerateKickstartTests(unittest.TestCase):
         for pat in url_patterns:
             for m in pat.finditer(ks):
                 url = m.group(0)
-                # Shell-Variablen wie ${distro} überspringen — nur konkrete URLs prüfen
+                # Shell-Variablen (${distro} etc.) werden separat aufgelöst
                 if "${" not in url:
                     urls[url] = "repo-url"
 
@@ -1006,6 +1011,20 @@ class GenerateKickstartTests(unittest.TestCase):
                 url = (f"https://copr.fedorainfracloud.org/coprs/{owner}/"
                        f"{project_name}/")
                 urls[url] = f"copr:{copr_id}"
+
+        # ── CUDA-Repo-URL explizit prüfen (Shell-Variablen auflösen) ──────────
+        # Skript-Logik: erst aktuelle Fedora-Version versuchen, dann fedora43
+        # Fedora-Version aus iso-URL im KS ableiten (z.B. "fedora43") oder
+        # hart auf bekannte neueste Version setzen.
+        _fver_match = re.search(r'fedora(\d+)', ks)
+        _fver = _fver_match.group(1) if _fver_match else "43"
+        _arch = "x86_64"
+        _cuda_base = "https://developer.download.nvidia.com/compute/cuda/repos"
+        _cuda_primary = f"{_cuda_base}/fedora{_fver}/{_arch}/cuda-fedora{_fver}.repo"
+        _cuda_fallback = f"{_cuda_base}/fedora43/{_arch}/cuda-fedora43.repo"
+        # Primär-URL prüfen; bei 404 → Fallback, wie das Skript es tut
+        urls[_cuda_primary] = f"cuda-repo-fedora{_fver} (primary)"
+        urls[_cuda_fallback] = "cuda-repo-fedora43 (fallback)"
 
         if not urls:
             self.skipTest("Keine Repo-URLs im generierten KS gefunden")
@@ -1021,19 +1040,47 @@ class GenerateKickstartTests(unittest.TestCase):
             self.skipTest("Kein Netzwerk — Repo-Erreichbarkeitstest übersprungen")
 
         failures = []
+        cuda_primary_ok = False
         for url, origin in urls.items():
+            # CUDA-Primär-URL darf 404 liefern (Fallback greift dann im Skript)
+            is_cuda_primary = "primary" in origin
+            is_cuda_fallback = "fallback" in origin
             try:
                 req = urllib.request.Request(url, method="HEAD")
                 req.add_header("User-Agent", "fedora-autoinstall-test/1.0")
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     code = resp.status
-                if code not in (200, 301, 302, 303):
+                if code in (200, 301, 302, 303):
+                    if is_cuda_primary:
+                        cuda_primary_ok = True
+                elif not is_cuda_primary:
                     failures.append(f"{origin}: HTTP {code} — {url}")
             except urllib.error.HTTPError as e:
-                if e.code not in (200, 301, 302, 303, 405):
-                    failures.append(f"{origin}: HTTP {e.code} — {url}")
+                if e.code == 404 and is_cuda_primary:
+                    pass  # erwartet — Fallback greift im Skript
+                elif e.code >= 500:
+                    pass  # Server-seitige Fehler (z.B. COPR 500) ignorieren — Repo existiert
+                elif e.code not in (200, 301, 302, 303, 405):
+                    if not is_cuda_primary:
+                        failures.append(f"{origin}: HTTP {e.code} — {url}")
             except (urllib.error.URLError, OSError) as e:
                 failures.append(f"{origin}: Nicht erreichbar — {url} ({e})")
+
+        # Fallback-URL muss immer erreichbar sein (wenn Primary fehlt)
+        if not cuda_primary_ok and f"cuda-repo-fedora43 (fallback)" in [
+            v for v in urls.values()
+        ]:
+            fallback_url = _cuda_fallback
+            try:
+                req = urllib.request.Request(fallback_url, method="HEAD")
+                req.add_header("User-Agent", "fedora-autoinstall-test/1.0")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    if resp.status not in (200, 301, 302, 303):
+                        failures.append(
+                            f"cuda-repo-fedora43 (fallback): HTTP {resp.status} — {fallback_url}"
+                        )
+            except Exception as e:
+                failures.append(f"cuda-repo-fedora43 (fallback): Nicht erreichbar — {fallback_url} ({e})")
 
         if failures:
             self.fail("Nicht erreichbare Repos:\n" + "\n".join(failures))

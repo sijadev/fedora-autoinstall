@@ -95,14 +95,21 @@ Bazzite-Kernel-RPMs werden in `iso/kernel-cache/` gecacht — kein Re-Download b
 # Prüfen ob Stick aktuell ist:
 scripts/sync-usb.sh --check
 
-# Synchronisieren (interaktiv mit Diff):
+# Prüfen und bei Drift direkt deployen:
+scripts/sync-usb.sh --check-deploy
+
+# Vollständiges Deploy (interaktiv, via install.sh):
 scripts/sync-usb.sh
 
-# Ohne Rückfrage:
+# Vollständiges Deploy ohne Rückfrage:
 scripts/sync-usb.sh --force
+
+# Nur Dateien kopieren (Legacy, ohne Rebuild der initrd):
+scripts/sync-usb.sh --files-only
 ```
 
-> **Kernel-Update:** `build-usb.sh` erneut ausführen — `sync-usb.sh` aktualisiert nur Scripts/Kickstart/Config, nicht den Kernel.
+> `sync-usb.sh` führt standardmäßig ein vollständiges Deploy über `install.sh` aus und aktualisiert damit den vollständigen USB-Inhalt konsistent.
+> `--check` prüft nur (Exit 1 bei Drift), `--check-deploy` prüft und deployed bei Drift automatisch.
 
 ### 3. Profil wählen und installieren
 

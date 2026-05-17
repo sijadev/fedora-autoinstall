@@ -71,10 +71,8 @@
     <!-- source="cachyos" → CachyOS kernel (BORE-Scheduler, Blackwell-Support) -->
     <!-- source="fedora"  → Stock Fedora kernel                                -->
 
-    <!-- Install CUDA toolkit -->
-    <cuda enabled="true" source="nvidia"/>
-    <!-- source="fedora"  → use Fedora/Fedora dnf repos (preferred)  -->
-    <!-- source="nvidia"  → use official NVIDIA CUDA repo             -->
+    <!-- Install CUDA toolkit (always from official NVIDIA repo) -->
+    <cuda enabled="true"/>
   </first-boot>
 
   <!-- ── First-login provisioning (runs as user sija, exactly once) ─────── -->

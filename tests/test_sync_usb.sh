@@ -91,7 +91,8 @@ setup() {
         "${FAKE_PROJECT}/systemd/vllm@.container" \
         "${FAKE_PROJECT}/systemd/vllm-router.service" \
         "${FAKE_PROJECT}/boot/grub.cfg" \
-        "${FAKE_USB}/boot/vmlinuz"
+        "${FAKE_USB}/boot/vmlinuz" \
+        "${FAKE_USB}/boot/initrd.img"
 
     # Fake-Binaries: findmnt + mount melden USB als gemountet
     cat > "${FAKE_BIN}/findmnt" <<'EOF'
@@ -127,6 +128,7 @@ sed \
 export FAKE_PROJECT="${FAKE_PROJECT}"
 export FAKE_USB="${FAKE_USB}"
 export FEDORA_SYNC_SKIP_PREFLIGHT=1
+export FEDORA_SYNC_DEPLOY_COMMAND="bash \"\$PATCHED\" --files-only"
 
 bash "\$PATCHED" "\$@"
 rc=\$?
@@ -180,45 +182,52 @@ run_test_output "--check: aktuell meldet 'aktuell'" \
     bash "$SYNC" --check
 teardown
 
-# ── 3. check-Modus: Drift → Exit 1 ───────────────────────────────────────────
+# ── 3. check-Modus: Drift → Exit 1 (read-only) ───────────────────────────────
 setup
 # Quelldatei geändert, USB noch alt
 echo "neue version" > "${FAKE_PROJECT}/kickstart/fedora-full.ks"
 run_test "--check: Drift gibt Exit 1" \
-    bash -c "bash '${SYNC}' --check; [[ \$? -eq 1 ]]"
+    bash -c "bash '${SYNC}' --check >/dev/null 2>&1; [[ \$? -eq 1 ]]"
 teardown
 
-# ── 4. check-Modus: neue Datei auf USB fehlt → Drift ─────────────────────────
+# ── 4. check-modus: fehlende USB-Datei wird als Drift erkannt ────────────────
 setup
 run_test_output "--check: fehlende USB-Datei als Drift erkannt" \
     "fedora-full.ks" \
-    bash -c "bash '${SYNC}' --check 2>&1; true"
+    bash -c "bash '${SYNC}' --check 2>&1 || true"
 teardown
 
-# ── 5. force-Modus: kopiert Dateien ──────────────────────────────────────────
+# ── 4b. check-deploy: Drift wird automatisch deployed ────────────────────────
+setup
+echo "neue version" > "${FAKE_PROJECT}/kickstart/fedora-full.ks"
+run_test "--check-deploy: Drift deployt automatisch" \
+    bash -c "bash '${SYNC}' --check-deploy && diff -q '${FAKE_PROJECT}/kickstart/fedora-full.ks' '${FAKE_USB}/kickstart/fedora-full.ks'"
+teardown
+
+# ── 5. files-only-Modus: kopiert Dateien ─────────────────────────────────────
 setup
 echo "v2" > "${FAKE_PROJECT}/kickstart/fedora-full.ks"
-bash "$SYNC" --force &>/dev/null || true
-run_test "--force: Datei wurde auf USB kopiert" \
+bash "$SYNC" --files-only &>/dev/null || true
+run_test "--files-only: Datei wurde auf USB kopiert" \
     bash -c "[[ -f '${FAKE_USB}/kickstart/fedora-full.ks' ]] && diff -q '${FAKE_PROJECT}/kickstart/fedora-full.ks' '${FAKE_USB}/kickstart/fedora-full.ks'"
 teardown
 
-# ── 6. force-Modus: veraltete Dateien werden entfernt ────────────────────────
+# ── 6. files-only-Modus: veraltete Dateien werden entfernt ───────────────────
 setup
 # Obsolete Datei auf USB anlegen
 mkdir -p "${FAKE_USB}/ventoy"
 touch "${FAKE_USB}/ventoy/ventoy_grub.cfg"
-bash "$SYNC" --force &>/dev/null || true
-run_test "--force: obsolete Datei entfernt" \
+bash "$SYNC" --files-only &>/dev/null || true
+run_test "--files-only: obsolete Datei entfernt" \
     bash -c "[[ ! -f '${FAKE_USB}/ventoy/ventoy_grub.cfg' ]]"
 teardown
 
-# ── 7. force-Modus: fehlende Quelldatei wird übersprungen ────────────────────
+# ── 7. files-only-Modus: fehlende Quelldatei wird übersprungen ───────────────
 setup
 rm "${FAKE_PROJECT}/scripts/vllm-router.py"
-run_test_output "--force: fehlende Quelle wird übersprungen (warn, kein Abbruch)" \
+run_test_output "--files-only: fehlende Quelle wird übersprungen (warn, kein Abbruch)" \
     "übersprungen\|Quelle fehlt" \
-    bash -c "bash '${SYNC}' --force 2>&1"
+    bash -c "bash '${SYNC}' --files-only 2>&1"
 teardown
 
 # ── 8. check-Modus: alle Dateien gleich → Exit 0 ────────────────────────────
@@ -247,12 +256,12 @@ run_test "--check: alles synchron → Exit 0" \
     bash "$SYNC" --check
 teardown
 
-# ── 9. force-Modus: kein Überschreiben identischer Dateien (Smoke) ───────────
+# ── 9. files-only-Modus: kein Überschreiben identischer Dateien (Smoke) ──────
 setup
 echo "gleichinhalt" > "${FAKE_PROJECT}/boot/grub.cfg"
 echo "gleichinhalt" > "${FAKE_USB}/boot/grub.cfg"
-out=$(bash "$SYNC" --force 2>&1 || true)
-run_test "--force: identische Datei wird nicht als 'Kopiert' gemeldet" \
+out=$(bash "$SYNC" --files-only 2>&1 || true)
+run_test "--files-only: identische Datei wird nicht als 'Kopiert' gemeldet" \
     bash -c "! echo '$out' | grep -q 'Kopiert: boot/grub.cfg'"
 teardown
 

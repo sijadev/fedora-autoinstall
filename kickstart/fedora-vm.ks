@@ -204,7 +204,7 @@ CUDA_SOURCE="${FEDORA_CUDA_SOURCE:-nvidia}"
 
 install_cuda_fedora() {
     log "Installing CUDA from Fedora/Fedora repos..."
-    dnf install -y  cuda  cuda-toolkit  cuda-devel  || die "CUDA installation from Fedora/Fedora repos failed."
+    dnf install -y  cuda  cuda-toolkit  || die "CUDA installation from Fedora/Fedora repos failed."
 }
 
 install_cuda_nvidia_repo() {
@@ -218,7 +218,7 @@ install_cuda_nvidia_repo() {
         dnf config-manager addrepo --from-repofile="$repo_url"  || die "Failed to add NVIDIA CUDA repo."
     fi
 
-    dnf install -y  cuda-toolkit  cuda-devel  || die "CUDA installation from NVIDIA repo failed."
+    dnf install -y  cuda-toolkit  || die "CUDA installation from NVIDIA repo failed."
 }
 
 case "$CUDA_SOURCE" in

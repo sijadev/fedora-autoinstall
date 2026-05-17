@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
-# sync-usb.sh — prüft ob der FEDORA-USB-Stick aktuell ist.
+# sync-usb.sh — prüft USB-Drift und deployed den vollständigen Installer-Stand.
 #
-# WICHTIG: Kickstarts und Scripts sind in der initrd eingebettet.
-# Änderungen daran werden erst nach einem USB-Rebuild wirksam:
-#   sudo ./install.sh /dev/sdX
-#
-# sync-usb.sh ist nur noch nützlich für:
-#   - --check: Drift erkennen (wird von vm-test.sh als Gate genutzt)
-#   - grub.cfg und Dateien die nach der Installation vom USB gelesen werden
+# WICHTIG: Der vollständige Installer-Stand liegt auf dem USB-Stick.
+# Standard/--force führen ein vollständiges Deploy über install.sh aus,
+# damit Kickstarts, Scripts, GRUB und weitere Boot-Artefakte konsistent sind.
 #
 # Usage:
-#   scripts/sync-usb.sh                 # interaktiv, zeigt Drift + Hinweis auf install.sh
-#   scripts/sync-usb.sh --check         # nur prüfen (Exit 1 bei Drift), kein Schreiben
-#   scripts/sync-usb.sh --force         # Dateien kopieren (ohne initrd-Rebuild)
+#   scripts/sync-usb.sh                 # interaktiv, vollständiges Deploy via install.sh
+#   scripts/sync-usb.sh --check         # nur Drift prüfen (Exit 1 bei Drift)
+#   scripts/sync-usb.sh --check-deploy  # Drift prüfen und bei Bedarf deployen
+#   scripts/sync-usb.sh --force         # vollständiges Deploy ohne Nachfrage
+#   scripts/sync-usb.sh --files-only    # nur Dateien kopieren (Legacy-Modus)
 
 set -euo pipefail
 
@@ -20,10 +18,12 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOST_OS="$(uname -s)"
 MODE="interactive"
 case "${1:-}" in
-    --check) MODE="check" ;;
+    --check) MODE="check-only" ;;
+    --check-deploy) MODE="check-deploy" ;;
     --force) MODE="force" ;;
+    --files-only) MODE="files-only" ;;
     "")      ;;
-    *) echo "Usage: $0 [--check|--force]" >&2; exit 2 ;;
+    *) echo "Usage: $0 [--check|--check-deploy|--force|--files-only]" >&2; exit 2 ;;
 esac
 
 if [[ -t 1 ]]; then
@@ -35,6 +35,52 @@ fi
 log()  { echo -e "${GREEN}[sync-usb]${RESET} $*"; }
 warn() { echo -e "${YELLOW}[sync-usb]${RESET} $*" >&2; }
 die()  { echo -e "${RED}[sync-usb] $*${RESET}" >&2; exit 1; }
+
+base_device_from_partition() {
+    local part="$1"
+    if [[ "$HOST_OS" == "Darwin" ]]; then
+        # /dev/disk4s1 -> /dev/disk4
+        echo "$part" | sed -E 's/s[0-9]+$//'
+        return
+    fi
+
+    case "$part" in
+        /dev/nvme*n*p[0-9]*|/dev/mmcblk*p[0-9]*) echo "${part%p[0-9]*}" ;;
+        /dev/*[0-9]) echo "${part%[0-9]*}" ;;
+        *) echo "$part" ;;
+    esac
+}
+
+run_full_deploy() {
+    if [[ -n "${FEDORA_SYNC_DEPLOY_COMMAND:-}" ]]; then
+        log "Deploy via FEDORA_SYNC_DEPLOY_COMMAND"
+        eval "${FEDORA_SYNC_DEPLOY_COMMAND}"
+        return
+    fi
+
+    local install_sh="${PROJECT_DIR}/install.sh"
+    [[ -x "$install_sh" ]] || die "install.sh fehlt oder ist nicht ausführbar: ${install_sh}"
+
+    local usb_part=""
+    if [[ "$HOST_OS" == "Darwin" ]]; then
+        usb_part="$(diskutil info "$USB_MNT" 2>/dev/null | awk -F': *' '/Device Node/{print $2; exit}')"
+    else
+        usb_part="$(findmnt -n -o SOURCE "$USB_MNT" 2>/dev/null || true)"
+    fi
+    [[ -n "$usb_part" ]] || die "Konnte USB-Partition für ${USB_MNT} nicht ermitteln."
+
+    local usb_base
+    usb_base="$(base_device_from_partition "$usb_part")"
+    [[ -b "$usb_base" ]] || die "Konnte USB-Basisgerät nicht auflösen: ${usb_base} (von ${usb_part})"
+
+    log "Vollständiges Deploy auf ${usb_base} via install.sh"
+    if [[ "$EUID" -eq 0 ]]; then
+        "${install_sh}" "$usb_base"
+    else
+        command -v sudo >/dev/null 2>&1 || die "sudo fehlt; bitte als root ausführen."
+        sudo "${install_sh}" "$usb_base"
+    fi
+}
 
 # ── FEDORA-USB-Stick mounten ──────────────────────────────────────────────────
 self_mounted=0
@@ -128,6 +174,7 @@ OBSOLETE=(
 # ── Diff-Phase ────────────────────────────────────────────────────────────────
 to_copy=()
 to_remove=()
+drift_extra=()
 
 for entry in "${PLAN[@]}"; do
     IFS='|' read -r src_rel dst_rel <<<"$entry"
@@ -145,9 +192,12 @@ for f in "${OBSOLETE[@]}"; do
 done
 
 # ── Report ────────────────────────────────────────────────────────────────────
-if [[ ${#to_copy[@]} -eq 0 && ${#to_remove[@]} -eq 0 ]]; then
-    log "USB-Stick ist aktuell ✓"
-    exit 0
+if [[ ${#to_copy[@]} -eq 0 && ${#to_remove[@]} -eq 0 && ${#drift_extra[@]} -eq 0 ]]; then
+    if [[ "$MODE" == "check-only" || "$MODE" == "check-deploy" || "$MODE" == "files-only" ]]; then
+        log "USB-Stick ist aktuell ✓"
+        exit 0
+    fi
+    log "Dateidrift: keine. Starte dennoch vollständiges Deploy."
 fi
 
 echo -e "\n${BOLD}USB-Stick Drift:${RESET}"
@@ -167,18 +217,32 @@ if [[ ${#to_remove[@]} -gt 0 ]]; then
         echo -e "  ${RED}-${RESET} ${f}  (veraltet, wird entfernt)"
     done
 fi
+if [[ ${#drift_extra[@]} -gt 0 ]]; then
+    for d in "${drift_extra[@]}"; do
+        echo -e "  ${YELLOW}!${RESET} ${d}"
+    done
+fi
 echo ""
 
-if [[ "$MODE" == "check" ]]; then
+if [[ "$MODE" == "check-only" ]]; then
     exit 1
 fi
 
+if [[ "$MODE" == "check-deploy" ]]; then
+    log "Drift erkannt — starte vollständiges Deploy."
+    run_full_deploy
+    exit 0
+fi
+
 if [[ "$MODE" == "interactive" ]]; then
-    echo -e "${YELLOW}Hinweis:${RESET} Kickstarts und Scripts sind in der initrd eingebettet."
-    echo -e "         Für einen vollständigen Update: ${BOLD}sudo ./install.sh /dev/sdX${RESET}"
-    echo ""
-    read -r -t 15 -p "Trotzdem nur Dateien auf USB kopieren? [j/N] " ans 2>/dev/tty || ans="N"
-    [[ "$(echo "$ans" | tr '[:upper:]' '[:lower:]')" != "j" ]] && die "Abgebrochen — bitte sudo ./install.sh /dev/sdX ausführen."
+    echo -e "${YELLOW}Hinweis:${RESET} Es wird ein vollständiges Deploy via install.sh ausgeführt."
+    read -r -t 20 -p "Jetzt vollständiges Deploy starten? [j/N] " ans 2>/dev/tty || ans="N"
+    [[ "$(echo "$ans" | tr '[:upper:]' '[:lower:]')" != "j" ]] && die "Abgebrochen."
+fi
+
+if [[ "$MODE" != "files-only" ]]; then
+    run_full_deploy
+    exit 0
 fi
 
 run_preflight_tests

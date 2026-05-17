@@ -127,10 +127,10 @@ build_on_macos() {
     EFI_PART=""
     DATA_PART=""
     cleanup() {
-        [[ -n "$ISO_DEV" ]] && hdiutil detach "$ISO_DEV" >/dev/null 2>&1 || true
-        [[ -n "$DATA_PART" ]] && diskutil unmount "$DATA_PART" >/dev/null 2>&1 || true
-        [[ -n "$EFI_PART" ]] && diskutil unmount "$EFI_PART" >/dev/null 2>&1 || true
-        rm -rf "$WORK_DIR"
+        [[ -n "${ISO_DEV:-}" ]] && hdiutil detach "${ISO_DEV}" >/dev/null 2>&1 || true
+        [[ -n "${DATA_PART:-}" ]] && diskutil unmount "${DATA_PART}" >/dev/null 2>&1 || true
+        [[ -n "${EFI_PART:-}" ]] && diskutil unmount "${EFI_PART}" >/dev/null 2>&1 || true
+        rm -rf "${WORK_DIR:-}"
     }
     trap cleanup EXIT
 
@@ -139,18 +139,16 @@ build_on_macos() {
     [[ -z "$src_iso" ]] && die "Keine Fedora-Netinst-ISO unter iso/ — z.B. Fedora-Everything-netinst-x86_64-43-1.6.iso"
     log "Source-ISO: $src_iso"
 
-    ISO_DEV=$(hdiutil attach -readonly -nobrowse \
-        -imagekey diskimage-class=CRawDiskImage \
-        -mountpoint "$ISO_MNT" "$src_iso" 2>&1 | awk 'NR==1{print $1}')
-    [[ "$ISO_DEV" == /dev/* ]] || die "ISO konnte nicht gemountet werden: $src_iso (hdiutil Ausgabe: $ISO_DEV)"
+    # hdiutil attach is unreliable for some Fedora hybrid ISOs on macOS.
+    # Extract required boot artifacts directly from the ISO filesystem.
+    bsdtar -xf "$src_iso" -C "$WORK_DIR" images/pxeboot/vmlinuz images/pxeboot/initrd.img \
+        || die "Kernel/Initrd konnten nicht aus der ISO extrahiert werden."
 
-    [[ -f "${ISO_MNT}/images/pxeboot/vmlinuz" ]]    || die "vmlinuz nicht in ISO gefunden."
-    [[ -f "${ISO_MNT}/images/pxeboot/initrd.img" ]] || die "initrd.img nicht in ISO gefunden."
+    [[ -f "${WORK_DIR}/images/pxeboot/vmlinuz" ]]    || die "vmlinuz nicht in ISO gefunden."
+    [[ -f "${WORK_DIR}/images/pxeboot/initrd.img" ]] || die "initrd.img nicht in ISO gefunden."
 
-    cp "${ISO_MNT}/images/pxeboot/vmlinuz"    "${WORK_DIR}/vmlinuz"
-    cp "${ISO_MNT}/images/pxeboot/initrd.img" "${WORK_DIR}/initrd.img"
-    hdiutil detach "$ISO_DEV" >/dev/null || true
-    ISO_DEV=""
+    cp "${WORK_DIR}/images/pxeboot/vmlinuz"    "${WORK_DIR}/vmlinuz"
+    cp "${WORK_DIR}/images/pxeboot/initrd.img" "${WORK_DIR}/initrd.img"
 
     KVER=$(file "${WORK_DIR}/vmlinuz" | grep -oE 'version [^ ]+' | awk '{print $2}' || echo "unbekannt")
     log "Fedora-Installer-Kernel: ${KVER}"
@@ -159,12 +157,30 @@ build_on_macos() {
 
     step "USB-Stick partitionieren: $usb_whole"
     diskutil unmountDisk force "$usb_whole" >/dev/null 2>&1 || true
-    diskutil partitionDisk "$usb_whole" GPT FAT32 EFI 256M FAT32 FEDORA-USB R >/dev/null || die "Partitionierung fehlgeschlagen."
+    diskutil partitionDisk "$usb_whole" GPT FAT32 EFI 1G FAT32 FEDORA-USB R >/dev/null || die "Partitionierung fehlgeschlagen."
 
-    parts=$(diskutil list "$usb_whole" | awk '/disk[0-9]+s[0-9]+$/ {print $NF}')
-    EFI_PART="/dev/$(echo "$parts" | sed -n '1p')"
-    DATA_PART="/dev/$(echo "$parts" | sed -n '2p')"
-    [[ "$EFI_PART" != "/dev/" && "$DATA_PART" != "/dev/" ]] || die "Konnte Partitionen nicht ermitteln."
+    EFI_PART=""
+    DATA_PART=""
+    while IFS= read -r part; do
+        [[ -n "$part" ]] || continue
+        vol_name=$(diskutil info -plist "/dev/${part}" 2>/dev/null | plutil -extract VolumeName raw - 2>/dev/null || true)
+        part_content=$(diskutil info -plist "/dev/${part}" 2>/dev/null | plutil -extract Content raw - 2>/dev/null || true)
+        case "$vol_name" in
+            EFI)
+                # Prefer the partition we created via diskutil partitionDisk
+                # (Content "Microsoft Basic Data") over the tiny auto EFI slice.
+                if [[ "$part_content" == "Microsoft Basic Data" ]]; then
+                    EFI_PART="/dev/${part}"
+                elif [[ -z "$EFI_PART" ]]; then
+                    EFI_PART="/dev/${part}"
+                fi
+                ;;
+            FEDORA-USB)
+                DATA_PART="/dev/${part}"
+                ;;
+        esac
+    done < <(diskutil list "$usb_whole" | awk '/disk[0-9]+s[0-9]+$/ {print $NF}')
+    [[ -n "$EFI_PART" && -n "$DATA_PART" ]] || die "Konnte EFI/FEDORA-USB Partitionen nicht ermitteln."
 
     diskutil mount "$EFI_PART" >/dev/null 2>&1 || true
     diskutil mount "$DATA_PART" >/dev/null 2>&1 || true
@@ -174,6 +190,8 @@ build_on_macos() {
 
     log "EFI-Partition:  $EFI_PART"
     log "Daten-Partition: $DATA_PART"
+    log "EFI-Mountpoint:  $EFI_MNT"
+    log "Daten-Mountpoint: $DATA_MNT"
 
     step "GRUB2 EFI-Image bauen (grub-mkimage)"
     local grub_mkimage grub_moddir
@@ -185,21 +203,31 @@ build_on_macos() {
     log "Moddir:       $grub_moddir"
 
     mkdir -p "${EFI_MNT}/EFI/BOOT"
+
+    # Eingebettetes grub-early.cfg: findet FEDORA-USB per Label (disk-unabhaengig).
+    # Ohne das waere --prefix hardcoded auf (hd0,gpt2) und wuerde auf Rechnern
+    # mit installierter NVMe/SSD fehlschlagen (USB ist dann hd1, hd2, ...).
+    local early_cfg="${WORK_DIR}/grub-early.cfg"
+    cat > "$early_cfg" <<\'EARLYCFG\'
+search --no-floppy --label --set=root FEDORA-USB
+set prefix=($root)/boot/grub2
+EARLYCFG
+
     "$grub_mkimage" \
         --output="${EFI_MNT}/EFI/BOOT/BOOTX64.EFI" \
         --format=x86_64-efi \
         --directory="$grub_moddir" \
-        --prefix="(hd0,gpt2)/boot/grub2" \
+        --config="$early_cfg" \
+        --prefix="/boot/grub2" \
         part_gpt fat normal chain boot linux configfile \
         search search_label search_fs_uuid echo help test true \
         || die "grub-mkimage fehlgeschlagen."
     log "BOOTX64.EFI erstellt: $(du -h "${EFI_MNT}/EFI/BOOT/BOOTX64.EFI" | cut -f1)"
 
-    # grub.cfg auf beide Partitionen
-    install -m 0644 "${PROJECT_DIR}/boot/grub.cfg" "${EFI_MNT}/EFI/BOOT/grub.cfg"
+    # grub.cfg nur auf FEDORA-USB Daten-Partition (prefix zeigt dorthin)
     mkdir -p "${DATA_MNT}/boot/grub2"
     install -m 0644 "${PROJECT_DIR}/boot/grub.cfg" "${DATA_MNT}/boot/grub2/grub.cfg"
-    log "grub.cfg kopiert (EFI/BOOT/ + boot/grub2/)."
+    log "grub.cfg kopiert -> boot/grub2/grub.cfg"
 
     step "Kernel + initrd auf USB kopieren"
     mkdir -p "${DATA_MNT}/boot"
@@ -241,7 +269,7 @@ build_on_macos() {
 step "Voraussetzungen"
 missing=()
 if [[ "$HOST_OS" == "Darwin" ]]; then
-    for cmd in diskutil hdiutil x86_64-elf-grub-mkimage; do
+    for cmd in diskutil bsdtar x86_64-elf-grub-mkimage; do
         command -v "$cmd" &>/dev/null || missing+=("$cmd")
     done
 else
@@ -301,7 +329,7 @@ cleanup() {
     mountpoint -q "$ISO_MNT"  && umount "$ISO_MNT"  || true
     mountpoint -q "$DATA_MNT" && umount "$DATA_MNT" || true
     mountpoint -q "$EFI_MNT"  && umount "$EFI_MNT"  || true
-    rm -rf "$WORK_DIR"
+    rm -rf "${WORK_DIR:-}"
 }
 trap cleanup EXIT
 
@@ -343,7 +371,7 @@ done < <(lsblk -nrpo NAME "$USB_DEV" 2>/dev/null)
 
 sgdisk --zap-all "$USB_DEV" >/dev/null
 sgdisk \
-    --new=1:0:+256M   --typecode=1:EF00 --change-name=1:"EFI" \
+    --new=1:0:+1G   --typecode=1:EF00 --change-name=1:"EFI" \
     --new=2:0:0        --typecode=2:0700 --change-name=2:"FEDORA-USB" \
     "$USB_DEV" >/dev/null
 partprobe "$USB_DEV"

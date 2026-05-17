@@ -146,7 +146,6 @@ log "Running dnf upgrade..."
 if run_dnf_retry dnf upgrade -y --refresh; then
     log "dnf upgrade completed."
 else
-    # RPM trigger errors can be transient on first boot; continue with repo/kernel setup.
     warn "dnf upgrade failed — continuing provisioning with current package state."
 fi
 
@@ -157,8 +156,7 @@ run_dnf_retry dnf install -y \
     "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VER}.noarch.rpm" \
     "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VER}.noarch.rpm" \
     || warn "RPM Fusion release package install failed (non-fatal)."
-dnf config-manager setopt rpmfusion-nonfree-nvidia-driver.enabled=1 >/dev/null 2>&1 \
-    || true
+dnf config-manager setopt rpmfusion-nonfree-nvidia-driver.enabled=1 >/dev/null 2>&1 || true
 run_dnf_retry dnf makecache || warn "dnf makecache failed after repo setup (non-fatal)."
 log "Repo setup complete (RPM Fusion + metadata refresh)."
 
@@ -167,7 +165,6 @@ log "Repo setup complete (RPM Fusion + metadata refresh)."
 # Blackwell-Kompatibilität. Muss VOR akmod-nvidia-open installiert werden,
 # damit Module gegen den richtigen Kernel gebaut werden.
 step "CachyOS Kernel installieren"
-
 if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" != "fedora" ]]; then
     if dnf copr enable -y bieszczaders/kernel-cachyos 2>/dev/null; then
         if run_dnf_retry dnf install -y \
@@ -370,26 +367,8 @@ REGEOF
     log "Aktivierung erfolgt im first-login (loginctl linger + enable)."
 fi
 
-# ── 3. CUDA installation ──────────────────────────────────────────────────────
+# ── 3. CUDA installation (immer NVIDIA-Repo) ──────────────────────────────────
 step "CUDA installation"
-
-if [[ "$INSTALL_PROFILE" =~ ^(theme-bash|cachyos-kernel)$ ]]; then
-    log "Profile '${INSTALL_PROFILE}' — CUDA not required. Skipping."
-elif ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
-    warn "No NVIDIA GPU detected — skipping CUDA installation (VM or non-NVIDIA system)."
-else
-
-CUDA_SOURCE="${FEDORA_CUDA_SOURCE:-fedora}"
-
-install_cuda_fedora() {
-    log "Installing CUDA from Fedora/Fedora repos..."
-    # Fedora packages: 'cuda' (toolkit), 'cuda-cudart-devel' (dev headers)
-    # Note: 'cuda-toolkit' does not exist in Fedora repos (use 'cuda' instead)
-    dnf install -y \
-        cuda \
-        cuda-cudart-devel \
-        || die "CUDA installation from Fedora/Fedora repos failed."
-}
 
 install_cuda_nvidia_repo() {
     log "Installing CUDA from official NVIDIA repo..."
@@ -399,8 +378,16 @@ install_cuda_nvidia_repo() {
     local distro="fedora${fedora_version}"
     local repo_url="https://developer.download.nvidia.com/compute/cuda/repos/${distro}/${arch}/cuda-${distro}.repo"
 
+    # Prüfe ob Repo für aktuelle Fedora-Version existiert, sonst Fallback auf fedora43
+    if ! curl -sfI "$repo_url" >/dev/null; then
+        log "Kein CUDA-Repo für Fedora ${fedora_version} gefunden — Fallback auf Fedora 43."
+        distro="fedora43"
+        repo_url="https://developer.download.nvidia.com/compute/cuda/repos/${distro}/${arch}/cuda-${distro}.repo"
+    fi
+    log "CUDA-Repo: ${repo_url}"
+
     if ! dnf config-manager --add-repo "$repo_url" 2>/dev/null; then
-        # Try with dnf5 syntax
+        # Fallback für dnf5
         dnf config-manager addrepo --from-repofile="$repo_url" \
             || die "Failed to add NVIDIA CUDA repo."
     fi
@@ -409,15 +396,17 @@ install_cuda_nvidia_repo() {
     if run_dnf_retry dnf install -y cuda-toolkit; then
         return 0
     fi
-    # Some repo snapshots expose only the meta package `cuda`.
+    # Einige Repo-Snapshots exponieren nur das Meta-Paket `cuda`
     run_dnf_retry dnf install -y cuda || die "CUDA installation from NVIDIA repo failed."
 }
 
-case "$CUDA_SOURCE" in
-    fedora)        install_cuda_fedora   ;;
-    nvidia)        install_cuda_nvidia_repo ;;
-    *)             die "Unknown cuda source: $CUDA_SOURCE" ;;
-esac
+if [[ "$INSTALL_PROFILE" =~ ^(theme-bash|cachyos-kernel)$ ]]; then
+    log "Profile '${INSTALL_PROFILE}' — CUDA not required. Skipping."
+elif ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
+    warn "No NVIDIA GPU detected — skipping CUDA installation (VM or non-NVIDIA system)."
+else
+    install_cuda_nvidia_repo
+fi
 
 # Discover installed CUDA path
 CUDA_HOME_DETECTED=""
@@ -459,8 +448,6 @@ DefaultEnvironment=CUDA_HOME=${CUDA_HOME_DETECTED}
 SYSENVEOF
     systemctl daemon-reload
 fi
-
-fi  # end: CUDA (GPU present + profile requires CUDA)
 
 # ── 4b. Theme-Abhängigkeiten + GNOME Extensions ─────────────────────────────
 step "Theme dependencies + GNOME Extensions"
