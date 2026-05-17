@@ -183,7 +183,7 @@ check_nvidia_open_compat() {
 
 if check_nvidia_open_compat; then
     log "Installing/updating NVIDIA Open Kernel Module driver..."
-    dnf install -y  kernel-devel  kernel-headers  akmod-nvidia  xorg-x11-drv-nvidia-cuda  || die "NVIDIA Open Driver installation failed. No proprietary fallback."
+    dnf install -y  kernel  kernel-devel  kernel-headers  akmod-nvidia-open  xorg-x11-drv-nvidia-cuda  || die "NVIDIA Open Driver installation failed. No proprietary fallback."
 
     # Wait for the kmod to be built (akmods)
     if command -v akmods &>/dev/null; then

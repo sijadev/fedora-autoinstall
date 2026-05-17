@@ -9,6 +9,7 @@
 #   2. NVIDIA Open Driver update
 #   3. CUDA installation (Fedora/Fedora or NVIDIA repo)
 #   4. Set system-wide CUDA environment variables
+#   5. Ensure GUI boot path (graphical.target + GDM)
 
 set -euo pipefail
 
@@ -26,6 +27,76 @@ err()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $*" >&2; }
 die()  { err "$*"; exit 1; }
 step() { echo; echo "══ $* ══"; }
 
+run_dnf_retry() {
+    local max_attempts="${DNF_RETRY_MAX:-3}"
+    local sleep_seconds="${DNF_RETRY_SLEEP:-4}"
+    local attempt=1
+    while true; do
+        if "$@"; then
+            return 0
+        fi
+        if (( attempt >= max_attempts )); then
+            return 1
+        fi
+        warn "DNF command failed (attempt ${attempt}/${max_attempts}), retrying in ${sleep_seconds}s: $*"
+        sleep "${sleep_seconds}"
+        attempt=$((attempt + 1))
+    done
+}
+
+is_headless_profile() {
+    [[ "${INSTALL_PROFILE:-full}" =~ ^(headless-vllm|vllm-only)$ ]]
+}
+
+ensure_gui_boot_path() {
+    local exit_code="${1:-0}"
+
+    if is_headless_profile; then
+        log "Headless profile detected — GUI boot path skipped."
+        return 0
+    fi
+
+    log "Ensuring GUI boot path (graphical.target + GDM)..."
+    systemctl set-default graphical.target 2>/dev/null \
+        && log "Default target set to graphical.target." \
+        || warn "Failed to set default target to graphical.target."
+
+    if ! systemctl list-unit-files gdm.service >/dev/null 2>&1; then
+        warn "gdm.service not found — attempting install (non-fatal)."
+        run_dnf_retry dnf install -y gdm gnome-shell 2>/dev/null \
+            && log "gdm + gnome-shell installed." \
+            || warn "gdm install failed (non-fatal)."
+    fi
+
+    if systemctl list-unit-files gdm.service >/dev/null 2>&1; then
+        systemctl enable gdm.service 2>/dev/null \
+            && log "gdm.service enabled." \
+            || warn "Failed to enable gdm.service."
+
+        # display-manager.service is an alias/symlink target on many Fedora setups.
+        systemctl enable display-manager.service 2>/dev/null || true
+
+        if (( exit_code != 0 )); then
+            warn "Provisioning failed earlier; trying to start GDM now."
+            systemctl start gdm.service 2>/dev/null \
+                && log "gdm.service started." \
+                || warn "Failed to start gdm.service on failure path."
+        fi
+    else
+        warn "gdm.service still unavailable — GUI login may stay down."
+    fi
+}
+
+on_exit_first_boot() {
+    local rc="$1"
+    set +e
+    ensure_gui_boot_path "$rc"
+    if (( rc != 0 )); then
+        err "First-boot provisioning failed with exit code ${rc}."
+    fi
+    return "$rc"
+}
+
 # ── Idempotency guard ─────────────────────────────────────────────────────────
 if [[ -f "$MARKER_FILE" ]]; then
     log "First-boot already completed (marker exists: $MARKER_FILE). Skipping."
@@ -42,6 +113,8 @@ fi
 
 INSTALL_PROFILE="${FEDORA_INSTALL_PROFILE:-full}"
 log "Install profile: ${INSTALL_PROFILE}"
+
+trap 'on_exit_first_boot $?' EXIT
 
 # ── 0. DNF Optimierungen ─────────────────────────────────────────────────────
 step "DNF Optimierungen"
@@ -67,27 +140,27 @@ systemctl enable fstrim.timer 2>/dev/null \
     && log "fstrim.timer aktiviert." \
     || warn "fstrim.timer enable fehlgeschlagen (non-fatal)."
 
-# ── 0d. Theme-Abhängigkeiten + GNOME Extensions ───────────────────────────────
-step "Theme dependencies + GNOME Extensions"
-if [[ "$INSTALL_PROFILE" =~ ^(full|theme-bash)$ ]]; then
-    dnf install -y \
-        sassc \
-        glib2-devel \
-        gnome-shell-extension-user-theme \
-        gnome-shell-extension-dash-to-dock \
-        gnome-shell-extension-appindicator \
-        gnome-shell-extension-blur-my-shell \
-        gnome-shell-extension-caffeine \
-        2>/dev/null \
-        && log "Theme deps + GNOME extensions installiert." \
-        || warn "Theme deps/extensions install fehlgeschlagen (non-fatal)."
-fi
-
 # ── 1. System-Update ──────────────────────────────────────────────────────────
 step "System-Update"
 log "Running dnf upgrade..."
-dnf upgrade -y || die "dnf upgrade failed."
-log "dnf upgrade completed."
+if run_dnf_retry dnf upgrade -y --refresh; then
+    log "dnf upgrade completed."
+else
+    # RPM trigger errors can be transient on first boot; continue with repo/kernel setup.
+    warn "dnf upgrade failed — continuing provisioning with current package state."
+fi
+
+# ── 1a. RPM Fusion (NVIDIA packages) ──────────────────────────────────────────
+step "RPM Fusion Repos"
+FEDORA_VER="$(rpm -E %fedora)"
+run_dnf_retry dnf install -y \
+    "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VER}.noarch.rpm" \
+    "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VER}.noarch.rpm" \
+    || warn "RPM Fusion release package install failed (non-fatal)."
+dnf config-manager setopt rpmfusion-nonfree-nvidia-driver.enabled=1 >/dev/null 2>&1 \
+    || true
+run_dnf_retry dnf makecache || warn "dnf makecache failed after repo setup (non-fatal)."
+log "Repo setup complete (RPM Fusion + metadata refresh)."
 
 # ── 1b. CachyOS Kernel (BORE-Scheduler + Performance-Patches) ─────────────────
 # CachyOS-Kernel bietet BORE-Scheduler, io_uring-Optimierungen und
@@ -97,7 +170,7 @@ step "CachyOS Kernel installieren"
 
 if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" != "fedora" ]]; then
     if dnf copr enable -y bieszczaders/kernel-cachyos 2>/dev/null; then
-        if dnf install -y \
+        if run_dnf_retry dnf install -y \
             kernel-cachyos \
             kernel-cachyos-devel 2>/dev/null; then
             log "CachyOS-Kernel installiert."
@@ -165,13 +238,15 @@ if check_nvidia_open_compat; then
         NVIDIA_OPEN_ONLY="${FEDORA_NVIDIA_OPEN_ONLY:-0}"
         if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" == "fedora" ]]; then
             if [[ "$NVIDIA_OPEN_ONLY" == "1" ]]; then
-                dnf install -y \
+                run_dnf_retry dnf install -y \
+                    kernel \
                     kernel-devel \
                     kernel-headers \
                     akmod-nvidia-open \
                     || warn "NVIDIA Open-only installation fehlgeschlagen (non-fatal)."
             else
-                dnf install -y \
+                run_dnf_retry dnf install -y \
+                    kernel \
                     kernel-devel \
                     kernel-headers \
                     akmod-nvidia-open \
@@ -182,12 +257,14 @@ if check_nvidia_open_compat; then
             # Bei CachyOS keine Fedora kernel-devel/kernel-headers erzwingen,
             # sonst kann es zu Devel-Mismatch-Fehlern kommen.
             if [[ "$NVIDIA_OPEN_ONLY" == "1" ]]; then
-                dnf install -y \
+                run_dnf_retry dnf install -y \
+                    kernel-cachyos \
                     kernel-cachyos-devel \
                     akmod-nvidia-open \
                     || warn "NVIDIA Open-only installation (CachyOS) fehlgeschlagen (non-fatal)."
             else
-                dnf install -y \
+                run_dnf_retry dnf install -y \
+                    kernel-cachyos \
                     kernel-cachyos-devel \
                     akmod-nvidia-open \
                     xorg-x11-drv-nvidia-cuda \
@@ -328,10 +405,12 @@ install_cuda_nvidia_repo() {
             || die "Failed to add NVIDIA CUDA repo."
     fi
 
-    dnf install -y \
-        cuda-toolkit \
-        cuda-devel \
-        || die "CUDA installation from NVIDIA repo failed."
+    run_dnf_retry dnf makecache || true
+    if run_dnf_retry dnf install -y cuda-toolkit; then
+        return 0
+    fi
+    # Some repo snapshots expose only the meta package `cuda`.
+    run_dnf_retry dnf install -y cuda || die "CUDA installation from NVIDIA repo failed."
 }
 
 case "$CUDA_SOURCE" in
@@ -382,6 +461,22 @@ SYSENVEOF
 fi
 
 fi  # end: CUDA (GPU present + profile requires CUDA)
+
+# ── 4b. Theme-Abhängigkeiten + GNOME Extensions ─────────────────────────────
+step "Theme dependencies + GNOME Extensions"
+if [[ "$INSTALL_PROFILE" =~ ^(full|theme-bash)$ ]]; then
+    run_dnf_retry dnf install -y \
+        sassc \
+        glib2-devel \
+        gnome-shell-extension-user-theme \
+        gnome-shell-extension-dash-to-dock \
+        gnome-shell-extension-appindicator \
+        gnome-shell-extension-blur-my-shell \
+        gnome-shell-extension-caffeine \
+        2>/dev/null \
+        && log "Theme deps + GNOME extensions installiert." \
+        || warn "Theme deps/extensions install fehlgeschlagen (non-fatal)."
+fi
 
 # ── 5. Kernel/Sysctl performance tuning ──────────────────────────────────────
 step "Kernel/Sysctl tuning"

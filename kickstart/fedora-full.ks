@@ -201,7 +201,7 @@ log "dnf upgrade completed."
 # damit Module gegen den richtigen Kernel gebaut werden.
 step "CachyOS Kernel installieren"
 
-if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" != "fedora" ]]; then  # default: cachyos (aus XML)
+if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" != "fedora" ]]; then
     if dnf copr enable -y bieszczaders/kernel-cachyos 2>/dev/null; then
         if dnf install -y \
             kernel-cachyos \
@@ -227,6 +227,10 @@ fi
 
 # ── 2. NVIDIA Open Driver ─────────────────────────────────────────────────────
 step "NVIDIA Open Driver update"
+
+if [[ "$INSTALL_PROFILE" == "cachyos-kernel" ]]; then
+    log "Profile '${INSTALL_PROFILE}' — NVIDIA installation skipped."
+else
 
 # iGPU + dGPU Hinweis: Wenn beide vorhanden, lief Install vermutlich über iGPU
 # (Blackwell-Workaround). Nach erfolgreichem first-boot kann BIOS auf PEG zurück.
@@ -268,12 +272,14 @@ if check_nvidia_open_compat; then
         if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" == "fedora" ]]; then
             if [[ "$NVIDIA_OPEN_ONLY" == "1" ]]; then
                 dnf install -y \
+                    kernel \
                     kernel-devel \
                     kernel-headers \
                     akmod-nvidia-open \
                     || warn "NVIDIA Open-only installation fehlgeschlagen (non-fatal)."
             else
                 dnf install -y \
+                    kernel \
                     kernel-devel \
                     kernel-headers \
                     akmod-nvidia-open \
@@ -285,11 +291,13 @@ if check_nvidia_open_compat; then
             # sonst kann es zu Devel-Mismatch-Fehlern kommen.
             if [[ "$NVIDIA_OPEN_ONLY" == "1" ]]; then
                 dnf install -y \
+                    kernel-cachyos \
                     kernel-cachyos-devel \
                     akmod-nvidia-open \
                     || warn "NVIDIA Open-only installation (CachyOS) fehlgeschlagen (non-fatal)."
             else
                 dnf install -y \
+                    kernel-cachyos \
                     kernel-cachyos-devel \
                     akmod-nvidia-open \
                     xorg-x11-drv-nvidia-cuda \
@@ -304,6 +312,7 @@ if check_nvidia_open_compat; then
         log "NVIDIA Open Driver installed/updated."
     fi
 fi  # end: check_nvidia_open_compat
+fi  # end: profile gate for NVIDIA
 
 # ── 2b. Podman + NVIDIA Container Toolkit (headless-vllm / vllm-only) ─────────
 if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
@@ -397,7 +406,7 @@ fi
 # ── 3. CUDA installation ──────────────────────────────────────────────────────
 step "CUDA installation"
 
-if [[ "$INSTALL_PROFILE" == "theme-bash" ]]; then
+if [[ "$INSTALL_PROFILE" =~ ^(theme-bash|cachyos-kernel)$ ]]; then
     log "Profile '${INSTALL_PROFILE}' — CUDA not required. Skipping."
 elif ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
     warn "No NVIDIA GPU detected — skipping CUDA installation (VM or non-NVIDIA system)."
@@ -1166,6 +1175,38 @@ if [[ "$INSTALL_PROFILE" == "theme-bash" ]]; then
     rm -f "${HOME}/.config/autostart/fedora-first-login.desktop"
     log "First-login provisioning complete (theme-bash). Log: $LOG_FILE"
     exit 0
+fi
+
+# ── 7. CUDA Toolchain (headless-vllm) ──────────────────────────────────────
+if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
+    step "CUDA Toolchain"
+    
+    if command -v nvcc &>/dev/null; then
+        CUDA_VER=$(nvcc --version 2>/dev/null | grep -oP 'release \K[\d.]+' | head -1 || echo "unknown")
+        log "CUDA already available: $CUDA_VER (nvcc found in PATH)"
+    else
+        # CUDA toolchain prüfen: /usr/local/cuda* oder /usr
+        CUDA_HOME=""
+        for cuda_dir in /usr/local/cuda-* /usr/local/cuda /usr; do
+            if [[ -x "${cuda_dir}/bin/nvcc" ]]; then
+                CUDA_HOME="$cuda_dir"
+                break
+            fi
+        done
+        
+        if [[ -n "$CUDA_HOME" ]]; then
+            export CUDA_HOME
+            export PATH="${CUDA_HOME}/bin${PATH:+:$PATH}"
+            export LD_LIBRARY_PATH="${CUDA_HOME}/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            log "CUDA Umgebung aus System-Installation: CUDA_HOME=${CUDA_HOME}"
+            if command -v nvcc &>/dev/null; then
+                CUDA_VER=$(nvcc --version | grep -oP 'release \K[\d.]+' | head -1 || echo "unknown")
+                log "CUDA verified: $CUDA_VER"
+            fi
+        else
+            warn "CUDA not found in system — User-Builds ohne CUDA-Unterstützung (non-fatal)."
+        fi
+    fi
 fi
 
 # ── Profile: headless-vllm / vllm-only — Multi-Model Router aktivieren ───────

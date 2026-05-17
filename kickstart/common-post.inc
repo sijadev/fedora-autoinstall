@@ -87,10 +87,10 @@ check_nvidia_open_compat() {
 
 if check_nvidia_open_compat; then
     # kernel-devel exakt für den laufenden Kernel installieren
-    dnf install -y "kernel-devel-uname-r == $(uname -r)" \
+    dnf install -y kernel "kernel-devel-uname-r == $(uname -r)" \
         || dnf install -y kernel-devel kernel-headers \
         || warn "kernel-devel install fehlgeschlagen."
-    dnf install -y akmod-nvidia xorg-x11-drv-nvidia-cuda \
+    dnf install -y akmod-nvidia-open xorg-x11-drv-nvidia-cuda \
         || die "NVIDIA Open Driver installation failed."
     if command -v akmods &>/dev/null; then
         akmods --force || warn "akmods build fehlgeschlagen — Treiber wird beim ersten Boot gebaut."

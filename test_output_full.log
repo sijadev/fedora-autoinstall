@@ -1,0 +1,313 @@
+
+== Standard-Testlauf ==
+
+[1/5] Shell: install.sh
+
+══ test_install_sh.sh ══
+
+
+Ran 16 tests: 16 ok, 0 failed
+
+[2/5] Shell: sync-usb.sh
+
+══ test_sync_usb.sh ══
+
+
+Ran 10 tests: 10 ok, 0 failed
+
+[3/5] Shell: systemd units
+
+== test_systemd_units.sh ==
+
+
+Ran 27 tests: 25 ok, 0 failed, 2 skipped
+
+[4/5] Python: apply_config + xml2ks
+test_different_passwords_produce_different_hashes (tests.test_apply_config.HashPasswordTests.test_different_passwords_produce_different_hashes) ... ok
+test_hash_is_not_plaintext (tests.test_apply_config.HashPasswordTests.test_hash_is_not_plaintext) ... ok
+test_raises_on_openssl_failure (tests.test_apply_config.HashPasswordTests.test_raises_on_openssl_failure) ... ok
+test_returns_sha512_hash (tests.test_apply_config.HashPasswordTests.test_returns_sha512_hash) ... ok
+test_same_password_different_salts (tests.test_apply_config.HashPasswordTests.test_same_password_different_salts) ... ok
+test_all_env_vars_applied (tests.test_apply_config.IntegrationTests.test_all_env_vars_applied)
+Alle 18 FEDORA_-Variablen müssen nach apply_config vorhanden sein. ... ok
+test_autologin_not_in_kickstart (tests.test_apply_config.IntegrationTests.test_autologin_not_in_kickstart)
+AutomaticLogin=... ist kein KS-Direktiv und darf nicht im KS auftauchen. ... ok
+test_check_mode_does_not_modify_files (tests.test_apply_config.IntegrationTests.test_check_mode_does_not_modify_files) ... ok
+test_env_vars_applied (tests.test_apply_config.IntegrationTests.test_env_vars_applied) ... ok
+test_example_config_applies_to_sample_ks (tests.test_apply_config.IntegrationTests.test_example_config_applies_to_sample_ks)
+EXAMPLE_CONFIG (aus install.json Fixture) muss alle KS-Variablen korrekt patchen. ... ok
+test_example_config_on_real_fedora_full_ks (tests.test_apply_config.IntegrationTests.test_example_config_on_real_fedora_full_ks)
+EXAMPLE_CONFIG gegen echtes fedora-full.ks testen — erkennt echte Bugs. ... ok
+test_hostname_applied (tests.test_apply_config.IntegrationTests.test_hostname_applied) ... ok
+test_missing_config_file_exits_nonzero (tests.test_apply_config.IntegrationTests.test_missing_config_file_exits_nonzero) ... Fehler: Konfigurationsdatei nicht gefunden: /nonexistent/install.json
+ok
+test_password_hash_written_to_kickstart (tests.test_apply_config.IntegrationTests.test_password_hash_written_to_kickstart) ... ok
+test_placeholder_password_exits_nonzero (tests.test_apply_config.IntegrationTests.test_placeholder_password_exits_nonzero) ... Fehler: Bitte Passwort in config/install.json setzen.
+ok
+test_timezone_applied (tests.test_apply_config.IntegrationTests.test_timezone_applied) ... ok
+test_user_name_applied (tests.test_apply_config.IntegrationTests.test_user_name_applied) ... ok
+test_vllm_cuda_version_and_arch_in_real_fedora_full_ks (tests.test_apply_config.IntegrationTests.test_vllm_cuda_version_and_arch_in_real_fedora_full_ks)
+FEDORA_VLLM_CUDA_VERSION und FEDORA_VLLM_ARCH_LIST müssen korrekt in fedora-full.ks stehen. ... ok
+test_loads_valid_json (tests.test_apply_config.LoadConfigTests.test_loads_valid_json) ... ok
+test_preserves_all_sections (tests.test_apply_config.LoadConfigTests.test_preserves_all_sections) ... ok
+test_raises_on_invalid_json (tests.test_apply_config.LoadConfigTests.test_raises_on_invalid_json) ... ok
+test_strips_comment_field (tests.test_apply_config.LoadConfigTests.test_strips_comment_field) ... ok
+test_check_mode_detects_change (tests.test_apply_config.PatchKickstartTests.test_check_mode_detects_change) ... ok
+test_check_mode_does_not_write (tests.test_apply_config.PatchKickstartTests.test_check_mode_does_not_write) ... ok
+test_multiple_replacements_applied (tests.test_apply_config.PatchKickstartTests.test_multiple_replacements_applied) ... ok
+test_replaces_env_var (tests.test_apply_config.PatchKickstartTests.test_replaces_env_var) ... ok
+test_replaces_hostname (tests.test_apply_config.PatchKickstartTests.test_replaces_hostname) ... ok
+test_replaces_username (tests.test_apply_config.PatchKickstartTests.test_replaces_username) ... ok
+test_returns_false_when_nothing_changed (tests.test_apply_config.PatchKickstartTests.test_returns_false_when_nothing_changed) ... ok
+test_attr_existing (tests.test_xml2ks.AttrHelperTests.test_attr_existing) ... ok
+test_attr_missing_returns_default (tests.test_xml2ks.AttrHelperTests.test_attr_missing_returns_default) ... ok
+test_attr_none_element_returns_default (tests.test_xml2ks.AttrHelperTests.test_attr_none_element_returns_default) ... ok
+test_false_enabled (tests.test_xml2ks.EnabledHelperTests.test_false_enabled) ... ok
+test_missing_attr_defaults_to_true (tests.test_xml2ks.EnabledHelperTests.test_missing_attr_defaults_to_true) ... ok
+test_missing_element_uses_default (tests.test_xml2ks.EnabledHelperTests.test_missing_element_uses_default) ... ok
+test_no_disabled (tests.test_xml2ks.EnabledHelperTests.test_no_disabled) ... ok
+test_true_enabled (tests.test_xml2ks.EnabledHelperTests.test_true_enabled) ... ok
+test_zero_disabled (tests.test_xml2ks.EnabledHelperTests.test_zero_disabled) ... ok
+test_fixtures_dir_exists (tests.test_xml2ks.FixtureTests.test_fixtures_dir_exists) ... ok
+test_full_xml_env_vars_present (tests.test_xml2ks.FixtureTests.test_full_xml_env_vars_present) ... ok
+test_full_xml_fixture_is_valid (tests.test_xml2ks.FixtureTests.test_full_xml_fixture_is_valid) ... ok
+test_full_xml_generates_kickstart (tests.test_xml2ks.FixtureTests.test_full_xml_generates_kickstart) ... ok
+test_full_xml_has_pre_disk_detection (tests.test_xml2ks.FixtureTests.test_full_xml_has_pre_disk_detection) ... ok
+test_minimal_xml_fixture_is_valid (tests.test_xml2ks.FixtureTests.test_minimal_xml_fixture_is_valid) ... ok
+test_minimal_xml_generates_kickstart (tests.test_xml2ks.FixtureTests.test_minimal_xml_generates_kickstart) ... ok
+test_auto_partition_generates_btrfs (tests.test_xml2ks.GenerateKickstartTests.test_auto_partition_generates_btrfs) ... ok
+test_auto_partition_generates_pre_block (tests.test_xml2ks.GenerateKickstartTests.test_auto_partition_generates_pre_block) ... ok
+test_auto_partition_ignoredisk_in_pre (tests.test_xml2ks.GenerateKickstartTests.test_auto_partition_ignoredisk_in_pre) ... ok
+test_auto_partition_no_hardcoded_disk_outside_pre (tests.test_xml2ks.GenerateKickstartTests.test_auto_partition_no_hardcoded_disk_outside_pre) ... ok
+test_autostart_desktop_entry_for_target_user (tests.test_xml2ks.GenerateKickstartTests.test_autostart_desktop_entry_for_target_user) ... ok
+test_base_packages_present (tests.test_xml2ks.GenerateKickstartTests.test_base_packages_present) ... ok
+test_bootloader_no_location_mbr (tests.test_xml2ks.GenerateKickstartTests.test_bootloader_no_location_mbr) ... ok
+test_bootloader_uses_short_disk_name (tests.test_xml2ks.GenerateKickstartTests.test_bootloader_uses_short_disk_name) ... ok
+test_contains_kdump_addon (tests.test_xml2ks.GenerateKickstartTests.test_contains_kdump_addon) ... ok
+test_contains_packages_block (tests.test_xml2ks.GenerateKickstartTests.test_contains_packages_block) ... ok
+test_contains_post_block (tests.test_xml2ks.GenerateKickstartTests.test_contains_post_block) ... ok
+test_contains_text_and_reboot (tests.test_xml2ks.GenerateKickstartTests.test_contains_text_and_reboot) ... ok
+test_contains_version_header (tests.test_xml2ks.GenerateKickstartTests.test_contains_version_header) ... ok
+test_custom_gecos (tests.test_xml2ks.GenerateKickstartTests.test_custom_gecos) ... ok
+test_custom_partition_is_emitted_verbatim (tests.test_xml2ks.GenerateKickstartTests.test_custom_partition_is_emitted_verbatim) ... ok
+test_custom_user_groups (tests.test_xml2ks.GenerateKickstartTests.test_custom_user_groups) ... ok
+test_defaults_for_optional_first_login_fields (tests.test_xml2ks.GenerateKickstartTests.test_defaults_for_optional_first_login_fields) ... ok
+test_duplicate_packages_not_emitted (tests.test_xml2ks.GenerateKickstartTests.test_duplicate_packages_not_emitted) ... ok
+test_embedded_scripts_included (tests.test_xml2ks.GenerateKickstartTests.test_embedded_scripts_included) ... ok
+test_extra_groups_included (tests.test_xml2ks.GenerateKickstartTests.test_extra_groups_included) ... ok
+test_extra_packages_included (tests.test_xml2ks.GenerateKickstartTests.test_extra_packages_included) ... ok
+test_flatpak_flathub_remote_added (tests.test_xml2ks.GenerateKickstartTests.test_flatpak_flathub_remote_added) ... ok
+test_full_xml_generates_valid_ks_structure (tests.test_xml2ks.GenerateKickstartTests.test_full_xml_generates_valid_ks_structure) ... ok
+test_hostname_in_network_directive (tests.test_xml2ks.GenerateKickstartTests.test_hostname_in_network_directive) ... ok
+test_keyboard_in_output (tests.test_xml2ks.GenerateKickstartTests.test_keyboard_in_output) ... ok
+test_locale_in_output (tests.test_xml2ks.GenerateKickstartTests.test_locale_in_output) ... ok
+test_missing_script_file_warns_on_stderr (tests.test_xml2ks.GenerateKickstartTests.test_missing_script_file_warns_on_stderr)
+Angegebener Pfad der nicht existiert → stderr-Warnung statt stillem leerem Heredoc. ... ok
+test_mmcblk0_pre_block_present (tests.test_xml2ks.GenerateKickstartTests.test_mmcblk0_pre_block_present) ... ok
+test_none_script_path_produces_no_warning (tests.test_xml2ks.GenerateKickstartTests.test_none_script_path_produces_no_warning)
+None als Pfad = absichtlich weggelassen → keine Warnung. ... ok
+test_nvme1n1_pre_block_present (tests.test_xml2ks.GenerateKickstartTests.test_nvme1n1_pre_block_present) ... ok
+test_nvme_disk_name_in_pre_block (tests.test_xml2ks.GenerateKickstartTests.test_nvme_disk_name_in_pre_block) ... ok
+test_omb_theme_default (tests.test_xml2ks.GenerateKickstartTests.test_omb_theme_default) ... ok
+test_pre_block_contains_disk_autodetection (tests.test_xml2ks.GenerateKickstartTests.test_pre_block_contains_disk_autodetection) ... ok
+test_pre_block_supports_inst_disk_override (tests.test_xml2ks.GenerateKickstartTests.test_pre_block_supports_inst_disk_override) ... ok
+test_regression_btrfs_subvolume_syntax (tests.test_xml2ks.GenerateKickstartTests.test_regression_btrfs_subvolume_syntax)
+Regression guard: the synced Btrfs subvolume rename syntax must stay correct. ... ok
+test_regression_embedded_first_boot_cuda_guards (tests.test_xml2ks.GenerateKickstartTests.test_regression_embedded_first_boot_cuda_guards)
+Regression guard for previously broken CUDA branch in embedded first-boot.sh. ... ok
+test_regression_kernel_devel_branching_for_cachyos (tests.test_xml2ks.GenerateKickstartTests.test_regression_kernel_devel_branching_for_cachyos)
+Regression guard: NVIDIA deps must branch by FEDORA_KERNEL_SOURCE. ... ok
+test_regression_ks_defaults_keep_ssh_access (tests.test_xml2ks.GenerateKickstartTests.test_regression_ks_defaults_keep_ssh_access)
+Regression guard: generated KS must keep SSH reachable by default. ... ok
+test_repo_urls_reachable (tests.test_xml2ks.GenerateKickstartTests.test_repo_urls_reachable)
+Extracts all repo URLs embedded in the generated KS (from XML config) ... ok
+test_rootpw_locked (tests.test_xml2ks.GenerateKickstartTests.test_rootpw_locked) ... ok
+test_scripts_with_real_content_embedded (tests.test_xml2ks.GenerateKickstartTests.test_scripts_with_real_content_embedded)
+Echte Script-Dateien müssen ihren Inhalt im Kickstart haben — kein leeres heredoc. ... ok
+test_sdb_pre_block_present (tests.test_xml2ks.GenerateKickstartTests.test_sdb_pre_block_present) ... ok
+test_systemd_enable_first_boot (tests.test_xml2ks.GenerateKickstartTests.test_systemd_enable_first_boot) ... ok
+test_target_user_in_env_block (tests.test_xml2ks.GenerateKickstartTests.test_target_user_in_env_block) ... ok
+test_timezone_in_output (tests.test_xml2ks.GenerateKickstartTests.test_timezone_in_output) ... ok
+test_user_gecos_defaults_to_username (tests.test_xml2ks.GenerateKickstartTests.test_user_gecos_defaults_to_username) ... ok
+test_user_iscrypted (tests.test_xml2ks.GenerateKickstartTests.test_user_iscrypted) ... ok
+test_user_name_in_output (tests.test_xml2ks.GenerateKickstartTests.test_user_name_in_output) ... ok
+test_user_password_hash_in_output (tests.test_xml2ks.GenerateKickstartTests.test_user_password_hash_in_output) ... ok
+test_venv_and_cuda_vars_in_env_block (tests.test_xml2ks.GenerateKickstartTests.test_venv_and_cuda_vars_in_env_block) ... ok
+test_vllm_router_config_from_xml (tests.test_xml2ks.GenerateKickstartTests.test_vllm_router_config_from_xml) ... ok
+test_vllm_router_defaults_in_env_block (tests.test_xml2ks.GenerateKickstartTests.test_vllm_router_defaults_in_env_block) ... ok
+test_whitesur_args_from_xml (tests.test_xml2ks.GenerateKickstartTests.test_whitesur_args_from_xml) ... ok
+test_get_empty_element_returns_empty_string (tests.test_xml2ks.GetHelperTests.test_get_empty_element_returns_empty_string) ... ok
+test_get_existing (tests.test_xml2ks.GetHelperTests.test_get_existing) ... ok
+test_get_missing_element_returns_default (tests.test_xml2ks.GetHelperTests.test_get_missing_element_returns_default) ... ok
+test_get_missing_element_returns_empty_string_by_default (tests.test_xml2ks.GetHelperTests.test_get_missing_element_returns_empty_string_by_default) ... ok
+test_get_strips_whitespace (tests.test_xml2ks.GetHelperTests.test_get_strips_whitespace) ... ok
+test_full_generation_writes_output_file (tests.test_xml2ks.MainCLITests.test_full_generation_writes_output_file) ... ok
+test_get_field_disk (tests.test_xml2ks.MainCLITests.test_get_field_disk) ... ok
+test_get_field_hostname (tests.test_xml2ks.MainCLITests.test_get_field_hostname) ... ok
+test_get_field_iso_url (tests.test_xml2ks.MainCLITests.test_get_field_iso_url) ... ok
+test_get_field_missing_returns_1 (tests.test_xml2ks.MainCLITests.test_get_field_missing_returns_1) ... ok
+test_no_args_returns_nonzero (tests.test_xml2ks.MainCLITests.test_no_args_returns_nonzero) ... ok
+test_validate_only_fails_on_invalid_config (tests.test_xml2ks.MainCLITests.test_validate_only_fails_on_invalid_config) ... ok
+test_validate_only_fails_on_invalid_xml (tests.test_xml2ks.MainCLITests.test_validate_only_fails_on_invalid_xml) ... ok
+test_validate_only_ok (tests.test_xml2ks.MainCLITests.test_validate_only_ok) ... ok
+test_accepts_custom_partition_with_kickstart_extra (tests.test_xml2ks.ValidateTests.test_accepts_custom_partition_with_kickstart_extra) ... ok
+test_accepts_http_iso_url (tests.test_xml2ks.ValidateTests.test_accepts_http_iso_url) ... ok
+test_accepts_https_iso_url (tests.test_xml2ks.ValidateTests.test_accepts_https_iso_url) ... ok
+test_accepts_md5_hash (tests.test_xml2ks.ValidateTests.test_accepts_md5_hash) ... ok
+test_accepts_mmcblk1_disk (tests.test_xml2ks.ValidateTests.test_accepts_mmcblk1_disk) ... ok
+test_accepts_mmcblk_disk (tests.test_xml2ks.ValidateTests.test_accepts_mmcblk_disk) ... ok
+test_accepts_nvme0n1_disk (tests.test_xml2ks.ValidateTests.test_accepts_nvme0n1_disk) ... ok
+test_accepts_nvme0n2_disk (tests.test_xml2ks.ValidateTests.test_accepts_nvme0n2_disk) ... ok
+test_accepts_nvme10n1_disk (tests.test_xml2ks.ValidateTests.test_accepts_nvme10n1_disk) ... ok
+test_accepts_nvme1n1_disk (tests.test_xml2ks.ValidateTests.test_accepts_nvme1n1_disk) ... ok
+test_accepts_sda_disk (tests.test_xml2ks.ValidateTests.test_accepts_sda_disk) ... ok
+test_accepts_sdb_disk (tests.test_xml2ks.ValidateTests.test_accepts_sdb_disk) ... ok
+test_accepts_sdc_disk (tests.test_xml2ks.ValidateTests.test_accepts_sdc_disk) ... ok
+test_accepts_sdz_disk (tests.test_xml2ks.ValidateTests.test_accepts_sdz_disk) ... ok
+test_accepts_sha256_hash (tests.test_xml2ks.ValidateTests.test_accepts_sha256_hash) ... ok
+test_accepts_sha512_hash (tests.test_xml2ks.ValidateTests.test_accepts_sha512_hash) ... ok
+test_accepts_valid_hostname (tests.test_xml2ks.ValidateTests.test_accepts_valid_hostname) ... ok
+test_accepts_valid_router_port (tests.test_xml2ks.ValidateTests.test_accepts_valid_router_port) ... ok
+test_accepts_vda_disk (tests.test_xml2ks.ValidateTests.test_accepts_vda_disk) ... ok
+test_accepts_vdb_disk (tests.test_xml2ks.ValidateTests.test_accepts_vdb_disk) ... ok
+test_accepts_xvda_disk (tests.test_xml2ks.ValidateTests.test_accepts_xvda_disk) ... ok
+test_custom_partition_requires_kickstart_extra (tests.test_xml2ks.ValidateTests.test_custom_partition_requires_kickstart_extra) ... ok
+test_rejects_cdrom_device (tests.test_xml2ks.ValidateTests.test_rejects_cdrom_device) ... ok
+test_rejects_cdrom_device_alias (tests.test_xml2ks.ValidateTests.test_rejects_cdrom_device_alias) ... ok
+test_rejects_ftp_iso_url (tests.test_xml2ks.ValidateTests.test_rejects_ftp_iso_url) ... ok
+test_rejects_hda_ide_disk (tests.test_xml2ks.ValidateTests.test_rejects_hda_ide_disk) ... ok
+test_rejects_hostname_starting_with_dash (tests.test_xml2ks.ValidateTests.test_rejects_hostname_starting_with_dash) ... ok
+test_rejects_hostname_with_underscore (tests.test_xml2ks.ValidateTests.test_rejects_hostname_with_underscore) ... ok
+test_rejects_invalid_partition_scheme (tests.test_xml2ks.ValidateTests.test_rejects_invalid_partition_scheme) ... ok
+test_rejects_invalid_router_port_format (tests.test_xml2ks.ValidateTests.test_rejects_invalid_router_port_format) ... ok
+test_rejects_loop_device (tests.test_xml2ks.ValidateTests.test_rejects_loop_device) ... ok
+test_rejects_missing_hostname (tests.test_xml2ks.ValidateTests.test_rejects_missing_hostname) ... ok
+test_rejects_missing_locale (tests.test_xml2ks.ValidateTests.test_rejects_missing_locale) ... ok
+test_rejects_missing_timezone (tests.test_xml2ks.ValidateTests.test_rejects_missing_timezone) ... ok
+test_rejects_mmcblk_partition (tests.test_xml2ks.ValidateTests.test_rejects_mmcblk_partition) ... ok
+test_rejects_nvme_partition (tests.test_xml2ks.ValidateTests.test_rejects_nvme_partition) ... ok
+test_rejects_nvme_partition_multidigit (tests.test_xml2ks.ValidateTests.test_rejects_nvme_partition_multidigit) ... ok
+test_rejects_partition_not_whole_disk (tests.test_xml2ks.ValidateTests.test_rejects_partition_not_whole_disk) ... ok
+test_rejects_placeholder_password_hash (tests.test_xml2ks.ValidateTests.test_rejects_placeholder_password_hash) ... ok
+test_rejects_plaintext_password (tests.test_xml2ks.ValidateTests.test_rejects_plaintext_password) ... ok
+test_rejects_relative_iso_url (tests.test_xml2ks.ValidateTests.test_rejects_relative_iso_url) ... ok
+test_rejects_replace_placeholder_in_any_field (tests.test_xml2ks.ValidateTests.test_rejects_replace_placeholder_in_any_field) ... ok
+test_rejects_sda_multidigit_partition (tests.test_xml2ks.ValidateTests.test_rejects_sda_multidigit_partition) ... ok
+
+----------------------------------------------------------------------
+Ran 155 tests in 2.495s
+
+OK
+Hashe Passwort...
+Passwort gehasht.
+
+Patche Kickstart-Dateien:
+  Gepatcht: fedora-full.ks
+
+Gepatcht: 1 Datei(en)
+
+Nächster Schritt: sudo ./install.sh /dev/sdX
+Hashe Passwort...
+Passwort gehasht.
+
+Patche Kickstart-Dateien:
+  Gepatcht: fedora-full.ks
+
+Gepatcht: 1 Datei(en)
+
+Nächster Schritt: sudo ./install.sh /dev/sdX
+Hashe Passwort...
+Passwort gehasht.
+
+Prüfe Kickstart-Dateien:
+  WÜRDE patchen: fedora-full.ks
+
+Würde patchen: 1 Datei(en)
+Hashe Passwort...
+Passwort gehasht.
+
+Patche Kickstart-Dateien:
+  Gepatcht: fedora-full.ks
+
+Gepatcht: 1 Datei(en)
+
+Nächster Schritt: sudo ./install.sh /dev/sdX
+Hashe Passwort...
+Passwort gehasht.
+
+Patche Kickstart-Dateien:
+  Gepatcht: fedora-full.ks
+
+Gepatcht: 1 Datei(en)
+
+Nächster Schritt: sudo ./install.sh /dev/sdX
+Hashe Passwort...
+Passwort gehasht.
+
+Patche Kickstart-Dateien:
+  Gepatcht: fedora-full.ks
+
+Gepatcht: 1 Datei(en)
+
+Nächster Schritt: sudo ./install.sh /dev/sdX
+Hashe Passwort...
+Passwort gehasht.
+
+Patche Kickstart-Dateien:
+  Gepatcht: fedora-full.ks
+
+Gepatcht: 1 Datei(en)
+
+Nächster Schritt: sudo ./install.sh /dev/sdX
+Hashe Passwort...
+Passwort gehasht.
+
+Patche Kickstart-Dateien:
+  Gepatcht: fedora-full.ks
+
+Gepatcht: 1 Datei(en)
+
+Nächster Schritt: sudo ./install.sh /dev/sdX
+Hashe Passwort...
+Passwort gehasht.
+
+Patche Kickstart-Dateien:
+  Gepatcht: fedora-full.ks
+
+Gepatcht: 1 Datei(en)
+
+Nächster Schritt: sudo ./install.sh /dev/sdX
+Hashe Passwort...
+Passwort gehasht.
+
+Patche Kickstart-Dateien:
+  Gepatcht: fedora-full.ks
+
+Gepatcht: 1 Datei(en)
+
+Nächster Schritt: sudo ./install.sh /dev/sdX
+Hashe Passwort...
+Passwort gehasht.
+
+Patche Kickstart-Dateien:
+  Gepatcht: fedora-full.ks
+
+Gepatcht: 1 Datei(en)
+
+Nächster Schritt: sudo ./install.sh /dev/sdX
+  WÜRDE patchen: test.ks
+  WÜRDE patchen: test.ks
+  Gepatcht: test.ks
+  Gepatcht: test.ks
+  Gepatcht: test.ks
+  Gepatcht: test.ks
+[5/5] Python: kickstart validator
+test_profiles_validate_cleanly (tests.test_kickstart_validator.KickstartValidatorTests.test_profiles_validate_cleanly) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.851s
+
+OK
+
+Alle Testgruppen erfolgreich.
+
