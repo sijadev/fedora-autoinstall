@@ -27,6 +27,7 @@ CHOICE=$(zenity --list \
     --column="" --column="Profil" --column="Beschreibung" \
     TRUE  "theme-bash"     "WhiteSur Theme + Oh-My-Bash + GNOME Tweaks" \
     FALSE "headless-vllm"  "Podman + vLLM (Kimi-Audio + Qwen3, NVIDIA)" \
+    FALSE "cachyos-kernel" "Nur CachyOS-Kernel installieren (ohne NVIDIA/CUDA)" \
     FALSE "skip"           "Später entscheiden — nichts ausführen" \
     2>/dev/null || true)
 

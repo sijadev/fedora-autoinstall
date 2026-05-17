@@ -343,6 +343,38 @@ if [[ "$INSTALL_PROFILE" == "theme-bash" ]]; then
     exit 0
 fi
 
+# ── 7. CUDA Toolchain (headless-vllm) ──────────────────────────────────────
+if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
+    step "CUDA Toolchain"
+    
+    if command -v nvcc &>/dev/null; then
+        CUDA_VER=$(nvcc --version 2>/dev/null | grep -oP 'release \K[\d.]+' | head -1 || echo "unknown")
+        log "CUDA already available: $CUDA_VER (nvcc found in PATH)"
+    else
+        # CUDA toolchain prüfen: /usr/local/cuda* oder /usr
+        CUDA_HOME=""
+        for cuda_dir in /usr/local/cuda-* /usr/local/cuda /usr; do
+            if [[ -x "${cuda_dir}/bin/nvcc" ]]; then
+                CUDA_HOME="$cuda_dir"
+                break
+            fi
+        done
+        
+        if [[ -n "$CUDA_HOME" ]]; then
+            export CUDA_HOME
+            export PATH="${CUDA_HOME}/bin${PATH:+:$PATH}"
+            export LD_LIBRARY_PATH="${CUDA_HOME}/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            log "CUDA Umgebung aus System-Installation: CUDA_HOME=${CUDA_HOME}"
+            if command -v nvcc &>/dev/null; then
+                CUDA_VER=$(nvcc --version | grep -oP 'release \K[\d.]+' | head -1 || echo "unknown")
+                log "CUDA verified: $CUDA_VER"
+            fi
+        else
+            warn "CUDA not found in system — User-Builds ohne CUDA-Unterstützung (non-fatal)."
+        fi
+    fi
+fi
+
 # ── Profile: headless-vllm / vllm-only — Multi-Model Router aktivieren ───────
 if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
     step "vLLM Multi-Model Router"

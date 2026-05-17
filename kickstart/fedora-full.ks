@@ -264,21 +264,37 @@ if check_nvidia_open_compat; then
         log "NVIDIA-Treiber bereits aktiv ($(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null)) — Installation übersprungen."
     else
         log "Installing/updating NVIDIA Open Kernel Module driver..."
+        NVIDIA_OPEN_ONLY="${FEDORA_NVIDIA_OPEN_ONLY:-0}"
         if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" == "fedora" ]]; then
-            dnf install -y \
-                kernel-devel \
-                kernel-headers \
-                akmod-nvidia-open \
-                xorg-x11-drv-nvidia-cuda \
-                || warn "NVIDIA Open Driver installation fehlgeschlagen (non-fatal)."
+            if [[ "$NVIDIA_OPEN_ONLY" == "1" ]]; then
+                dnf install -y \
+                    kernel-devel \
+                    kernel-headers \
+                    akmod-nvidia-open \
+                    || warn "NVIDIA Open-only installation fehlgeschlagen (non-fatal)."
+            else
+                dnf install -y \
+                    kernel-devel \
+                    kernel-headers \
+                    akmod-nvidia-open \
+                    xorg-x11-drv-nvidia-cuda \
+                    || warn "NVIDIA Open Driver installation fehlgeschlagen (non-fatal)."
+            fi
         else
             # Bei CachyOS keine Fedora kernel-devel/kernel-headers erzwingen,
             # sonst kann es zu Devel-Mismatch-Fehlern kommen.
-            dnf install -y \
-                kernel-cachyos-devel \
-                akmod-nvidia-open \
-                xorg-x11-drv-nvidia-cuda \
-                || warn "NVIDIA Open Driver installation (CachyOS) fehlgeschlagen (non-fatal)."
+            if [[ "$NVIDIA_OPEN_ONLY" == "1" ]]; then
+                dnf install -y \
+                    kernel-cachyos-devel \
+                    akmod-nvidia-open \
+                    || warn "NVIDIA Open-only installation (CachyOS) fehlgeschlagen (non-fatal)."
+            else
+                dnf install -y \
+                    kernel-cachyos-devel \
+                    akmod-nvidia-open \
+                    xorg-x11-drv-nvidia-cuda \
+                    || warn "NVIDIA Open Driver installation (CachyOS) fehlgeschlagen (non-fatal)."
+            fi
         fi
 
         if command -v akmods &>/dev/null; then

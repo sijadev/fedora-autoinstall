@@ -95,7 +95,7 @@ log "dnf upgrade completed."
 # damit Module gegen den richtigen Kernel gebaut werden.
 step "CachyOS Kernel installieren"
 
-if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" != "fedora" ]]; then  # default: cachyos (aus XML)
+if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" != "fedora" ]]; then
     if dnf copr enable -y bieszczaders/kernel-cachyos 2>/dev/null; then
         if dnf install -y \
             kernel-cachyos \
@@ -121,6 +121,10 @@ fi
 
 # ── 2. NVIDIA Open Driver ─────────────────────────────────────────────────────
 step "NVIDIA Open Driver update"
+
+if [[ "$INSTALL_PROFILE" == "cachyos-kernel" ]]; then
+    log "Profile '${INSTALL_PROFILE}' — NVIDIA installation skipped."
+else
 
 # iGPU + dGPU Hinweis: Wenn beide vorhanden, lief Install vermutlich über iGPU
 # (Blackwell-Workaround). Nach erfolgreichem first-boot kann BIOS auf PEG zurück.
@@ -158,21 +162,37 @@ if check_nvidia_open_compat; then
         log "NVIDIA-Treiber bereits aktiv ($(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null)) — Installation übersprungen."
     else
         log "Installing/updating NVIDIA Open Kernel Module driver..."
+        NVIDIA_OPEN_ONLY="${FEDORA_NVIDIA_OPEN_ONLY:-0}"
         if [[ "${FEDORA_KERNEL_SOURCE:-cachyos}" == "fedora" ]]; then
-            dnf install -y \
-                kernel-devel \
-                kernel-headers \
-                akmod-nvidia-open \
-                xorg-x11-drv-nvidia-cuda \
-                || warn "NVIDIA Open Driver installation fehlgeschlagen (non-fatal)."
+            if [[ "$NVIDIA_OPEN_ONLY" == "1" ]]; then
+                dnf install -y \
+                    kernel-devel \
+                    kernel-headers \
+                    akmod-nvidia-open \
+                    || warn "NVIDIA Open-only installation fehlgeschlagen (non-fatal)."
+            else
+                dnf install -y \
+                    kernel-devel \
+                    kernel-headers \
+                    akmod-nvidia-open \
+                    xorg-x11-drv-nvidia-cuda \
+                    || warn "NVIDIA Open Driver installation fehlgeschlagen (non-fatal)."
+            fi
         else
             # Bei CachyOS keine Fedora kernel-devel/kernel-headers erzwingen,
             # sonst kann es zu Devel-Mismatch-Fehlern kommen.
-            dnf install -y \
-                kernel-cachyos-devel \
-                akmod-nvidia-open \
-                xorg-x11-drv-nvidia-cuda \
-                || warn "NVIDIA Open Driver installation (CachyOS) fehlgeschlagen (non-fatal)."
+            if [[ "$NVIDIA_OPEN_ONLY" == "1" ]]; then
+                dnf install -y \
+                    kernel-cachyos-devel \
+                    akmod-nvidia-open \
+                    || warn "NVIDIA Open-only installation (CachyOS) fehlgeschlagen (non-fatal)."
+            else
+                dnf install -y \
+                    kernel-cachyos-devel \
+                    akmod-nvidia-open \
+                    xorg-x11-drv-nvidia-cuda \
+                    || warn "NVIDIA Open Driver installation (CachyOS) fehlgeschlagen (non-fatal)."
+            fi
         fi
 
         if command -v akmods &>/dev/null; then
@@ -182,6 +202,7 @@ if check_nvidia_open_compat; then
         log "NVIDIA Open Driver installed/updated."
     fi
 fi  # end: check_nvidia_open_compat
+fi  # end: profile gate for NVIDIA
 
 # ── 2b. Podman + NVIDIA Container Toolkit (headless-vllm / vllm-only) ─────────
 if [[ "$INSTALL_PROFILE" =~ ^(headless-vllm|vllm-only)$ ]]; then
@@ -275,7 +296,7 @@ fi
 # ── 3. CUDA installation ──────────────────────────────────────────────────────
 step "CUDA installation"
 
-if [[ "$INSTALL_PROFILE" == "theme-bash" ]]; then
+if [[ "$INSTALL_PROFILE" =~ ^(theme-bash|cachyos-kernel)$ ]]; then
     log "Profile '${INSTALL_PROFILE}' — CUDA not required. Skipping."
 elif ! lspci -nn 2>/dev/null | grep -qi 'NVIDIA'; then
     warn "No NVIDIA GPU detected — skipping CUDA installation (VM or non-NVIDIA system)."

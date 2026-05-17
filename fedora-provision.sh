@@ -10,7 +10,7 @@
 #   sudo bash /run/media/$USER/Ventoy/fedora-provision.sh --profile headless-vllm
 #
 # Optionen:
-#   --profile   theme-bash | headless-vllm  (erforderlich)
+#   --profile   theme-bash | headless-vllm | cachyos-kernel  (erforderlich)
 #   --user      Ziel-Benutzer (Standard: $SUDO_USER)
 #   --run-now   first-boot sofort starten statt nur einrichten
 
@@ -48,7 +48,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-[[ -z "$PROFILE" ]] && die "--profile fehlt. Erlaubt: theme-bash | headless-vllm"
+[[ -z "$PROFILE" ]] && die "--profile fehlt. Erlaubt: theme-bash | headless-vllm | cachyos-kernel"
 [[ "$EUID" -ne 0 ]] && die "Bitte als root ausführen: sudo bash $0 --profile $PROFILE"
 id "$TARGET_USER" &>/dev/null || die "Benutzer nicht gefunden: $TARGET_USER"
 
@@ -67,7 +67,8 @@ FEDORA_WS_GTK_ARGS="-c Dark"
 FEDORA_WS_ICON_ARGS=""
 FEDORA_WS_WALL_ARGS=""
 FEDORA_CUDA_SOURCE="fedora"
-FEDORA_KERNEL_SOURCE="bazzite"
+FEDORA_KERNEL_SOURCE="fedora"
+FEDORA_NVIDIA_OPEN_ONLY="1"
 ENVEOF
         ;;
     vllm-only)
@@ -82,12 +83,21 @@ FEDORA_AGENT_MODEL="Qwen/Qwen3-8B"
 FEDORA_VLLM_ROUTER_PORT="8000"
 FEDORA_VLLM_REGISTRY="\$HOME/.config/vllm-router/models.json"
 FEDORA_OMB_THEME="modern"
-FEDORA_CUDA_SOURCE="fedora"
-FEDORA_KERNEL_SOURCE="bazzite"
+FEDORA_CUDA_SOURCE="nvidia"
+FEDORA_KERNEL_SOURCE="cachyos"
+FEDORA_NVIDIA_OPEN_ONLY="0"
 ENVEOF
         ;;
+    cachyos-kernel)
+    cat > /etc/fedora-provision.env <<ENVEOF
+FEDORA_INSTALL_PROFILE="cachyos-kernel"
+FEDORA_TARGET_USER="${TARGET_USER}"
+FEDORA_KERNEL_SOURCE="cachyos"
+FEDORA_NVIDIA_OPEN_ONLY="1"
+ENVEOF
+    ;;
     *)
-        die "Unbekanntes Profil: '${PROFILE}'. Erlaubt: theme-bash | headless-vllm"
+    die "Unbekanntes Profil: '${PROFILE}'. Erlaubt: theme-bash | headless-vllm | cachyos-kernel"
         ;;
 esac
 
@@ -170,6 +180,8 @@ X-GNOME-Autostart-enabled=true
 DESKTOPEOF
     chown -R "${TARGET_USER}:${TARGET_USER}" "$AUTOSTART_DIR"
     log "GNOME-Autostart für '${TARGET_USER}' eingerichtet"
+elif [[ "$PROFILE" == "cachyos-kernel" ]]; then
+    log "First-Login für Profil 'cachyos-kernel' übersprungen (nur Kernel-Setup)."
 else
     # Headless-Profile: systemd User-Service
     cat > /etc/systemd/system/fedora-provision-user.service <<USRUNITEOF
